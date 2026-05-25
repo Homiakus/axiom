@@ -1,0 +1,41 @@
+domain Reminder
+
+context Order:
+  id: String
+  createdAt: Time
+
+context Payment:
+  status: String = "waiting"
+
+fact PaymentWaiting when:
+  Payment.status == "waiting"
+
+policy emailPolicy:
+  retry: 2
+  timeout: 5s
+  concurrency: once
+  idempotency: required
+
+activity SendPaymentReminder:
+  require:
+    PaymentWaiting
+  input:
+    orderId = Order.id
+  output:
+    sent: Bool
+  effect: external
+  idempotencyKey: hash(Order.id, "payment-reminder")
+  policy: emailPolicy
+
+rule sendPaymentReminder:
+  on timer(24h after Order.createdAt)
+  require:
+    PaymentWaiting
+  run: SendPaymentReminder
+  write:
+    Payment.status = "reminded"
+
+query ReminderStatus:
+  return:
+    payment = Payment.status
+    ready = PaymentWaiting

@@ -1,0 +1,42 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+.obsidian/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and temporary files
+*.log
+*.tmp
+tmp/
+**/tmp/
+.cache/
+
+# Go build and test output
+bin/
+build/
+dist/
+coverage/
+coverage.out
+*.cover
+*.prof
+*.test
+*.out
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Project-local built binaries
+/axiom-main/cmd/axiom/axiom
+/axiom-main/cmd/axiom/axiom-demo
+/axiom-main/examples/control-panel/axiom-control-panel
+/axiom-main/examples/control-panel/control-panel
+/axiom-main/tools/axiomgen/axiomgen

@@ -1,0 +1,57 @@
+domain Welcome
+
+signal UserRegistered:
+  userId: String
+  email: String
+
+context User:
+  id: String?
+  email: String?
+  welcomeSent: Bool = false
+
+computed userReady: Bool =
+  User.id exists and User.email exists
+
+fact RegisteredUser when:
+  userReady
+expose:
+  id = User.id
+  email = User.email
+
+policy emailPolicy:
+  retry: 2
+  timeout: 5s
+  concurrency: once
+  idempotency: required
+
+activity SendWelcomeEmail:
+  require:
+    RegisteredUser
+  input:
+    userId = RegisteredUser.id
+    email = RegisteredUser.email
+  output:
+    sent: Bool
+  effect: external
+  idempotencyKey: RegisteredUser.id
+  policy: emailPolicy
+
+rule captureRegistration:
+  on UserRegistered
+  write:
+    User.id = signal.userId
+    User.email = signal.email
+
+rule sendWelcomeEmail:
+  on changed(User.email)
+  when:
+    User.welcomeSent == false
+  require:
+    RegisteredUser
+  run: SendWelcomeEmail
+  write:
+    User.welcomeSent = output.sent
+
+claim welcomeSentRequiresEmail:
+  always:
+    User.welcomeSent == true implies User.email exists

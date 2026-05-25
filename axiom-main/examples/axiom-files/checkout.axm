@@ -1,0 +1,160 @@
+domain Checkout
+
+signal CheckoutRequested
+signal CheckoutConfirmed
+
+context User:
+  id: String?
+  country: String?
+
+context Cart:
+  items: List<String> = []
+  total: Float = 0
+
+context Inventory:
+  status: String = "unknown"
+  unavailable: List<String> = []
+
+context Risk:
+  status: String = "unknown"
+  score: Float?
+
+context Payment:
+  method: Object?
+  status: String = "idle"
+  id: String?
+  paidCount: Int = 0
+  intentId: String?
+
+computed cartPayable: Bool =
+  Cart.items.length > 0 and Cart.total > 0
+
+fact AuthenticatedUser when:
+  User.id exists
+
+fact PayableCart when:
+  cartPayable
+expose:
+  items = Cart.items
+  total = Cart.total
+
+fact InventoryAvailable when:
+  Inventory.status == "available"
+
+fact RiskApproved when:
+  Risk.status == "ok"
+
+fact CardPayment when:
+  Payment.method.kind == "card"
+expose:
+  token = Payment.method.token
+
+fact CanCheckout when:
+  AuthenticatedUser
+  PayableCart
+  InventoryAvailable
+  RiskApproved
+
+fact CanPayByCard when:
+  CanCheckout
+  CardPayment
+
+policy externalCall:
+  retry: 2
+  timeout: 3s
+  concurrency: latest
+  idempotency: required
+
+policy paymentCritical:
+  retry: 0
+  timeout: 10s
+  concurrency: once
+  idempotency: required
+  audit: required
+
+activity CheckInventory:
+  require:
+    AuthenticatedUser
+    PayableCart
+  input:
+    items = PayableCart.items
+    country = User.country
+  output:
+    status: String
+    unavailable: List<String>
+  effect: external
+  idempotencyKey: hash(User.id, Cart.items, User.country)
+  policy: externalCall
+
+activity CalculateRisk:
+  require:
+    AuthenticatedUser
+    PayableCart
+  input:
+    userId = User.id
+    amount = Cart.total
+    country = User.country
+  output:
+    status: String
+    score: Float
+  effect: external
+  idempotencyKey: hash(User.id, Cart.total, User.country)
+  policy: externalCall
+
+activity ChargeCard:
+  require:
+    CanPayByCard
+  input:
+    userId = User.id
+    amount = Cart.total
+    token = CardPayment.token
+  output:
+    paymentId: String
+    status: String
+  effect: external
+  idempotencyKey: Payment.intentId
+  policy: paymentCritical
+
+rule prepareInventory:
+  on:
+    CheckoutRequested
+    changed(Cart.items)
+    changed(User.country)
+  when:
+    Inventory.status in ["unknown", "expired"]
+  run: CheckInventory
+  write:
+    Inventory.status = output.status
+    Inventory.unavailable = output.unavailable
+
+rule prepareRisk:
+  on:
+    CheckoutRequested
+    changed(Cart.total)
+    changed(User.id)
+  when:
+    Risk.status in ["unknown", "expired"]
+  run: CalculateRisk
+  write:
+    Risk.status = output.status
+    Risk.score = output.score
+
+rule payByCard:
+  on CheckoutConfirmed
+  when:
+    Payment.status != "paid"
+  require:
+    CanPayByCard
+  run: ChargeCard
+  write:
+    Payment.id = output.paymentId
+    Payment.status = output.status
+    Payment.paidCount = Payment.paidCount + 1
+
+claim paymentHasId:
+  always:
+    Payment.status == "paid" implies Payment.id exists
+
+claim noDoublePayment:
+  always:
+    Payment.paidCount <= 1

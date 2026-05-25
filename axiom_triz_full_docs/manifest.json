@@ -1,0 +1,13 @@
+{
+  "name": "axiom_triz_full_docs",
+  "version": "0.3.0",
+  "updated_at": "2026-05-24",
+  "format": "markdown",
+  "language": "ru",
+  "scope": "TRIZ user-facing documentation mapped to current Axiom v0 runtime",
+  "entrypoints": [
+    "README.md",
+    "PROJECT_ANALYSIS.md",
+    "GLOSSARY.md"
+  ]
+}

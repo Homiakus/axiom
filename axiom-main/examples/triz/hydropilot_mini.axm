@@ -1,0 +1,69 @@
+system HydroPilotMini
+
+state System:
+  running: Bool = false
+  mode: Text = "manual"
+
+state Safety:
+  estop: Bool = false
+  alarm: Text = "none"
+
+state Zone[1..4]:
+  enabled: Bool = true
+  ph: Float?
+  waterLevel: Text = "unknown"
+  lightOn: Bool = false
+
+event PHMeasurementDue(zone: Int)
+event LightRequested(zone: Int, enabled: Bool, level: Int)
+event EmergencyStopPressed(reason: Text)
+
+condition CanUseHardware:
+  System.running
+  Safety.estop == false
+
+condition CanMeasure:
+  CanUseHardware
+  Zone[event.zone].enabled
+
+profile critical:
+  timeout: 10s
+  retry: 0
+  once
+  idempotent
+  audited
+
+function MeasurePH(zone: Int) -> { value: Float, status: Text }
+function SetLight(zone: Int, enabled: Bool, level: Int) -> { ok: Bool }
+
+rule MeasurePH when:
+  PHMeasurementDue
+  CanMeasure
+do critical:
+  result = MeasurePH(event.zone)
+then:
+  set Zone[event.zone].ph = result.value
+
+rule ApplyLightRequest when:
+  LightRequested
+  CanUseHardware
+do critical:
+  result = SetLight(event.zone, event.enabled, event.level)
+then:
+  set Zone[event.zone].lightOn = result.ok and event.enabled
+
+rule EmergencyStop when:
+  EmergencyStopPressed
+then:
+  set Safety.estop = true
+  set Safety.alarm = event.reason
+
+always NoLightDuringEstop:
+  Safety.estop == true implies Zone.lightOn == false
+
+view Dashboard:
+  running = System.running
+  mode = System.mode
+  alarm = Safety.alarm
+  zonePH = Zone.ph
+  zoneLight = Zone.lightOn

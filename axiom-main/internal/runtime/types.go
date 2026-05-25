@@ -1,0 +1,221 @@
+package runtime
+
+import (
+	"context"
+	"sync"
+	"time"
+
+	"axiom/internal/compiler"
+	"axiom/internal/diag"
+)
+
+type FieldID = compiler.FieldID
+type SignalID = compiler.SignalID
+type RuleID = compiler.RuleID
+type ActivityID = compiler.ActivityID
+type AtomID uint32
+
+type Status string
+
+const (
+	StatusStarted   Status = "Started"
+	StatusRunning   Status = "Running"
+	StatusWaiting   Status = "Waiting"
+	StatusCompleted Status = "Completed"
+	StatusFailed    Status = "Failed"
+	StatusCanceled  Status = "Canceled"
+)
+
+type TaskStatus string
+
+const (
+	TaskPending   TaskStatus = "pending"
+	TaskRunning   TaskStatus = "running"
+	TaskCompleted TaskStatus = "completed"
+	TaskFailed    TaskStatus = "failed"
+)
+
+type FactValue struct {
+	True    bool
+	Exposed map[string]any
+}
+
+type ValueKind string
+
+const (
+	ValueInvalid ValueKind = ""
+	ValueNull    ValueKind = "null"
+	ValueBool    ValueKind = "bool"
+	ValueInt     ValueKind = "int"
+	ValueFloat   ValueKind = "float"
+	ValueString  ValueKind = "string"
+	ValueAny     ValueKind = "any"
+)
+
+type Value struct {
+	Kind ValueKind
+	I64  int64
+	F64  float64
+	S    string
+	B    bool
+	Any  any
+}
+
+type ExecutionState struct {
+	ActiveAtoms []uint64
+	Present     []uint64
+	BoolValues  []uint64
+	DirtyFields []uint64
+	Values      map[uint32]Value
+	AtomValues  map[uint32]Value
+	FactValues  map[uint32]map[string]Value
+}
+
+type Execution struct {
+	ID              string
+	Domain          string
+	Status          Status
+	Context         map[string]map[string]any
+	Computed        map[string]any
+	Facts           map[string]FactValue
+	RuntimeState    ExecutionState
+	ModuleHash      string
+	CompilerVersion string
+	PlanVersion     string
+	Version         int
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type HistoryEntry struct {
+	Seq       int
+	Type      string
+	Payload   map[string]any
+	CreatedAt time.Time
+}
+
+type ActivityTask struct {
+	ID             string
+	ExecutionID    string
+	RuleName       string
+	ActivityName   string
+	Input          map[string]any
+	IdempotencyKey string
+	Status         TaskStatus
+	Attempt        int
+	MaxAttempts    int
+	LockedBy       string
+	LockedUntil    time.Time
+	NextAttemptAt  time.Time
+	Result         map[string]any
+	Error          string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type Store interface {
+	CreateExecution(ctx context.Context, execution *Execution) error
+	GetExecution(ctx context.Context, id string) (*Execution, error)
+	SaveExecution(ctx context.Context, execution *Execution) error
+	AppendHistory(ctx context.Context, executionID string, entryType string, payload map[string]any) error
+	ListHistory(ctx context.Context, executionID string) ([]HistoryEntry, error)
+	EnqueueTask(ctx context.Context, task *ActivityTask) error
+	ListTasks(ctx context.Context, executionID string) ([]*ActivityTask, error)
+	PollTask(ctx context.Context, executionID string) (*ActivityTask, error)
+	PollTaskWithLease(ctx context.Context, executionID string, workerID string, leaseTTL time.Duration) (*ActivityTask, error)
+	HeartbeatTask(ctx context.Context, taskID string, workerID string) error
+	RecoverExpiredLeases(ctx context.Context, executionID string, leaseTTL time.Duration) (int, error)
+	CompleteTask(ctx context.Context, taskID string, result map[string]any) error
+	FailTask(ctx context.Context, taskID string, errorMessage string) error
+	UpdateTask(ctx context.Context, task *ActivityTask) error
+}
+
+type StoreTransaction interface {
+	Store
+	Commit() error
+	Rollback() error
+}
+
+type TransactionalStore interface {
+	BeginTransaction(ctx context.Context) (StoreTransaction, error)
+}
+
+type Activity func(ctx context.Context, input map[string]any) (map[string]any, error)
+
+type ActivityRegistry map[string]Activity
+
+type DiagnosticError = diag.Error
+
+type TraceLevel string
+
+const (
+	TraceAggregate TraceLevel = "aggregate"
+	TraceFull      TraceLevel = "full"
+	TraceMinimal   TraceLevel = "minimal"
+)
+
+type Engine struct {
+	module     *compiler.Module
+	store      Store
+	activities ActivityRegistry
+	maxSteps   int
+	fast       *fastPlan
+	strictFast bool
+	traceLevel TraceLevel
+	storeMu    sync.Mutex
+	clock      Clock
+}
+
+func NewEngine(module *compiler.Module, store Store, activities ActivityRegistry) *Engine {
+	if activities == nil {
+		activities = ActivityRegistry{}
+	}
+	fast := compileFastPlan(module, false)
+	return &Engine{
+		module:     module,
+		store:      store,
+		activities: activities,
+		maxSteps:   1000,
+		fast:       fast,
+		traceLevel: TraceAggregate,
+		clock:      systemClock{},
+	}
+}
+
+func (e *Engine) Module() *compiler.Module {
+	return e.module
+}
+
+func (e *Engine) EnableStrictFastRuntime() error {
+	plan := compileFastPlan(e.module, true)
+	if err := plan.strictError(); err != nil {
+		return err
+	}
+	e.fast = plan
+	e.strictFast = true
+	return nil
+}
+
+func (e *Engine) SetTraceLevel(level TraceLevel) {
+	if level == "" {
+		level = TraceAggregate
+	}
+	e.traceLevel = level
+}
+
+type Clock interface {
+	Now() time.Time
+}
+
+type systemClock struct{}
+
+func (systemClock) Now() time.Time {
+	return time.Now().UTC()
+}
+
+func (e *Engine) now() time.Time {
+	if e.clock == nil {
+		return time.Now().UTC()
+	}
+	return e.clock.Now().UTC()
+}

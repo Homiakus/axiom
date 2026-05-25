@@ -1,0 +1,17 @@
+domain Claims
+
+signal Pay
+
+context Payment:
+  status: String = "idle"
+  id: String?
+  paidCount: Int = 0
+
+rule badPayment:
+  on Pay
+  write:
+    Payment.status = "paid"
+
+claim paymentHasId:
+  always:
+    Payment.status == "paid" implies Payment.id exists
