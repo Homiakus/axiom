@@ -8,26 +8,25 @@
 
 Axiom is a Go library for state transitions, workflows and decision tables.
 
-Use it when a state change must be validated, persisted and replayable rather than merely applied to an in-memory struct. A model can connect:
+Use it when a state change must be validated, connected to typed events and external operations, persisted transactionally, explained from history and replayed after failure or during an audit.
 
-- typed events;
-- transition rules;
+Processes can be defined in Go, AXM or TOML. Declarative sources compile into the same `axiom.Plan` and use the same runtime.
+
+## Where Axiom fits
+
+Axiom is designed for aggregates with their own lifecycle: orders, approval requests, machines, vending devices, production batches and payment operations.
+
+Typical uses include:
+
+- equipment control;
+- money and inventory accounting;
+- approvals;
+- external-operation orchestration;
+- retries and idempotency;
 - state invariants;
-- external activities with retry and idempotency policies;
-- transactional persistence;
-- history, explanation and replay.
+- history and replay.
 
-Definition files are optional. Processes can be described with typed Go handlers, the declarative Go model, AXM or TOML. Declarative sources compile into the same `axiom.Plan` and use the same runtime.
-
-## When Axiom fits
-
-Axiom is useful when state belongs to a specific aggregate such as an order, approval request, device, production batch or payment, and every change must be checked and recorded.
-
-Typical uses include equipment state, money-flow accounting, orders, approvals, retryable background operations, decision tables, replay and audit.
-
-## When it does not fit
-
-Axiom is unnecessary for plain CRUD with no transitions or invariants. It is not a message broker, distributed scheduler or cross-process lock manager. Serialization of one `execution ID` is process-local to one `Engine` instance.
+Axiom is unnecessary for plain CRUD without transitions or invariants. It is not a message broker, distributed scheduler or cross-process lock manager. Operations for one `execution ID` are serialized inside one `Engine`; distributed ownership must be provided separately.
 
 ## Install
 
@@ -37,11 +36,21 @@ Go 1.26 or newer is required.
 go get github.com/Homiakus/axiom
 ```
 
-# Main example: coffee vending machine
+# Example: coffee vending machine with money accounting
 
-The example models one physical coffee machine that accepts money, tracks customer credit, checks stock, dispenses drinks and change, accounts for revenue, persists history in Pebble and rebuilds state through replay.
+Complete runnable source: [`examples/coffee-machine/main.go`](examples/coffee-machine/main.go).
 
-The complete runnable program is in [`examples/coffee-machine/main.go`](examples/coffee-machine/main.go).
+The machine must:
+
+1. accept money;
+2. retain the current customer's credit;
+3. check the price and ingredient stock;
+4. execute a hardware operation;
+5. account for the confirmed price and change;
+6. deduct ingredients;
+7. verify monetary invariants;
+8. persist state and history in Pebble;
+9. rebuild state through replay.
 
 ## Menu
 
@@ -52,24 +61,25 @@ Money is stored as integer kopecks. `14000` means `140.00 RUB`; `float64` is not
 | Espresso | 90.00 RUB | 40 ml | 8 g | — | 1 |
 | Cappuccino | 140.00 RUB | 60 ml | 10 g | 120 ml | 1 |
 
-Prices and recipes are part of the model, not event payloads. A client cannot request a cappuccino while supplying a lower price or recipe.
+Prices and recipes belong to the model. A drink-selection event does not carry a price, so a client cannot request cappuccino at the espresso price.
 
 ## Machine state
 
 | Field | Meaning |
 |---|---|
-| `CreditKopecks` | Money owned by the current customer session |
-| `AcceptedKopecks` | Lifetime accepted money |
-| `ReturnedKopecks` | Lifetime change and refunds |
-| `RevenueKopecks` | Completed drink sales |
+| `CreditKopecks` | Current customer's money not yet recognized as revenue |
+| `AcceptedKopecks` | All accepted money |
+| `ReturnedKopecks` | Change and refunds |
+| `RevenueKopecks` | Value of dispensed drinks |
 | `CashboxKopecks` | Physical money retained by the machine |
 | `WaterML`, `BeansG`, `MilkML`, `Cups` | Consumable stock |
-| `DrinksServed` | Number of completed drinks |
+| `DrinksServed` | Number of dispensed drinks |
 | `LastDrink`, `LastChangeKopecks` | Display and audit data |
 
 ```go
 type Machine struct {
-    CreditKopecks   int `json:"creditKopecks"`
+    CreditKopecks int `json:"creditKopecks"`
+
     AcceptedKopecks int `json:"acceptedKopecks"`
     ReturnedKopecks int `json:"returnedKopecks"`
     RevenueKopecks  int `json:"revenueKopecks"`
@@ -87,38 +97,136 @@ type Machine struct {
 }
 ```
 
+## Events
+
+| Event | Source | Meaning |
+|---|---|---|
+| `MoneyInserted` | Coin acceptor or payment terminal | Customer inserted money |
+| `EspressoRequested` | Espresso button | Espresso purchase requested |
+| `CappuccinoRequested` | Cappuccino button | Cappuccino purchase requested |
+| `CancelRequested` | Cancel button | Return all current credit |
+
+```go
+type MoneyInserted struct {
+    AmountKopecks int `json:"amountKopecks"`
+}
+
+func (MoneyInserted) AxiomEventName() string {
+    return "MoneyInserted"
+}
+
+type CappuccinoRequested struct {
+    // This ID binds the event to one physical dispense operation.
+    PurchaseID string `json:"purchaseId"`
+}
+
+func (CappuccinoRequested) AxiomEventName() string {
+    return "CappuccinoRequested"
+}
+```
+
 ## Transition table
 
-| Event | Guard | State changes | Activity |
+| Event | Conditions | State changes | External operation |
 |---|---|---|---|
-| `MoneyInserted` | `amount > 0` | Increase credit, accepted total and cashbox | None |
-| `EspressoRequested` | Credit and stock are sufficient | Add 90 RUB revenue, deduct stock, return change | `DispenseEspresso` |
-| `CappuccinoRequested` | Credit and stock are sufficient | Add 140 RUB revenue, deduct stock, return change | `DispenseCappuccino` |
-| `CancelRequested` | Credit is positive | Refund all current credit | `ReturnMoney` |
+| `MoneyInserted` | Amount is positive | Increase credit, accepted money and cashbox | None |
+| `EspressoRequested` | Credit ≥ 90 RUB; sufficient water, beans and cups | Account for 90 RUB revenue, return change, deduct recipe | `DispenseEspresso` |
+| `CappuccinoRequested` | Credit ≥ 140 RUB; sufficient water, beans, milk and cups | Account for 140 RUB revenue, return change, deduct recipe | `DispenseCappuccino` |
+| `CancelRequested` | Credit is positive | Refund credit and reduce cashbox | `ReturnMoney` |
 
-A failed guard means the rule does not run. For example, a cappuccino request at 100 RUB credit does not alter accounting or stock.
+A failed condition means the rule does not run. A cappuccino cannot be dispensed with only 100 RUB of credit or with an empty milk tank.
+
+## Building the model
+
+```go
+definition := model.New("CoffeeMachine").Version("1")
+
+machine := model.State[Machine](definition, "Machine").
+    Default("CreditKopecks", 0).
+    Default("AcceptedKopecks", 0).
+    Default("ReturnedKopecks", 0).
+    Default("RevenueKopecks", 0).
+    Default("CashboxKopecks", 0).
+    Default("WaterML", 2000).
+    Default("BeansG", 500).
+    Default("MilkML", 1000).
+    Default("Cups", 50).
+    Default("DrinksServed", 0)
+
+moneyInserted := model.Event[MoneyInserted](definition, "MoneyInserted")
+espressoRequested := model.Event[EspressoRequested](definition, "EspressoRequested")
+cappuccinoRequested := model.Event[CappuccinoRequested](definition, "CappuccinoRequested")
+cancelRequested := model.Event[CancelRequested](definition, "CancelRequested")
+```
 
 ## Accepting money
+
+All three counters are written by one transition.
 
 ```go
 definition.Rule("acceptMoney").
     On(moneyInserted.Trigger()).
-    When(model.GT(moneyInserted.Field("AmountKopecks"), model.Lit(0))).
+    When(model.GT(
+        moneyInserted.Field("AmountKopecks"),
+        model.Lit(0),
+    )).
     Set(
         machine.Field("CreditKopecks"),
-        add(machine.Field("CreditKopecks"), moneyInserted.Field("AmountKopecks")),
+        add(
+            machine.Field("CreditKopecks"),
+            moneyInserted.Field("AmountKopecks"),
+        ),
     ).
     Set(
         machine.Field("AcceptedKopecks"),
-        add(machine.Field("AcceptedKopecks"), moneyInserted.Field("AmountKopecks")),
+        add(
+            machine.Field("AcceptedKopecks"),
+            moneyInserted.Field("AmountKopecks"),
+        ),
     ).
     Set(
         machine.Field("CashboxKopecks"),
-        add(machine.Field("CashboxKopecks"), moneyInserted.Field("AmountKopecks")),
+        add(
+            machine.Field("CashboxKopecks"),
+            moneyInserted.Field("AmountKopecks"),
+        ),
     )
 ```
 
-## Selling a cappuccino
+The example uses small helpers to construct declarative arithmetic expressions:
+
+```go
+func add(left, right model.Expr) model.Expr {
+    return model.Raw(fmt.Sprintf("(%s + %s)", left, right))
+}
+
+func sub(left, right model.Expr) model.Expr {
+    return model.Raw(fmt.Sprintf("(%s - %s)", left, right))
+}
+```
+
+## Hardware-operation policy
+
+Dispensing a drink affects pumps, heater, grinder and change mechanism. Such operations receive an explicit policy.
+
+```go
+definition.Policy("hardwarePolicy").
+    Retry(2).
+    Timeout(10 * time.Second).
+    Concurrency("once").
+    Idempotency("required")
+```
+
+| Setting | Value | Purpose |
+|---|---:|---|
+| `Retry` | 2 | Up to two retries after the first attempt |
+| `Timeout` | 10 s | Maximum duration of one attempt |
+| `Concurrency` | `once` | Do not run the same task in parallel |
+| `Idempotency` | `required` | Require an operation key |
+
+## Cappuccino activity
+
+Price and change are computed before hardware access. The handler returns confirmed values, and the rule accounts for those outputs.
 
 ```go
 cappuccinoChange := sub(
@@ -126,6 +234,41 @@ cappuccinoChange := sub(
     model.Lit(cappuccinoPriceKopecks),
 )
 
+definition.Activity("DispenseCappuccino").
+    Input("purchaseId", cappuccinoRequested.Field("PurchaseID")).
+    Input("priceKopecks", model.Lit(cappuccinoPriceKopecks)).
+    Input("changeKopecks", cappuccinoChange).
+    Output("dispensed", "Bool").
+    Output("priceKopecks", "Int").
+    Output("changeKopecks", "Int").
+    Effect("external").
+    IdempotencyKey(cappuccinoRequested.Field("PurchaseID")).
+    Policy("hardwarePolicy")
+```
+
+Registering the handler:
+
+```go
+axiom.Act("DispenseCappuccino", func(
+    ctx context.Context,
+    input axiom.Input,
+) (axiom.Output, error) {
+    // Real code sends commands to the hardware controller.
+    // It must remember PurchaseID and never dispense a second drink
+    // for an operation that has already completed.
+    return axiom.Output{
+        "dispensed":     true,
+        "priceKopecks":  input["priceKopecks"],
+        "changeKopecks": input["changeKopecks"],
+    }, nil
+})
+```
+
+If the handler fails, the rule must not account for revenue or deduct ingredients.
+
+## Selling cappuccino
+
+```go
 definition.Rule("sellCappuccino").
     On(cappuccinoRequested.Trigger()).
     When(
@@ -139,56 +282,53 @@ definition.Rule("sellCappuccino").
     Set(machine.Field("CreditKopecks"), model.Lit(0)).
     Set(
         machine.Field("ReturnedKopecks"),
-        add(machine.Field("ReturnedKopecks"), cappuccinoChange),
+        add(
+            machine.Field("ReturnedKopecks"),
+            model.Ref("output.changeKopecks"),
+        ),
     ).
     Set(
         machine.Field("RevenueKopecks"),
-        add(machine.Field("RevenueKopecks"), model.Lit(14000)),
+        add(
+            machine.Field("RevenueKopecks"),
+            model.Ref("output.priceKopecks"),
+        ),
     ).
     Set(
         machine.Field("CashboxKopecks"),
-        sub(machine.Field("CashboxKopecks"), cappuccinoChange),
+        sub(
+            machine.Field("CashboxKopecks"),
+            model.Ref("output.changeKopecks"),
+        ),
     ).
     Set(machine.Field("WaterML"), sub(machine.Field("WaterML"), model.Lit(60))).
     Set(machine.Field("BeansG"), sub(machine.Field("BeansG"), model.Lit(10))).
     Set(machine.Field("MilkML"), sub(machine.Field("MilkML"), model.Lit(120))).
     Set(machine.Field("Cups"), sub(machine.Field("Cups"), model.Lit(1))).
-    Set(machine.Field("LastDispensed"), model.Ref("output.dispensed"))
+    Set(
+        machine.Field("DrinksServed"),
+        add(machine.Field("DrinksServed"), model.Lit(1)),
+    ).
+    Set(machine.Field("LastDrink"), model.Lit("cappuccino")).
+    Set(
+        machine.Field("LastChangeKopecks"),
+        model.Ref("output.changeKopecks"),
+    ).
+    Set(
+        machine.Field("LastDispensed"),
+        model.Ref("output.dispensed"),
+    )
 ```
 
-## Activity policy and idempotency
+## Monetary invariants
 
-```go
-definition.Policy("hardwarePolicy").
-    Retry(2).
-    Timeout(10 * time.Second).
-    Concurrency("once").
-    Idempotency("required")
+Two equations are checked after each transition.
 
-definition.Activity("DispenseCappuccino").
-    Input("purchaseId", cappuccinoRequested.Field("PurchaseID")).
-    Input("priceKopecks", model.Lit(14000)).
-    Input("changeKopecks", cappuccinoChange).
-    Output("dispensed", "Bool").
-    Effect("external").
-    IdempotencyKey(cappuccinoRequested.Field("PurchaseID")).
-    Policy("hardwarePolicy")
-```
-
-If the hardware handler fails, accounting and inventory writes from that transition are not committed.
-
-This example uses the regular compiled runtime because its accounting claims contain arithmetic expressions that the strict fast runtime intentionally rejects today. Enable `WithProductionMode` only for models covered by the strict expression subset.
-
-## Accounting invariants
-
-After each transition Axiom checks:
+### Conservation of money
 
 ```text
 accepted = returned + revenue + current credit
-cashbox = revenue + current credit
 ```
-
-The second equation assumes no opening change float. A real machine can add `OpeningFloatKopecks` to the right side.
 
 ```go
 definition.Claim(
@@ -197,36 +337,66 @@ definition.Claim(
         machine.Field("AcceptedKopecks"),
         add(
             machine.Field("ReturnedKopecks"),
-            add(machine.Field("RevenueKopecks"), machine.Field("CreditKopecks")),
+            add(
+                machine.Field("RevenueKopecks"),
+                machine.Field("CreditKopecks"),
+            ),
         ),
     ),
 )
 ```
 
-## Example accounting sequence
+### Physical cashbox reconciliation
 
-| Step | Action | Credit | Accepted | Returned | Revenue | Cashbox |
+For a machine with no opening change float:
+
+```text
+cashbox = revenue + current credit
+```
+
+With an opening float, add `OpeningFloatKopecks` to the right-hand side. A separate claim prevents negative money and stock values.
+
+## Money movement
+
+| Step | Operation | Credit | Accepted | Returned | Revenue | Cashbox |
 |---:|---|---:|---:|---:|---:|---:|
-| 0 | Initial state | 0 | 0 | 0 | 0 | 0 |
-| 1 | Insert 200 RUB | 200 | 200 | 0 | 0 | 200 |
-| 2 | Cappuccino, 60 RUB change | 0 | 200 | 60 | 140 | 140 |
-| 3 | Insert 100 RUB | 100 | 300 | 60 | 140 | 240 |
-| 4 | Espresso, 10 RUB change | 0 | 300 | 70 | 230 | 230 |
-| 5 | Insert 50 RUB | 50 | 350 | 70 | 230 | 280 |
-| 6 | Cancel and refund 50 RUB | 0 | 350 | 120 | 230 | 230 |
+| 0 | Initial state | 0 RUB | 0 RUB | 0 RUB | 0 RUB | 0 RUB |
+| 1 | Insert 200 RUB | 200 RUB | 200 RUB | 0 RUB | 0 RUB | 200 RUB |
+| 2 | Cappuccino 140 RUB, change 60 RUB | 0 RUB | 200 RUB | 60 RUB | 140 RUB | 140 RUB |
+| 3 | Insert 100 RUB | 100 RUB | 300 RUB | 60 RUB | 140 RUB | 240 RUB |
+| 4 | Espresso 90 RUB, change 10 RUB | 0 RUB | 300 RUB | 70 RUB | 230 RUB | 230 RUB |
+| 5 | Insert 50 RUB | 50 RUB | 350 RUB | 70 RUB | 230 RUB | 280 RUB |
+| 6 | Cancel and refund 50 RUB | 0 RUB | 350 RUB | 120 RUB | 230 RUB | 230 RUB |
 
 Final checks:
 
 ```text
-350 = 120 + 230 + 0
-230 = 230 + 0
+350 RUB = 120 RUB + 230 RUB + 0 RUB
+230 RUB = 230 RUB + 0 RUB
 ```
 
-## Run and replay
+Resource balances after two drinks:
+
+| Resource | Initial | Used | Remaining |
+|---|---:|---:|---:|
+| Water | 2,000 ml | 100 ml | 1,900 ml |
+| Beans | 500 g | 18 g | 482 g |
+| Milk | 1,000 ml | 120 ml | 880 ml |
+| Cups | 50 | 2 | 48 |
+
+## Compile, persist and run
 
 ```go
 plan, err := definition.Compile()
+if err != nil {
+    return err
+}
+
 store, err := axiom.OpenPebble("data/coffee-machine")
+if err != nil {
+    return err
+}
+defer store.Close()
 
 engine, err := plan.New(
     axiom.WithStore(store),
@@ -234,55 +404,85 @@ engine, err := plan.New(
     axiom.Act("DispenseCappuccino", dispenseCappuccino),
     axiom.Act("ReturnMoney", returnMoney),
 )
+if err != nil {
+    return err
+}
 
 run := engine.Execution("coffee-machine-01")
 _ = run.Dispatch(ctx, MoneyInserted{AmountKopecks: 20000})
 _ = run.Dispatch(ctx, CappuccinoRequested{PurchaseID: "sale-0001"})
-
-var state Machine
-_ = run.State(ctx, &state)
-
-history, err := run.History(ctx)
-replayed, err := axiom.ReplayFromHistory(plan.Module(), history)
 ```
 
-Run the complete program:
+Pebble provides transactional persistence but does not implicitly enable strict fast runtime. `WithStrictFastRuntime` and `WithProductionMode` are explicit. This example uses the regular compiled runtime because its accounting claims contain arithmetic expressions.
+
+## History and replay
+
+```go
+var state Machine
+if err := run.State(ctx, &state); err != nil {
+    return err
+}
+
+history, err := run.History(ctx)
+if err != nil {
+    return err
+}
+
+replayed, err := axiom.ReplayFromHistory(
+    plan.Module(),
+    history,
+)
+```
+
+Replay verifies the compiled-plan hash, preventing accidental replay with another model version.
+
+## Run the example
 
 ```bash
 go run ./examples/coffee-machine
 ```
 
+Expected result:
+
+```text
+accepted: 350.00 RUB
+returned: 120.00 RUB
+revenue:  230.00 RUB
+cashbox:  230.00 RUB
+credit:   0.00 RUB
+drinks:   2
+water:    1900 ml
+beans:    482 g
+milk:     880 ml
+cups:     48
+```
+
+The program itself prints Russian labels because the Russian README is the primary documentation. CI executes the example and verifies the monetary totals rather than only compiling it.
+
 ## What the example demonstrates
 
-| Axiom property | Result in the machine |
+| Capability | Result |
 |---|---|
-| Model compilation | Field, type and expression errors are found before accepting money |
-| Claims | Broken accounting or negative stock aborts a transition |
-| Transactional store | Money, stock and history cannot be partially committed |
-| Idempotent activity | Repeated work does not intentionally dispense a second drink |
-| Per-execution serialization | Concurrent signals for one machine do not lose updates |
-| History | Accepted money, sales, change and refunds can be audited |
-| Replay | State can be rebuilt after controller replacement or audit |
+| Typed events | Callers cannot submit arbitrary fields |
+| Model compilation | Field, type, policy and activity errors are found before runtime |
+| Rule conditions | Insufficient money or stock blocks a sale |
+| Activity boundary | Physical work is separated from accounting rules |
+| Idempotency | Repeated work is linked to the same `PurchaseID` |
+| Claims | A broken monetary balance aborts the transition |
+| Pebble | State and history are persisted transactionally |
+| `execution ID` | Events for one machine are processed sequentially |
+| History | Money, sales, change, refunds and activity results are auditable |
+| Replay | State can be rebuilt from the journal |
 
 # API choices
 
 | API | Use when | Files | Static analysis |
 |---|---|---:|---:|
-| Typed Go Flow | Small local state machine with arbitrary Go logic | No | Opaque |
-| Declarative Go model | Rules and invariants must be checked before runtime | No | Full |
-| AXM | A versioned model is stored outside the application | Yes | Full |
-| TOML | Transition tables are configuration | Yes | Full |
-| Low-level runtime | Explicit `Start`, `Signal`, `Patch` and `RunUntilIdle` control is required | Optional | Depends on source |
-
-## AXM and TOML
-
-```go
-axmPlan, err := axm.Load("workflow.axm")
-axmEngine, err := axmPlan.New()
-
-tablePlan, err := table.Load("workflow.toml")
-tableEngine, err := tablePlan.New()
-```
+| Typed Go Flow | Small state machine with arbitrary Go logic | No | Opaque |
+| Declarative Go model | Rules, activities and claims must be validated | No | Full |
+| AXM | Versioned model outside the application | Yes | Full |
+| TOML | Transition table stored as configuration | Yes | Full |
+| Low-level runtime | Explicit `Start`, `Signal`, `Patch`, `RunUntilIdle` control | Optional | Depends on model |
 
 ## Execution API
 
@@ -311,6 +511,8 @@ store, err = axiom.OpenPebble(
 )
 ```
 
+`WithProductionMode` requires a transactional store and enables strict fast runtime. Models using expressions outside the strict subset are rejected when the engine is created.
+
 ## Concurrency
 
 Within one process and one `Engine`:
@@ -318,14 +520,13 @@ Within one process and one `Engine`:
 - operations for one `execution ID` are serialized;
 - different execution IDs can run concurrently;
 - state and history are atomic with a transactional store;
-- Pebble transactions do not replace the shared store object;
-- integer values remain integers after Pebble reopen.
+- integer types survive Pebble reopen.
 
-Multiple processes need an ownership router, distributed lock or a store with equivalent guarantees.
+Multiple processes require an ownership router, distributed lock or a store with equivalent guarantees.
 
 ## Performance baseline
 
-Measured on a shared GitHub-hosted `linux/amd64` runner, Go 1.26.5, 4 logical CPUs, concurrency 8. These figures are for coarse regression detection, not hardware-independent SLAs.
+Measured on a shared GitHub-hosted `linux/amd64` runner, Go 1.26.5, 4 logical CPUs and concurrency 8. These figures are for coarse regression detection, not hardware-independent SLAs.
 
 | Scenario | p95 | p99 | Throughput |
 |---|---:|---:|---:|
@@ -333,7 +534,6 @@ Measured on a shared GitHub-hosted `linux/amd64` runner, Go 1.26.5, 4 logical CP
 | Go Flow, one contended execution | 20.777 ms | 24.880 ms | 772 ops/s |
 | Compiled runtime, distinct executions | 0.505 ms | 3.011 ms | 55,011 ops/s |
 | Compiled runtime, one contended execution | 1.085 ms | 1.437 ms | 50,938 ops/s |
-| Cold memory execution | 0.800 ms | 4.058 ms | 40,239 ops/s |
 | Pebble NoSync | 3.904 ms | 5.061 ms | 8,773 ops/s |
 | Pebble Sync | 8.688 ms | 10.225 ms | 1,437 ops/s |
 | Replay of 1,000 events | 1.977 ms | 2.541 ms | 761 runs/s |
@@ -348,7 +548,20 @@ git diff --exit-code -- go.mod go.sum
 go test ./...
 go test -race . ./internal/runtime/... ./internal/store/...
 go vet ./...
+go run ./examples/coffee-machine
 ```
+
+## Packages
+
+| Package | Purpose |
+|---|---|
+| `github.com/Homiakus/axiom` | `Plan`, runtime, execution API and Typed Go Flow |
+| `github.com/Homiakus/axiom/model` | Declarative Go model |
+| `github.com/Homiakus/axiom/axm` | AXM frontend |
+| `github.com/Homiakus/axiom/table` | TOML frontend |
+| `github.com/Homiakus/axiom/store/pebble` | Pebble storage |
+| `github.com/Homiakus/axiom/cmd/axiomgen` | Typed-boundary generator |
+| `github.com/Homiakus/axiom/cmd/axiombench` | Percentile benchmark harness |
 
 ## License
 
