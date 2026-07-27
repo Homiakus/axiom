@@ -455,10 +455,9 @@ func New(module *Module, opts ...Option) (*Engine, error) {
 		}
 	}
 
-	// Transactional store → enable strict fast runtime.
-	if _, ok := cfg.store.(runtimepkg.TransactionalStore); ok {
-		cfg.strictFast = true
-	}
+	// Durability and expression mode are independent. A transactional store
+	// such as Pebble must not silently enable strict expression validation.
+	// Strict mode is enabled only by WithStrictFastRuntime or WithProductionMode.
 
 	// Validate activities match the module.
 	if err := validateActivityConfig(module, cfg.activities); err != nil {
