@@ -9,3 +9,5 @@ Axiom exposes three frontends over one execution model:
 All declarative frontends compile to `axiom.Plan`. The runtime consumes the compiled module contained by the Plan and does not depend on the source format.
 
 The typed reducer API is intentionally marked `AnalysisOpaque`, because arbitrary Go handlers cannot be converted into a complete static dependency graph. The `model`, `axm`, and `table` frontends use `AnalysisStatic`.
+
+`axiomgen` accepts serialized AXM and TOML plans and generates the same typed activity boundary for either frontend.
