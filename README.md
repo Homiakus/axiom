@@ -8,34 +8,35 @@
 
 Axiom — библиотека для описания и исполнения переходов состояния, бизнес-процессов и таблиц решений на Go.
 
-Она нужна там, где недостаточно просто изменить структуру в памяти. Axiom связывает в одной модели:
+Она нужна, когда изменение состояния должно быть не только выполнено, но и проверено, записано и при необходимости воспроизведено. В одной модели можно связать:
 
 - типизированные события;
-- правила изменения состояния;
-- проверяемые инварианты;
-- внешние операции с политиками повторов и идемпотентности;
+- правила переходов;
+- инварианты состояния;
+- внешние операции с повторами и ключами идемпотентности;
 - транзакционное хранение;
-- историю, объяснение результата и повторное воспроизведение.
+- историю, объяснение результата и replay.
 
-Файлы описания не обязательны. Процесс можно задать обычным Go-кодом, декларативной Go-моделью, AXM или TOML. Декларативные варианты компилируются в один `axiom.Plan` и используют общий исполнитель.
+Файлы описания не обязательны. Процесс можно задать обычным Go-кодом, декларативной Go-моделью, AXM или TOML. Декларативные варианты компилируются в один `axiom.Plan` и исполняются общим runtime.
 
 ## Когда Axiom подходит
 
-Axiom полезен, если состояние принадлежит конкретной сущности — заказу, заявке, устройству, партии продукции — и каждое изменение должно быть проверено и записано.
+Axiom полезен, если состояние принадлежит конкретной сущности — заказу, заявке, устройству, партии продукции, банковской операции — и каждое изменение должно быть проверено и записано.
 
 Типичные задачи:
 
+- управление состояниями оборудования;
+- расчёт и контроль денежных потоков;
 - обработка заказов и платежей;
 - согласования и многошаговые заявки;
-- управление состояниями оборудования;
 - фоновые операции с повторами;
 - таблицы решений;
 - восстановление состояния из истории;
-- аудит причин, по которым сработало правило.
+- аудит причин срабатывания правил.
 
 ## Когда Axiom не нужен
 
-Не стоит использовать Axiom для простого CRUD без переходов и инвариантов. Библиотека также не заменяет очередь сообщений, распределённый планировщик или систему межпроцессной блокировки. Сериализация одного `execution ID` гарантируется внутри одного экземпляра `Engine`; распределённое владение нужно организовать отдельно.
+Axiom избыточен для простого CRUD без переходов и инвариантов. Библиотека не заменяет брокер сообщений, распределённый планировщик или межпроцессную блокировку. Сериализация одного `execution ID` гарантируется внутри одного экземпляра `Engine`; распределённое владение нужно организовать отдельно.
 
 ## Установка
 
@@ -45,78 +46,350 @@ Axiom полезен, если состояние принадлежит кон�
 go get github.com/Homiakus/axiom
 ```
 
-## Основной пример: оплата заказа и отправка чека
+# Основной пример: кофейный автомат
 
-В примере есть один заказ и два события:
+Пример показывает один физический автомат, который:
 
-1. `OrderCreated` записывает номер заказа, адрес покупателя и сумму.
-2. `PaymentCaptured` записывает идентификатор платежа и переводит заказ в оплаченное состояние.
-3. После оплаты запускается внешняя операция `SendReceipt`.
-4. Инварианты запрещают оплаченное состояние без идентификатора платежа и отправленный чек без оплаты.
-5. Состояние и история сохраняются в Pebble и могут быть восстановлены повторным воспроизведением.
+- принимает деньги;
+- хранит текущий кредит покупателя;
+- проверяет цену и остатки ингредиентов;
+- готовит эспрессо или капучино;
+- выдаёт сдачу;
+- возвращает деньги при отмене;
+- ведёт выручку и физическую кассу;
+- сохраняет историю операций в Pebble;
+- восстанавливает состояние через replay.
 
-Ниже показана основная часть модели. Полный запускаемый пример находится в [`examples/order/main.go`](examples/order/main.go).
+Полный запускаемый код находится в [`examples/coffee-machine/main.go`](examples/coffee-machine/main.go).
+
+## Меню и расход ингредиентов
+
+Все денежные значения хранятся в копейках. Например, `14000` означает `140,00 ₽`. Для денег не используется `float64`.
+
+| Напиток | Цена | Вода | Кофе | Молоко | Стакан |
+|---|---:|---:|---:|---:|---:|
+| Эспрессо | 90,00 ₽ | 40 мл | 8 г | — | 1 |
+| Капучино | 140,00 ₽ | 60 мл | 10 г | 120 мл | 1 |
+
+Цена и рецепт находятся в модели, а не приходят от клиента. Поэтому событие `CappuccinoRequested` не может подменить цену или уменьшить расход молока.
+
+## Состояние автомата
+
+| Поле | Что хранит | Изменяется когда |
+|---|---|---|
+| `CreditKopecks` | Деньги текущего покупателя | Внесение денег, покупка, отмена |
+| `AcceptedKopecks` | Сколько денег автомат принял за всё время | Внесение денег |
+| `ReturnedKopecks` | Сумма сдачи и отменённых покупок | Покупка, отмена |
+| `RevenueKopecks` | Оплаченные напитки | Успешная покупка |
+| `CashboxKopecks` | Физические деньги в кассе | Внесение, сдача, возврат |
+| `WaterML`, `BeansG`, `MilkML`, `Cups` | Остатки ингредиентов | Успешная выдача напитка |
+| `DrinksServed` | Число выданных напитков | Успешная выдача |
+| `LastDrink`, `LastChangeKopecks` | Данные для экрана и журнала | Покупка или возврат |
 
 ```go
-definition := model.New("Order").Version("1")
+// Все суммы — в копейках. Это исключает ошибки округления денег.
+type Machine struct {
+    CreditKopecks   int `json:"creditKopecks"`
+    AcceptedKopecks int `json:"acceptedKopecks"`
+    ReturnedKopecks int `json:"returnedKopecks"`
+    RevenueKopecks  int `json:"revenueKopecks"`
+    CashboxKopecks  int `json:"cashboxKopecks"`
 
-order := model.State[Order](definition, "Order").
-    Default("Paid", false).
-    Default("ReceiptSent", false)
+    WaterML int `json:"waterML"`
+    BeansG  int `json:"beansG"`
+    MilkML  int `json:"milkML"`
+    Cups    int `json:"cups"`
 
-created := model.Event[OrderCreated](definition, "OrderCreated")
-captured := model.Event[PaymentCaptured](definition, "PaymentCaptured")
+    DrinksServed      int    `json:"drinksServed"`
+    LastDrink         string `json:"lastDrink"`
+    LastChangeKopecks int    `json:"lastChangeKopecks"`
+    LastDispensed     bool   `json:"lastDispensed"`
+}
+```
 
-definition.Policy("receiptPolicy").
-    Retry(3).
-    Timeout(3 * time.Second).
+## События
+
+| Событие | Источник | Назначение |
+|---|---|---|
+| `MoneyInserted` | Монетоприёмник или платёжный терминал | Увеличить кредит и кассу |
+| `EspressoRequested` | Кнопка эспрессо | Проверить условия и приготовить эспрессо |
+| `CappuccinoRequested` | Кнопка капучино | Проверить условия и приготовить капучино |
+| `CancelRequested` | Кнопка отмены | Вернуть весь текущий кредит |
+
+```go
+type MoneyInserted struct {
+    AmountKopecks int `json:"amountKopecks"`
+}
+
+func (MoneyInserted) AxiomEventName() string { return "MoneyInserted" }
+
+type CappuccinoRequested struct {
+    // Используется как ключ идемпотентности внешней операции.
+    PurchaseID string `json:"purchaseId"`
+}
+
+func (CappuccinoRequested) AxiomEventName() string {
+    return "CappuccinoRequested"
+}
+```
+
+## Таблица переходов
+
+| Событие | Условие | Изменения состояния | Внешняя операция |
+|---|---|---|---|
+| `MoneyInserted` | `amount > 0` | `credit += amount`, `accepted += amount`, `cashbox += amount` | Нет |
+| `EspressoRequested` | Кредит ≥ 90 ₽, вода ≥ 40 мл, кофе ≥ 8 г, есть стакан | Выручка +90 ₽, списание ингредиентов, кредит → 0, расчёт сдачи | `DispenseEspresso` |
+| `CappuccinoRequested` | Кредит ≥ 140 ₽, вода ≥ 60 мл, кофе ≥ 10 г, молоко ≥ 120 мл, есть стакан | Выручка +140 ₽, списание ингредиентов, кредит → 0, расчёт сдачи | `DispenseCappuccino` |
+| `CancelRequested` | Кредит > 0 | Касса уменьшается на кредит, кредит → 0, возврат увеличивается | `ReturnMoney` |
+
+Если условие перехода не выполнено, правило не запускается. Например, при кредите 100 ₽ событие `CappuccinoRequested` не выдаст напиток и не изменит денежные счётчики.
+
+## Инициализация модели
+
+```go
+definition := model.New("CoffeeMachine").Version("1")
+
+machine := model.State[Machine](definition, "Machine").
+    Default("CreditKopecks", 0).
+    Default("AcceptedKopecks", 0).
+    Default("ReturnedKopecks", 0).
+    Default("RevenueKopecks", 0).
+    Default("CashboxKopecks", 0).
+    Default("WaterML", 2000).
+    Default("BeansG", 500).
+    Default("MilkML", 1000).
+    Default("Cups", 50).
+    Default("DrinksServed", 0)
+
+moneyInserted := model.Event[MoneyInserted](definition, "MoneyInserted")
+espressoRequested := model.Event[EspressoRequested](definition, "EspressoRequested")
+cappuccinoRequested := model.Event[CappuccinoRequested](definition, "CappuccinoRequested")
+cancelRequested := model.Event[CancelRequested](definition, "CancelRequested")
+```
+
+## Приём денег
+
+Три счётчика изменяются одним переходом. Если запись в хранилище завершится ошибкой, переход не должен оставить частично обновлённое состояние.
+
+```go
+definition.Rule("acceptMoney").
+    On(moneyInserted.Trigger()).
+    When(model.GT(
+        moneyInserted.Field("AmountKopecks"),
+        model.Lit(0),
+    )).
+    // Кредит текущего покупателя.
+    Set(
+        machine.Field("CreditKopecks"),
+        add(
+            machine.Field("CreditKopecks"),
+            moneyInserted.Field("AmountKopecks"),
+        ),
+    ).
+    // Общая сумма всех принятых средств.
+    Set(
+        machine.Field("AcceptedKopecks"),
+        add(
+            machine.Field("AcceptedKopecks"),
+            moneyInserted.Field("AmountKopecks"),
+        ),
+    ).
+    // Монета уже физически находится внутри автомата.
+    Set(
+        machine.Field("CashboxKopecks"),
+        add(
+            machine.Field("CashboxKopecks"),
+            moneyInserted.Field("AmountKopecks"),
+        ),
+    )
+```
+
+`add` и `sub` — небольшие функции для построения арифметических выражений модели:
+
+```go
+func add(left, right model.Expr) model.Expr {
+    return model.Raw(fmt.Sprintf("(%s + %s)", left, right))
+}
+
+func sub(left, right model.Expr) model.Expr {
+    return model.Raw(fmt.Sprintf("(%s - %s)", left, right))
+}
+```
+
+## Продажа капучино
+
+Цена и расход ингредиентов заданы константами приложения. Событие содержит только идентификатор покупки.
+
+```go
+const (
+    cappuccinoPriceKopecks = 14000
+    cappuccinoWaterML      = 60
+    cappuccinoBeansG       = 10
+    cappuccinoMilkML       = 120
+)
+
+// Сдача вычисляется из состояния до перехода.
+cappuccinoChange := sub(
+    machine.Field("CreditKopecks"),
+    model.Lit(cappuccinoPriceKopecks),
+)
+
+definition.Rule("sellCappuccino").
+    On(cappuccinoRequested.Trigger()).
+    When(
+        // Недостаточный кредит или ингредиенты блокируют переход.
+        model.GTE(machine.Field("CreditKopecks"), model.Lit(cappuccinoPriceKopecks)),
+        model.GTE(machine.Field("WaterML"), model.Lit(cappuccinoWaterML)),
+        model.GTE(machine.Field("BeansG"), model.Lit(cappuccinoBeansG)),
+        model.GTE(machine.Field("MilkML"), model.Lit(cappuccinoMilkML)),
+        model.GTE(machine.Field("Cups"), model.Lit(1)),
+    ).
+    // Сначала выполняется операция с реальным оборудованием.
+    Run("DispenseCappuccino").
+    // После успешной операции фиксируется единый переход состояния.
+    Set(machine.Field("CreditKopecks"), model.Lit(0)).
+    Set(
+        machine.Field("ReturnedKopecks"),
+        add(machine.Field("ReturnedKopecks"), cappuccinoChange),
+    ).
+    Set(
+        machine.Field("RevenueKopecks"),
+        add(machine.Field("RevenueKopecks"), model.Lit(cappuccinoPriceKopecks)),
+    ).
+    Set(
+        machine.Field("CashboxKopecks"),
+        sub(machine.Field("CashboxKopecks"), cappuccinoChange),
+    ).
+    Set(machine.Field("WaterML"), sub(machine.Field("WaterML"), model.Lit(60))).
+    Set(machine.Field("BeansG"), sub(machine.Field("BeansG"), model.Lit(10))).
+    Set(machine.Field("MilkML"), sub(machine.Field("MilkML"), model.Lit(120))).
+    Set(machine.Field("Cups"), sub(machine.Field("Cups"), model.Lit(1))).
+    Set(
+        machine.Field("DrinksServed"),
+        add(machine.Field("DrinksServed"), model.Lit(1)),
+    ).
+    Set(machine.Field("LastDrink"), model.Lit("cappuccino")).
+    Set(machine.Field("LastChangeKopecks"), cappuccinoChange).
+    Set(machine.Field("LastDispensed"), model.Ref("output.dispensed"))
+```
+
+## Внешняя операция и идемпотентность
+
+Приготовление напитка воздействует на реальное оборудование. Повтор одного и того же задания не должен выдать второй стакан, поэтому `PurchaseID` используется как ключ идемпотентности.
+
+```go
+definition.Policy("hardwarePolicy").
+    Retry(2).
+    Timeout(10 * time.Second).
     Concurrency("once").
     Idempotency("required")
 
-definition.Activity("SendReceipt").
-    Input("orderId", order.Field("ID")).
-    Input("email", order.Field("CustomerEmail")).
-    Input("paymentId", order.Field("PaymentID")).
-    Output("sent", "Bool").
+definition.Activity("DispenseCappuccino").
+    Input("purchaseId", cappuccinoRequested.Field("PurchaseID")).
+    Input("priceKopecks", model.Lit(cappuccinoPriceKopecks)).
+    Input("changeKopecks", cappuccinoChange).
+    Output("dispensed", "Bool").
     Effect("external").
-    IdempotencyKey(order.Field("PaymentID")).
-    Policy("receiptPolicy")
+    IdempotencyKey(cappuccinoRequested.Field("PurchaseID")).
+    Policy("hardwarePolicy")
+```
 
-definition.Rule("createOrder").
-    On(created.Trigger()).
-    Set(order.Field("ID"), created.Field("OrderID")).
-    Set(order.Field("CustomerEmail"), created.Field("CustomerEmail")).
-    Set(order.Field("Total"), created.Field("Total"))
+Обработчик подключается при создании `Engine`:
 
-definition.Rule("capturePayment").
-    On(captured.Trigger()).
-    Set(order.Field("PaymentID"), captured.Field("PaymentID")).
-    Set(order.Field("Paid"), model.Lit(true))
-
-definition.Rule("sendReceipt").
-    On(order.Changed("Paid")).
-    When(model.Eq(order.Field("Paid"), model.Lit(true))).
-    Run("SendReceipt").
-    Set(order.Field("ReceiptSent"), model.Ref("output.sent"))
-
-definition.Claim(
-    "paidOrderHasPaymentID",
-    model.Implies(
-        model.Eq(order.Field("Paid"), model.Lit(true)),
-        model.Exists(order.Field("PaymentID")),
-    ),
+```go
+engine, err := plan.New(
+    axiom.WithStore(store),
+    axiom.WithProductionMode(),
+    axiom.Act("DispenseCappuccino", func(
+        ctx context.Context,
+        input axiom.Input,
+    ) (axiom.Output, error) {
+        // Здесь находятся команды контроллеру кофемолки, насоса,
+        // нагревателя и механизма выдачи сдачи.
+        return axiom.Output{"dispensed": true}, nil
+    }),
 )
+```
 
+Если обработчик вернёт ошибку, денежные и складские изменения перехода не должны быть зафиксированы.
+
+## Денежные инварианты
+
+После каждого перехода Axiom проверяет два равенства.
+
+### Сохранение денег
+
+```text
+принято = возвращено + выручка + текущий кредит
+```
+
+```go
 definition.Claim(
-    "receiptRequiresPayment",
-    model.Implies(
-        model.Eq(order.Field("ReceiptSent"), model.Lit(true)),
-        model.Eq(order.Field("Paid"), model.Lit(true)),
+    "moneyIsConserved",
+    model.Eq(
+        machine.Field("AcceptedKopecks"),
+        add(
+            machine.Field("ReturnedKopecks"),
+            add(
+                machine.Field("RevenueKopecks"),
+                machine.Field("CreditKopecks"),
+            ),
+        ),
     ),
 )
 ```
 
-Компиляция модели, подключение хранилища и исполнение событий:
+### Сверка физической кассы
+
+Для автомата без начального разменного фонда:
+
+```text
+касса = выручка + текущий кредит
+```
+
+```go
+definition.Claim(
+    "cashboxMatchesAccounting",
+    model.Eq(
+        machine.Field("CashboxKopecks"),
+        add(
+            machine.Field("RevenueKopecks"),
+            machine.Field("CreditKopecks"),
+        ),
+    ),
+)
+```
+
+Если в реальном автомате есть стартовый разменный фонд, в состояние добавляется `OpeningFloatKopecks`, а равенство принимает вид:
+
+```text
+касса = стартовый разменный фонд + выручка + текущий кредит
+```
+
+Отдельный `Claim` запрещает отрицательные деньги и остатки ингредиентов.
+
+## Разбор трёх операций
+
+Пример выполняет две продажи и одну отмену.
+
+| Шаг | Действие | Кредит после шага | Принято всего | Возвращено всего | Выручка | Касса |
+|---:|---|---:|---:|---:|---:|---:|
+| 0 | Начальное состояние | 0 ₽ | 0 ₽ | 0 ₽ | 0 ₽ | 0 ₽ |
+| 1 | Внесено 200 ₽ | 200 ₽ | 200 ₽ | 0 ₽ | 0 ₽ | 200 ₽ |
+| 2 | Куплен капучино за 140 ₽, сдача 60 ₽ | 0 ₽ | 200 ₽ | 60 ₽ | 140 ₽ | 140 ₽ |
+| 3 | Внесено 100 ₽ | 100 ₽ | 300 ₽ | 60 ₽ | 140 ₽ | 240 ₽ |
+| 4 | Куплен эспрессо за 90 ₽, сдача 10 ₽ | 0 ₽ | 300 ₽ | 70 ₽ | 230 ₽ | 230 ₽ |
+| 5 | Внесено 50 ₽ | 50 ₽ | 350 ₽ | 70 ₽ | 230 ₽ | 280 ₽ |
+| 6 | Покупка отменена, возвращено 50 ₽ | 0 ₽ | 350 ₽ | 120 ₽ | 230 ₽ | 230 ₽ |
+
+Итоговая проверка:
+
+```text
+350 ₽ = 120 ₽ + 230 ₽ + 0 ₽
+230 ₽ = 230 ₽ + 0 ₽
+```
+
+## Запуск и replay
 
 ```go
 plan, err := definition.Compile()
@@ -124,7 +397,7 @@ if err != nil {
     return err
 }
 
-store, err := axiom.OpenPebble("data/orders")
+store, err := axiom.OpenPebble("data/coffee-machine")
 if err != nil {
     return err
 }
@@ -132,58 +405,64 @@ defer store.Close()
 
 engine, err := plan.New(
     axiom.WithStore(store),
-    axiom.Act("SendReceipt", sendReceipt),
+    axiom.WithProductionMode(),
+    axiom.Act("DispenseEspresso", dispenseEspresso),
+    axiom.Act("DispenseCappuccino", dispenseCappuccino),
+    axiom.Act("ReturnMoney", returnMoney),
 )
 if err != nil {
     return err
 }
 
-run := engine.Execution("order-42")
+// Один execution ID соответствует одному физическому автомату.
+run := engine.Execution("coffee-machine-01")
 
-if err := run.Dispatch(ctx, OrderCreated{
-    OrderID:       "order-42",
-    CustomerEmail: "customer@example.com",
-    Total:         12900,
-}); err != nil {
-    return err
-}
+_ = run.Dispatch(ctx, MoneyInserted{AmountKopecks: 20000})
+_ = run.Dispatch(ctx, CappuccinoRequested{PurchaseID: "sale-0001"})
 
-if err := run.Dispatch(ctx, PaymentCaptured{
-    PaymentID: "pay-9001",
-}); err != nil {
-    return err
-}
-
-var state Order
-if err := run.State(ctx, &state); err != nil {
-    return err
-}
+var state Machine
+_ = run.State(ctx, &state)
 
 history, err := run.History(ctx)
 if err != nil {
     return err
 }
 
+// Состояние строится заново из истории. Runtime проверяет хеш плана.
 replayed, err := axiom.ReplayFromHistory(plan.Module(), history)
 ```
-
-### Что показывает этот пример
-
-- Ошибки в именах полей, типах выражений, правилах и инвариантах обнаруживаются при `Compile`, до обработки событий.
-- Если переход нарушает `Claim`, новое состояние и история не фиксируются.
-- Внешняя операция отделена от правил и получает явную политику повторов и ключ идемпотентности.
-- `Dispatch` создаёт экземпляр процесса при первом событии и выполняет встроенные операции до состояния ожидания.
-- Два параллельных вызова для одного `execution ID` выполняются последовательно и не теряют обновления.
-- История содержит входные события, записи состояния и результаты внешних операций.
-- `ReplayFromHistory` восстанавливает состояние с той же версией скомпилированного плана.
 
 Запуск полного примера:
 
 ```bash
-go run ./examples/order
+go run ./examples/coffee-machine
 ```
 
-## Выбор способа описания процесса
+Ожидаемый финансовый итог:
+
+```text
+принято:    350,00 ₽
+возвращено: 120,00 ₽
+выручка:    230,00 ₽
+касса:      230,00 ₽
+кредит:     0,00 ₽
+напитков:   2
+```
+
+## Что показывает пример
+
+| Свойство Axiom | Практический результат в автомате |
+|---|---|
+| Компиляция модели | Ошибки в именах полей, типах выражений и правилах обнаруживаются до приёма денег |
+| `Claim` | Ошибка в формуле кассы или списании ингредиентов откатывает переход |
+| Транзакционное хранилище | Деньги, ингредиенты и история не расходятся из-за частичной записи |
+| Идемпотентная activity | Повтор задания не должен выдать второй напиток |
+| Сериализация `execution ID` | Параллельные сигналы одного автомата не теряют обновления |
+| История | Можно восстановить последовательность монет, продаж, сдачи и отмен |
+| Replay | Состояние восстанавливается после замены контроллера или проверки журнала |
+| Единый `Plan` | Ту же модель можно получать из Go, AXM или TOML |
+
+# Выбор способа описания процесса
 
 | Способ | Когда использовать | Отдельные файлы | Статический анализ |
 |---|---|---:|---:|
@@ -234,7 +513,7 @@ state, err := run.State(ctx)
 
 ## AXM и TOML
 
-AXM и TOML — только способы получить `axiom.Plan`; исполнитель от формата не зависит.
+AXM и TOML — способы получить `axiom.Plan`; исполнитель от формата не зависит.
 
 ```go
 axmPlan, err := axm.Load("workflow.axm")
@@ -255,11 +534,11 @@ tableEngine, err := tablePlan.New()
 ## API экземпляра процесса
 
 ```go
-run := engine.Execution("order-42")
+run := engine.Execution("coffee-machine-01")
 
-err := run.Dispatch(ctx, OrderCreated{OrderID: "order-42"})
+err := run.Dispatch(ctx, MoneyInserted{AmountKopecks: 10000})
 
-var state OrderState
+var state Machine
 err = run.State(ctx, &state)
 
 status, err := run.Status(ctx)
@@ -272,11 +551,11 @@ err = run.Cancel(ctx)
 Низкоуровневый API остаётся доступным:
 
 ```go
-err := engine.Start(ctx, "order-42", initialContext)
-err = engine.Signal(ctx, "order-42", "OrderCreated", payload)
-err = engine.Patch(ctx, "order-42", patch)
-result, err := engine.Query(ctx, "order-42", "state")
-err = engine.RunUntilIdle(ctx, "order-42")
+err := engine.Start(ctx, "coffee-machine-01", initialContext)
+err = engine.Signal(ctx, "coffee-machine-01", "MoneyInserted", payload)
+err = engine.Patch(ctx, "coffee-machine-01", patch)
+result, err := engine.Query(ctx, "coffee-machine-01", "state")
+err = engine.RunUntilIdle(ctx, "coffee-machine-01")
 ```
 
 ## Pebble и режимы записи
@@ -318,7 +597,7 @@ store, err = axiom.OpenPebble(
 ## История, объяснение и replay
 
 ```go
-history, err := engine.Execution("order-42").History(ctx)
+history, err := engine.Execution("coffee-machine-01").History(ctx)
 if err != nil {
     return err
 }
@@ -328,7 +607,7 @@ if err != nil {
     return err
 }
 
-explanation, err := engine.Execution("order-42").Explain(ctx)
+explanation, err := engine.Execution("coffee-machine-01").Explain(ctx)
 ```
 
 Для replay требуется та же версия плана, которая создала историю. Несовпадение хеша модуля считается ошибкой.
