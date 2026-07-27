@@ -83,7 +83,7 @@ rule start:
 }
 
 func TestHydroPilotMiniFixtureNormalizesAndCompiles(t *testing.T) {
-	path := filepath.Join("..", "..", "examples", "triz", "hydropilot_mini.axm")
+	path := filepath.Join("examples", "triz", "hydropilot_mini.axm")
 	source, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)

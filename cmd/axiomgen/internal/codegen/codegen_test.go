@@ -60,7 +60,7 @@ func TestGeneratedWelcomeWrapperRuns(t *testing.T) {
 	}
 	dir := t.TempDir()
 	repo := repoRoot(t)
-	writeFile(t, dir, "go.mod", []byte("module generatedtest\n\ngo 1.26\n\nrequire axiom v0.0.0\n\nreplace axiom => "+strconv.Quote(filepath.ToSlash(repo))+"\n"))
+	writeFile(t, dir, "go.mod", []byte("module generatedtest\n\ngo 1.26\n\nrequire github.com/Homiakus/axiom v0.0.0\n\nreplace github.com/Homiakus/axiom => "+strconv.Quote(filepath.ToSlash(repo))+"\n"))
 	for _, file := range files {
 		writeFile(t, dir, file.Name, file.Content)
 	}
