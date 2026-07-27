@@ -1,4 +1,4 @@
-module axiom-rule-studio-go
+module github.com/Homiakus/axiom
 
 go 1.26
 
@@ -34,4 +34,4 @@ require (
 	google.golang.org/protobuf v1.33.0 // indirect
 )
 
-replace axiom => ../axiom-main
+replace axiom => ./axiom-main
