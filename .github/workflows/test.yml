@@ -24,7 +24,22 @@ jobs:
           git diff --exit-code -- go.mod go.sum
 
       - name: Test all packages
-        run: go test ./...
+        shell: bash
+        run: |
+          mkdir -p test-artifacts
+          set +e
+          go test ./... 2>&1 | tee test-artifacts/go-test.log
+          status=${PIPESTATUS[0]}
+          set -e
+          exit "$status"
+
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: axiom-test-diagnostics
+          path: test-artifacts/
+          retention-days: 7
 
       - name: Race test critical packages
         run: go test -race . ./internal/runtime/... ./internal/store/...
