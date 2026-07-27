@@ -51,7 +51,20 @@ jobs:
           PY
 
           chmod +x /tmp/migrate.sh
-          bash -x /tmp/migrate.sh || true
+          bash -x /tmp/migrate.sh > /tmp/migration-output.txt 2>&1 || true
+          git status --short > /tmp/migration-status.txt
+          wc -l /tmp/migrate.sh /tmp/migration-output.txt /tmp/migration-status.txt
+
+      - name: Upload migration diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-diagnostics
+          path: |
+            /tmp/migrate.sh
+            /tmp/migration-output.txt
+            /tmp/migration-status.txt
+          if-no-files-found: warn
 
       - name: Commit transformed tree
         if: always()
