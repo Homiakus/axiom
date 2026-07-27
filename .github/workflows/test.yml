@@ -27,14 +27,11 @@ jobs:
         shell: bash
         run: |
           mkdir -p test-artifacts
-          set +e
+          set -o pipefail
           go test ./... 2>&1 | tee test-artifacts/go-test.log
-          status=${PIPESTATUS[0]}
-          set -e
-          exit "$status"
 
       - name: Upload test diagnostics
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: axiom-test-diagnostics
@@ -105,26 +102,22 @@ jobs:
           go-version: '1.26.x'
           cache: true
 
-      - name: Run p50 p95 p99 baseline
+      - name: Run p50 p95 p99 benchmark
         shell: bash
         run: |
           mkdir -p artifacts
-          set +e
+          set -o pipefail
           go run ./cmd/axiombench \
             -memory-ops 20000 \
             -pebble-ops 1000 \
             -replay-events 1000 \
             -replay-runs 200 \
             -concurrency 8 \
-            -strict=false \
+            -strict=true \
             -json artifacts/benchmark-results.json \
             -markdown artifacts/benchmark-results.md \
             2>&1 | tee artifacts/console.log
-          echo "${PIPESTATUS[0]}" > artifacts/exit-code.txt
-          set -e
-          if [[ -f artifacts/benchmark-results.md ]]; then
-            cat artifacts/benchmark-results.md >> "$GITHUB_STEP_SUMMARY"
-          fi
+          cat artifacts/benchmark-results.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload benchmark report
         if: always()
