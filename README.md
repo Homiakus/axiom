@@ -1,49 +1,51 @@
 # Axiom
 
+**Русский** · [English](README.en.md)
+
 [![CI](https://github.com/Homiakus/axiom/actions/workflows/test.yml/badge.svg)](https://github.com/Homiakus/axiom/actions/workflows/test.yml)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**Axiom is a deterministic state-transition, workflow and decision engine for Go.**
+**Axiom — детерминированный движок переходов состояния, бизнес-процессов и принятия решений для Go.**
 
-Use ordinary typed Go reducers for the shortest path, the declarative Go model when static validation matters, or AXM/TOML definitions when workflows must live outside application code. Every statically analyzable frontend compiles into the same canonical `axiom.Plan` and runs on the same deterministic runtime.
+Для быстрого старта используйте обычные типизированные Go-reducer-функции. Когда важны статическая проверка и анализ зависимостей — декларативную Go-модель. Если описание процесса должно храниться отдельно от приложения — AXM или TOML. Все статически анализируемые frontends компилируются в единый канонический `axiom.Plan` и исполняются одним детерминированным runtime.
 
-Axiom is designed for systems where state changes must be explainable, replayable and safe under concurrency: business workflows, control logic, approvals, orchestration, decision tables and durable background activities.
+Axiom предназначен для систем, где изменения состояния должны быть объяснимыми, воспроизводимыми и безопасными при конкурентной работе: бизнес-процессы, управляющая логика, согласования, оркестрация, таблицы решений и надёжные фоновые операции.
 
-## Why Axiom
+## Почему Axiom
 
-- **Go-first:** start without a DSL or generated files.
-- **Deterministic:** the same plan, state and event produce the same transition result.
-- **Typed boundaries:** dispatch named Go structs instead of hand-built maps.
-- **Static validation:** declarative models, AXM and TOML are validated before execution.
-- **Durable execution:** use the embedded Pebble store for transactional persistence.
-- **Replay and audit:** reconstruct state from history and inspect why rules fired.
-- **Concurrency safe:** updates to one execution are serialized; independent executions remain parallel.
-- **Activities:** isolate external side effects behind registered Go handlers.
-- **Claims:** enforce invariants as part of the transition model.
-- **Impact analysis:** compare compiled bundles and identify affected rules and fields.
+- **Go-first:** можно начать без DSL и сгенерированных файлов.
+- **Детерминированность:** одинаковые план, состояние и событие дают одинаковый результат перехода.
+- **Типизированные границы:** вместо ручных `map[string]any` отправляются именованные Go-структуры.
+- **Статическая проверка:** декларативные модели, AXM и TOML проверяются до запуска.
+- **Надёжное исполнение:** встроенное Pebble-хранилище обеспечивает транзакционную персистентность.
+- **Replay и аудит:** состояние восстанавливается из истории, а причины срабатывания правил можно изучить.
+- **Безопасная конкуренция:** изменения одного execution сериализуются, независимые execution выполняются параллельно.
+- **Activities:** внешние побочные эффекты изолируются в зарегистрированных Go-обработчиках.
+- **Claims:** инварианты проверяются как часть модели переходов.
+- **Impact analysis:** можно сравнивать скомпилированные bundles и определять затронутые правила и поля.
 
-## Install
+## Установка
 
-Axiom currently requires Go 1.26 or newer.
+Текущая версия Axiom требует Go 1.26 или новее.
 
 ```bash
 go get github.com/Homiakus/axiom
 ```
 
-## Choose an API
+## Выбор API
 
-| API | Best for | Files required | Static analysis |
+| API | Для каких задач | Нужны файлы | Статический анализ |
 |---|---|---:|---:|
-| Typed Go Flow | Application-local reducers, commands and state machines | No | Opaque |
-| Declarative Go Model | Validated workflows expressed entirely in Go | No | Full |
-| AXM frontend | Rich versioned workflow definitions | Yes | Full |
-| TOML table frontend | Transition tables maintained as configuration | Yes | Full |
-| Low-level runtime | Existing integrations and explicit lifecycle control | Optional | Depends on source |
+| Typed Go Flow | Локальные reducer-функции, команды и конечные автоматы | Нет | Непрозрачный |
+| Declarative Go Model | Проверяемые процессы, полностью описанные на Go | Нет | Полный |
+| AXM frontend | Богатые версионируемые описания процессов | Да | Полный |
+| TOML table frontend | Таблицы переходов, хранящиеся как конфигурация | Да | Полный |
+| Low-level runtime | Существующие интеграции и явное управление жизненным циклом | Необязательно | Зависит от источника |
 
-## Fastest start: typed Go Flow
+## Самый быстрый старт: типизированный Go Flow
 
-A Flow is a typed reducer with optional effects and claims. It is the smallest API surface and requires no schema file.
+Flow — это типизированный reducer с необязательными effects и claims. Это самый компактный API, не требующий отдельного файла схемы.
 
 ```go
 package main
@@ -115,17 +117,17 @@ func main() {
 }
 ```
 
-Flow handlers are arbitrary Go code, so their analysis level is `axiom.AnalysisOpaque`. A failed claim, handler or effect does not commit the new state or history.
+Обработчики Flow являются произвольным Go-кодом, поэтому уровень их анализа — `axiom.AnalysisOpaque`. При ошибке claim, handler или effect новое состояние и история не фиксируются.
 
-Run the complete example:
+Запуск полного примера:
 
 ```bash
 go run ./examples/go-first
 ```
 
-## Declarative Go Model
+## Декларативная Go-модель
 
-The `model` package keeps the workflow in Go while preserving compiler validation, dependency indexes, activities, claims, replay and impact analysis.
+Пакет `model` позволяет хранить процесс в Go-коде, сохраняя проверку компилятором, индексы зависимостей, activities, claims, replay и impact analysis.
 
 ```go
 package main
@@ -218,15 +220,15 @@ func main() {
 }
 ```
 
-Run the complete example:
+Запуск полного примера:
 
 ```bash
 go run ./examples/model
 ```
 
-## Optional AXM and TOML frontends
+## Необязательные AXM- и TOML-frontends
 
-Definitions outside application code compile into the same `axiom.Plan` used by the declarative Go model.
+Определения, хранящиеся вне кода приложения, компилируются в тот же `axiom.Plan`, что и декларативная Go-модель.
 
 ```go
 import (
@@ -240,7 +242,7 @@ if err != nil {
 }
 axmEngine, err := axmPlan.New()
 
- tablePlan, err := table.Load("workflow.toml")
+tablePlan, err := table.Load("workflow.toml")
 if err != nil {
     return err
 }
@@ -249,17 +251,17 @@ tableEngine, err := tablePlan.New()
 _, _ = axmEngine, tableEngine
 ```
 
-AXM and TOML are frontends, not runtime requirements. Applications can choose one representation per subsystem and still share execution, storage and observability infrastructure.
+AXM и TOML являются входными форматами, а не обязательными требованиями runtime. Разные подсистемы приложения могут использовать разные представления, сохраняя общую инфраструктуру исполнения, хранения и наблюдаемости.
 
 ## Execution API
 
-A compiled engine exposes an ergonomic handle for a single durable execution:
+Скомпилированный engine предоставляет удобный handle для одного надёжного execution:
 
 ```go
 run := engine.Execution("order-42")
 
-// Creates the execution when absent, dispatches the typed event and drains
-// registered inline activities until the execution becomes idle.
+// Создаёт execution, если он отсутствует, отправляет типизированное событие
+// и выполняет зарегистрированные inline activities до состояния ожидания.
 err := run.Dispatch(ctx, OrderCreated{OrderID: "42"})
 
 var state OrderState
@@ -272,7 +274,7 @@ explanation, err := run.Explain(ctx)
 err = run.Cancel(ctx)
 ```
 
-The low-level lifecycle remains available when explicit orchestration is needed:
+Низкоуровневое управление жизненным циклом остаётся доступным для явной оркестрации:
 
 ```go
 err := engine.Start(ctx, "order-42", initialContext)
@@ -282,9 +284,9 @@ result, err := engine.Query(ctx, "order-42", "state")
 err = engine.RunUntilIdle(ctx, "order-42")
 ```
 
-## Durable storage with Pebble
+## Надёжное хранение с Pebble
 
-The default compiled runtime store is in-memory. For durable execution, open a Pebble-backed transactional store and close it during shutdown.
+По умолчанию скомпилированный runtime использует хранилище в памяти. Для надёжного исполнения откройте транзакционное Pebble-хранилище и закройте его при завершении приложения.
 
 ```go
 store, err := axiom.OpenPebble("data/axiom")
@@ -301,32 +303,32 @@ engine, err := axiom.Open(
 )
 ```
 
-Durability modes:
+Режимы надёжности:
 
 ```go
-// Synchronous commits: strongest durability, highest write latency.
+// Синхронные commits: максимальная надёжность, наибольшая задержка записи.
 store, err := axiom.OpenPebble("data/axiom")
 
-// No fsync on every commit: faster, but recent writes may be lost after a
-// process or machine failure.
+// Без fsync при каждом commit: быстрее, но последние записи могут быть
+// потеряны при аварии процесса или компьютера.
 store, err = axiom.OpenPebble("data/axiom", axiom.PebbleNoSync())
 
-// Group commits by flushing periodically.
+// Группировка commits с периодическим flush.
 store, err = axiom.OpenPebble(
     "data/axiom",
     axiom.PebbleSyncEvery(10*time.Millisecond),
 )
 ```
 
-`WithProductionMode` enables the strict fast runtime and requires a transactional store. It is intended to fail during startup instead of silently falling back to unsupported execution paths.
+`WithProductionMode` включает строгий быстрый runtime и требует транзакционного хранилища. Ошибки конфигурации выявляются при запуске вместо незаметного перехода на неподдерживаемый медленный путь исполнения.
 
-## Activities and side effects
+## Activities и побочные эффекты
 
-Rules describe when an activity is scheduled; Go implements the actual external call.
+Правила определяют, когда должна быть запланирована activity, а Go-код реализует фактическое внешнее действие.
 
 ```go
 func chargeCard(ctx context.Context, input axiom.Input) (axiom.Output, error) {
-    // Make the external operation idempotent using the key supplied by the plan.
+    // Внешняя операция должна быть идемпотентной по ключу из модели.
     return axiom.Output{
         "transactionId": "txn-123",
         "approved":      true,
@@ -339,21 +341,21 @@ engine, err := axiom.Open(
 )
 ```
 
-For external effects, model an idempotency key and a retry policy. Axiom records scheduled, completed and failed activities in execution history.
+Для внешних effects задавайте ключ идемпотентности и политику повторных попыток. Axiom записывает запланированные, завершённые и неуспешные activities в историю execution.
 
-## Concurrency model
+## Модель конкурентности
 
-Axiom provides process-local linearizability for operations submitted through one engine instance:
+Axiom обеспечивает локальную для процесса линеаризуемость операций, отправленных через один экземпляр engine:
 
-- updates to the **same execution ID** are serialized;
-- operations for **different execution IDs** may proceed concurrently;
-- Pebble transactions never replace or expose the engine's shared store object;
-- state and history are committed atomically when the store supports transactions;
-- typed integer values remain integers across dispatch and Pebble reopen.
+- обновления с **одинаковым execution ID** сериализуются;
+- операции с **разными execution ID** могут выполняться параллельно;
+- Pebble-транзакции не заменяют и не раскрывают общий объект store внутри engine;
+- состояние и история фиксируются атомарно, если store поддерживает транзакции;
+- типизированные целые числа остаются целыми после dispatch и повторного открытия Pebble.
 
-For coordination across multiple processes, place one ownership or routing layer in front of each execution ID, or implement a distributed store with equivalent transactional and concurrency guarantees.
+Для координации между несколькими процессами используйте единый слой владения или маршрутизации для каждого execution ID либо реализуйте распределённое хранилище с эквивалентными транзакционными и конкурентными гарантиями.
 
-## Replay, history and explanation
+## Replay, история и объяснение
 
 ```go
 history, err := engine.Execution("order-42").History(ctx)
@@ -369,28 +371,28 @@ if err != nil {
 explanation, err := engine.Execution("order-42").Explain(ctx)
 ```
 
-Replay validates module identity and reconstructs deterministic runtime state from recorded history. Use the same compiled plan version that produced the history.
+Replay проверяет идентичность модуля и детерминированно восстанавливает состояние runtime из записанной истории. Используйте ту же версию скомпилированного плана, которая создала историю.
 
-## Performance baseline
+## Базовые показатели производительности
 
-The current CI baseline was measured on a shared GitHub-hosted `linux/amd64` runner with Go 1.26.5, 4 logical CPUs and concurrency 8. These numbers are useful for coarse regression detection, not as hardware-independent SLAs.
+Текущий CI-baseline измерен на общем GitHub-hosted runner `linux/amd64` с Go 1.26.5, четырьмя логическими CPU и concurrency 8. Эти значения подходят для грубого обнаружения регрессий, но не являются аппаратно-независимым SLA.
 
-| Scenario | p95 | p99 | Throughput |
+| Сценарий | p95 | p99 | Производительность |
 |---|---:|---:|---:|
-| Go-first Flow, distinct executions | 3.841 ms | 4.788 ms | 9,028 ops/s |
-| Go-first Flow, one contended execution | 20.777 ms | 24.880 ms | 772 ops/s |
-| Compiled runtime, distinct executions | 0.505 ms | 3.011 ms | 55,011 ops/s |
-| Compiled runtime, one contended execution | 1.085 ms | 1.437 ms | 50,938 ops/s |
-| Compiled runtime, cold memory execution | 0.800 ms | 4.058 ms | 40,239 ops/s |
-| Pebble NoSync, cold durable execution | 3.904 ms | 5.061 ms | 8,773 ops/s |
-| Pebble Sync, cold durable execution | 8.688 ms | 10.225 ms | 1,437 ops/s |
-| Replay of a 1,000-event history | 1.977 ms | 2.541 ms | 761 runs/s |
+| Go-first Flow, разные execution | 3,841 мс | 4,788 мс | 9 028 ops/s |
+| Go-first Flow, один конкурентный execution | 20,777 мс | 24,880 мс | 772 ops/s |
+| Скомпилированный runtime, разные execution | 0,505 мс | 3,011 мс | 55 011 ops/s |
+| Скомпилированный runtime, один конкурентный execution | 1,085 мс | 1,437 мс | 50 938 ops/s |
+| Новый memory execution скомпилированного runtime | 0,800 мс | 4,058 мс | 40 239 ops/s |
+| Pebble NoSync, новый durable execution | 3,904 мс | 5,061 мс | 8 773 ops/s |
+| Pebble Sync, новый durable execution | 8,688 мс | 10,225 мс | 1 437 ops/s |
+| Replay истории из 1 000 событий | 1,977 мс | 2,541 мс | 761 replay/s |
 
-The compiled runtime currently has the strongest tail latency. A long-lived, contended Go-first Flow is slower because its current memory store copies and serializes the complete history on each save.
+Лучшие показатели хвостовой задержки сейчас показывает скомпилированный runtime. Долгоживущий конкурентный Go-first Flow медленнее, потому что текущее memory-хранилище копирует и сериализует полную историю при каждом сохранении.
 
-See [`benchmarks/latest.md`](benchmarks/latest.md) for p50, maximum latency, methodology, resilience coverage and reproduction commands.
+Полные значения p50, максимальной задержки, методика, покрытие тестами устойчивости и команды воспроизведения находятся в [`benchmarks/latest.md`](benchmarks/latest.md).
 
-Run the percentile harness locally:
+Локальный запуск percentile benchmark:
 
 ```bash
 go run ./cmd/axiombench \
@@ -404,34 +406,34 @@ go run ./cmd/axiombench \
   -markdown benchmark-results.md
 ```
 
-## Resilience validation
+## Проверка устойчивости
 
-The test suite covers:
+Набор тестов покрывает:
 
-- concurrent updates to one Go-first execution;
-- concurrent updates to one compiled execution;
-- independent parallel Pebble executions;
-- transaction rollback after a failed Flow effect;
-- typed event integer preservation;
-- integer preservation through Pebble close and reopen;
-- exact replay reconstruction;
-- a 16-worker, 8,000-operation Flow soak test;
-- Go's race detector for the runtime and stores;
-- an external consumer module importing public packages only.
+- конкурентные обновления одного Go-first execution;
+- конкурентные обновления одного execution скомпилированного runtime;
+- независимые параллельные Pebble execution;
+- rollback транзакции после ошибки Flow effect;
+- сохранение типа целого числа в типизированных событиях;
+- сохранение целых чисел после закрытия и повторного открытия Pebble;
+- точное восстановление состояния через replay;
+- soak-тест Flow: 16 workers и 8 000 операций;
+- Go race detector для runtime и хранилищ;
+- отдельный consumer module, импортирующий только публичные пакеты.
 
-## Packages
+## Пакеты
 
-| Package | Purpose |
+| Пакет | Назначение |
 |---|---|
-| `github.com/Homiakus/axiom` | Canonical Plan, compiled runtime, typed execution API and Go-first Flow |
-| `github.com/Homiakus/axiom/model` | Declarative, file-free, statically validated Go builder |
-| `github.com/Homiakus/axiom/axm` | AXM parser and Plan frontend |
-| `github.com/Homiakus/axiom/table` | TOML transition-table frontend |
-| `github.com/Homiakus/axiom/store/pebble` | Public durable Pebble store package |
-| `github.com/Homiakus/axiom/cmd/axiomgen` | Optional typed-boundary code generator |
-| `github.com/Homiakus/axiom/cmd/axiombench` | Percentile and resilience benchmark harness |
+| `github.com/Homiakus/axiom` | Канонический Plan, скомпилированный runtime, типизированный execution API и Go-first Flow |
+| `github.com/Homiakus/axiom/model` | Декларативный, не требующий файлов, статически проверяемый Go-builder |
+| `github.com/Homiakus/axiom/axm` | AXM parser и frontend для Plan |
+| `github.com/Homiakus/axiom/table` | Frontend таблиц переходов TOML |
+| `github.com/Homiakus/axiom/store/pebble` | Публичный пакет надёжного Pebble-хранилища |
+| `github.com/Homiakus/axiom/cmd/axiomgen` | Необязательный генератор типизированных границ |
+| `github.com/Homiakus/axiom/cmd/axiombench` | Benchmark harness для percentile-метрик и проверки устойчивости |
 
-## Development
+## Разработка
 
 ```bash
 go mod tidy
@@ -441,18 +443,18 @@ go test -race . ./internal/runtime/... ./internal/store/...
 go vet ./...
 ```
 
-CI also builds a separate consumer module to verify that applications can use the public API without importing internal packages.
+CI также собирает отдельный consumer module и проверяет, что приложение может использовать публичный API без импорта внутренних пакетов.
 
-## Design guidance
+## Рекомендации по проектированию
 
-- Use **Flow** when the transition logic is ordinary application code and static inspection is not required.
-- Use **model**, **AXM** or **TOML** when validation, impact analysis, explicit claims and explainability are first-class requirements.
-- Keep effects idempotent and model their keys explicitly.
-- Use stable execution IDs based on the business aggregate being protected.
-- Use Pebble Sync when committed state must survive power loss; use NoSync only when the recovery-point tradeoff is acceptable.
-- Pin plan versions for durable histories and replay them with the same compiled module.
-- Measure strict latency objectives on dedicated hardware with fixed CPU, storage and Go versions.
+- Используйте **Flow**, когда логика переходов является обычным кодом приложения и статический анализ не требуется.
+- Используйте **model**, **AXM** или **TOML**, когда проверка, impact analysis, явные claims и объяснимость являются основными требованиями.
+- Делайте effects идемпотентными и явно моделируйте их ключи.
+- Используйте стабильные execution ID, связанные с защищаемым бизнес-агрегатом.
+- Выбирайте Pebble Sync, когда зафиксированное состояние должно пережить потерю питания; NoSync допустим только при приемлемом риске потери последних записей.
+- Фиксируйте версии планов для надёжных историй и выполняйте replay тем же скомпилированным модулем.
+- Измеряйте строгие требования к задержке на выделенном оборудовании с фиксированными CPU, накопителем и версией Go.
 
-## License
+## Лицензия
 
-Apache-2.0. See [`LICENSE`](LICENSE).
+Apache-2.0. См. [`LICENSE`](LICENSE).
