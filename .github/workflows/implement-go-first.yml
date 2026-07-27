@@ -1,0 +1,1424 @@
+name: implement-go-first
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: github.event.pull_request.head.ref == 'agent/go-first-api'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Build Go-first architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f .go-first-migration-complete ]]; then
+            cp axiom-main/go.mod /tmp/axiom-go.mod
+            cp axiom-main/go.sum /tmp/axiom-go.sum
+
+            rm -f axiom.go go.mod go.sum
+            mv axiom-main/internal ./internal
+            mv axiom-main/pkg/axiom/*.go ./
+            mv axiom-main/docs ./docs
+            mv axiom-main/examples ./examples
+            mkdir -p cmd
+            mv axiom-main/tools/axiomgen ./cmd/axiomgen
+            rm -rf cmd/axiomgen/internal/tui
+            rm -f cmd/axiomgen/go.mod cmd/axiomgen/go.sum
+            rm -rf axiom-main
+
+            mv /tmp/axiom-go.mod go.mod
+            mv /tmp/axiom-go.sum go.sum
+            sed -i 's/^module axiom$/module github.com\/Homiakus\/axiom/' go.mod
+
+            while IFS= read -r -d '' file; do
+              sed -i \
+                -e 's#"axiom/internal/#"github.com/Homiakus/axiom/internal/#g' \
+                -e 's#"axiom/pkg/axiom"#"github.com/Homiakus/axiom"#g' \
+                -e 's#"axiom/tools/axiomgen/internal/#"github.com/Homiakus/axiom/cmd/axiomgen/internal/#g' \
+                -e 's#axiom/pkg/axiom#github.com/Homiakus/axiom#g' \
+                -e 's#axiom/tools/axiomgen/internal/#github.com/Homiakus/axiom/cmd/axiomgen/internal/#g' \
+                "$file"
+            done < <(find . -type f -name '*.go' -print0)
+
+            rm -f example_files_test.go
+
+            cat > plan.go <<'EOF'
+          package axiom
+
+          import "fmt"
+
+          // AnalysisLevel describes how much static analysis a Plan supports.
+          type AnalysisLevel string
+
+          const (
+            AnalysisOpaque AnalysisLevel = "opaque"
+            AnalysisStatic AnalysisLevel = "static"
+          )
+
+          // Plan is the canonical executable representation consumed by Axiom.
+          // Frontends such as Go builders, AXM and TOML all compile into this type.
+          type Plan struct {
+            Name     string
+            Version  string
+            Digest   string
+            Format   string
+            Analysis AnalysisLevel
+            module   *Module
+          }
+
+          // NewPlan wraps a validated compiled module as a canonical Plan.
+          func NewPlan(module *Module, format, version string, analysis AnalysisLevel) (*Plan, error) {
+            if module == nil {
+              return nil, fmt.Errorf("axiom: module is required")
+            }
+            if format == "" {
+              format = "unknown"
+            }
+            if version == "" {
+              version = module.DSLVersion
+            }
+            if analysis == "" {
+              analysis = AnalysisStatic
+            }
+            return &Plan{
+              Name: module.Domain,
+              Version: version,
+              Digest: module.CompiledHash,
+              Format: format,
+              Analysis: analysis,
+              module: module,
+            }, nil
+          }
+
+          // CompilePlan compiles AXM or TRIZ source into a canonical Plan.
+          func CompilePlan(source []byte, opts ...CompileOption) (*Plan, error) {
+            module, err := CompileAny(source, opts...)
+            if err != nil {
+              return nil, err
+            }
+            return NewPlan(module, "axm", module.DSLVersion, AnalysisStatic)
+          }
+
+          // Module returns the validated runtime module backing the Plan.
+          func (p *Plan) Module() *Module {
+            if p == nil {
+              return nil
+            }
+            return p.module
+          }
+
+          // CompilePlan lets a Plan satisfy PlanSource.
+          func (p *Plan) CompilePlan() (*Plan, error) {
+            if p == nil || p.module == nil {
+              return nil, fmt.Errorf("axiom: plan is required")
+            }
+            return p, nil
+          }
+
+          // New creates an Engine from the Plan.
+          func (p *Plan) New(opts ...Option) (*Engine, error) {
+            if p == nil || p.module == nil {
+              return nil, fmt.Errorf("axiom: plan is required")
+            }
+            return New(p.module, opts...)
+          }
+
+          // PlanSource is implemented by AXM, TOML and Go model frontends.
+          type PlanSource interface {
+            CompilePlan() (*Plan, error)
+          }
+
+          // Open compiles a source and creates an Engine in one operation.
+          func Open(source PlanSource, opts ...Option) (*Engine, error) {
+            if source == nil {
+              return nil, fmt.Errorf("axiom: plan source is required")
+            }
+            plan, err := source.CompilePlan()
+            if err != nil {
+              return nil, err
+            }
+            return plan.New(opts...)
+          }
+          EOF
+
+            cat > runtime_aliases.go <<'EOF'
+          package axiom
+
+          import runtimepkg "github.com/Homiakus/axiom/internal/runtime"
+
+          type (
+            Run = runtimepkg.Run
+            Status = runtimepkg.Status
+            TaskStatus = runtimepkg.TaskStatus
+            FactValue = runtimepkg.FactValue
+            Explanation = runtimepkg.Explanation
+            EventNamer = runtimepkg.EventNamer
+          )
+
+          const (
+            StatusStarted = runtimepkg.StatusStarted
+            StatusRunning = runtimepkg.StatusRunning
+            StatusWaiting = runtimepkg.StatusWaiting
+            StatusCompleted = runtimepkg.StatusCompleted
+            StatusFailed = runtimepkg.StatusFailed
+            StatusCanceled = runtimepkg.StatusCanceled
+
+            TaskPending = runtimepkg.TaskPending
+            TaskRunning = runtimepkg.TaskRunning
+            TaskCompleted = runtimepkg.TaskCompleted
+            TaskFailed = runtimepkg.TaskFailed
+          )
+          EOF
+
+            cat > internal/runtime/execution_api.go <<'EOF'
+          package runtime
+
+          import (
+            "context"
+            "encoding/json"
+            "errors"
+            "fmt"
+            "reflect"
+            "time"
+          )
+
+          // EventNamer overrides the signal name derived from a Go event type.
+          type EventNamer interface {
+            AxiomEventName() string
+          }
+
+          // Explanation is the typed form of the built-in explain query.
+          type Explanation struct {
+            Status Status
+            Facts map[string]FactValue
+            PendingActivities []*ActivityTask
+            History []HistoryEntry
+          }
+
+          // Run is an ergonomic handle for one execution.
+          type Run struct {
+            engine *Engine
+            id string
+          }
+
+          // Execution returns a handle that can dispatch typed events and read state.
+          func (e *Engine) Execution(id string) *Run {
+            return &Run{engine: e, id: id}
+          }
+
+          // ID returns the durable execution identifier.
+          func (r *Run) ID() string { return r.id }
+
+          // Dispatch creates the execution when needed, sends an event and drains
+          // inline activities until the execution is idle.
+          func (r *Run) Dispatch(ctx context.Context, event any) error {
+            if r == nil || r.engine == nil {
+              return fmt.Errorf("axiom: execution handle is not initialized")
+            }
+            if r.id == "" {
+              return fmt.Errorf("axiom: execution id is required")
+            }
+            name, payload, err := eventPayload(event)
+            if err != nil {
+              return err
+            }
+            if _, err := r.engine.store.GetExecution(ctx, r.id); err != nil {
+              if !errors.Is(err, ErrExecutionNotFound) {
+                return err
+              }
+              if err := r.engine.Start(ctx, r.id, nil); err != nil {
+                return err
+              }
+            }
+            if err := r.engine.Signal(ctx, r.id, name, payload); err != nil {
+              return err
+            }
+            return r.engine.RunUntilIdle(ctx, r.id)
+          }
+
+          // Signal dispatches an explicitly named signal and drains inline work.
+          func (r *Run) Signal(ctx context.Context, name string, payload map[string]any) error {
+            if r == nil || r.engine == nil {
+              return fmt.Errorf("axiom: execution handle is not initialized")
+            }
+            if _, err := r.engine.store.GetExecution(ctx, r.id); err != nil {
+              if !errors.Is(err, ErrExecutionNotFound) {
+                return err
+              }
+              if err := r.engine.Start(ctx, r.id, nil); err != nil {
+                return err
+              }
+            }
+            if err := r.engine.Signal(ctx, r.id, name, payload); err != nil {
+              return err
+            }
+            return r.engine.RunUntilIdle(ctx, r.id)
+          }
+
+          // State decodes the execution context into target. If the plan contains
+          // one context and target is a struct, that context is decoded directly.
+          func (r *Run) State(ctx context.Context, target any) error {
+            if target == nil {
+              return fmt.Errorf("axiom: state target is required")
+            }
+            result, err := r.engine.Query(ctx, r.id, "state")
+            if err != nil {
+              return err
+            }
+            contexts, ok := result["context"].(map[string]map[string]any)
+            if !ok {
+              return fmt.Errorf("axiom: unexpected state representation")
+            }
+            value := any(contexts)
+            rv := reflect.ValueOf(target)
+            if rv.Kind() == reflect.Pointer && !rv.IsNil() && rv.Elem().Kind() == reflect.Struct && len(contexts) == 1 {
+              for _, contextValue := range contexts {
+                value = contextValue
+              }
+            }
+            data, err := json.Marshal(value)
+            if err != nil {
+              return err
+            }
+            if err := json.Unmarshal(data, target); err != nil {
+              return fmt.Errorf("axiom: decode state: %w", err)
+            }
+            return nil
+          }
+
+          func (r *Run) Status(ctx context.Context) (Status, error) {
+            execution, err := r.engine.store.GetExecution(ctx, r.id)
+            if err != nil {
+              return "", err
+            }
+            return execution.Status, nil
+          }
+
+          func (r *Run) History(ctx context.Context) ([]HistoryEntry, error) {
+            return r.engine.store.ListHistory(ctx, r.id)
+          }
+
+          func (r *Run) PendingActivities(ctx context.Context) ([]ActivityTask, error) {
+            result, err := r.engine.Query(ctx, r.id, "pendingActivities")
+            if err != nil {
+              return nil, err
+            }
+            values, ok := result["pendingActivities"].([]ActivityTask)
+            if !ok {
+              return nil, fmt.Errorf("axiom: unexpected pending activities representation")
+            }
+            return values, nil
+          }
+
+          func (r *Run) Explain(ctx context.Context) (*Explanation, error) {
+            execution, err := r.engine.store.GetExecution(ctx, r.id)
+            if err != nil {
+              return nil, err
+            }
+            history, err := r.engine.store.ListHistory(ctx, r.id)
+            if err != nil {
+              return nil, err
+            }
+            tasks, err := r.engine.store.ListTasks(ctx, r.id)
+            if err != nil {
+              return nil, err
+            }
+            return &Explanation{
+              Status: execution.Status,
+              Facts: cloneFacts(execution.Facts),
+              PendingActivities: tasks,
+              History: history,
+            }, nil
+          }
+
+          func (r *Run) Cancel(ctx context.Context) error {
+            return r.engine.withStoreTransaction(ctx, func() error {
+              execution, err := r.engine.store.GetExecution(ctx, r.id)
+              if err != nil {
+                return err
+              }
+              execution.Status = StatusCanceled
+              execution.UpdatedAt = time.Now().UTC()
+              if err := r.engine.store.AppendHistory(ctx, r.id, "ExecutionCanceled", nil); err != nil {
+                return err
+              }
+              return r.engine.store.SaveExecution(ctx, execution)
+            })
+          }
+
+          func eventPayload(event any) (string, map[string]any, error) {
+            if event == nil {
+              return "", nil, fmt.Errorf("axiom: event is required")
+            }
+            name := ""
+            if named, ok := event.(EventNamer); ok {
+              name = named.AxiomEventName()
+            }
+            value := reflect.ValueOf(event)
+            typ := value.Type()
+            if typ.Kind() == reflect.Pointer {
+              if value.IsNil() {
+                return "", nil, fmt.Errorf("axiom: event pointer is nil")
+              }
+              if name == "" {
+                typ = typ.Elem()
+              }
+            }
+            if name == "" {
+              name = typ.Name()
+            }
+            if name == "" {
+              return "", nil, fmt.Errorf("axiom: event type must be named or implement EventNamer")
+            }
+            if payload, ok := event.(map[string]any); ok {
+              return name, payload, nil
+            }
+            data, err := json.Marshal(event)
+            if err != nil {
+              return "", nil, fmt.Errorf("axiom: encode event: %w", err)
+            }
+            payload := map[string]any{}
+            if err := json.Unmarshal(data, &payload); err != nil {
+              return "", nil, fmt.Errorf("axiom: event must encode as an object: %w", err)
+            }
+            return name, payload, nil
+          }
+          EOF
+
+            mkdir -p axm
+            cat > axm/axm.go <<'EOF'
+          // Package axm implements the optional AXM frontend.
+          package axm
+
+          import (
+            "fmt"
+            "os"
+
+            "github.com/Homiakus/axiom"
+          )
+
+          type Source struct {
+            Data []byte
+            Name string
+          }
+
+          func Bytes(data []byte) Source {
+            return Source{Data: append([]byte(nil), data...), Name: "inline.axm"}
+          }
+
+          func Named(name string, data []byte) Source {
+            return Source{Data: append([]byte(nil), data...), Name: name}
+          }
+
+          func Load(path string) (*axiom.Plan, error) {
+            data, err := os.ReadFile(path)
+            if err != nil {
+              return nil, err
+            }
+            return Named(path, data).CompilePlan()
+          }
+
+          func Parse(data []byte) (*axiom.Plan, error) {
+            return Bytes(data).CompilePlan()
+          }
+
+          func (s Source) CompilePlan() (*axiom.Plan, error) {
+            if len(s.Data) == 0 {
+              return nil, fmt.Errorf("axm: source is empty")
+            }
+            name := s.Name
+            if name == "" {
+              name = "inline.axm"
+            }
+            plan, err := axiom.CompilePlan(s.Data, axiom.WithSourceName(name))
+            if err != nil {
+              return nil, err
+            }
+            plan.Format = "axm"
+            return plan, nil
+          }
+          EOF
+
+            cat > flow.go <<'EOF'
+          package axiom
+
+          import (
+            "context"
+            "encoding/json"
+            "fmt"
+            "reflect"
+            "sync"
+            "time"
+          )
+
+          // Effect is an opaque command emitted by a Go-first reducer.
+          type Effect struct { Command any }
+
+          func Call(command any) Effect { return Effect{Command: command} }
+
+          type FlowResult[S any] struct {
+            State S
+            Effects []Effect
+          }
+
+          func Next[S any](state S, effects ...Effect) FlowResult[S] {
+            return FlowResult[S]{State: state, Effects: effects}
+          }
+
+          type flowHandler[S any] func(context.Context, S, any) (FlowResult[S], error)
+          type flowEffectHandler func(context.Context, any) error
+
+          // Flow is the file-free typed reducer frontend. Its analysis level is
+          // opaque because arbitrary Go handlers cannot be statically inspected.
+          type Flow[S any] struct {
+            name string
+            initial S
+            handlers map[reflect.Type]flowHandler[S]
+            effects map[reflect.Type]flowEffectHandler
+            claims []func(S) error
+          }
+
+          func NewFlow[S any](name string, initial S) *Flow[S] {
+            return &Flow[S]{
+              name: name,
+              initial: initial,
+              handlers: map[reflect.Type]flowHandler[S]{},
+              effects: map[reflect.Type]flowEffectHandler{},
+            }
+          }
+
+          func (f *Flow[S]) Name() string { return f.name }
+          func (f *Flow[S]) Analysis() AnalysisLevel { return AnalysisOpaque }
+
+          func Handle[S, E any](flow *Flow[S], handler func(context.Context, S, E) (FlowResult[S], error)) {
+            if flow == nil || handler == nil {
+              panic("axiom: flow and handler are required")
+            }
+            typ := reflect.TypeFor[E]()
+            flow.handlers[typ] = func(ctx context.Context, state S, event any) (FlowResult[S], error) {
+              typed, ok := event.(E)
+              if !ok {
+                return FlowResult[S]{}, fmt.Errorf("axiom: event type mismatch: got %T", event)
+              }
+              return handler(ctx, state, typed)
+            }
+          }
+
+          func EffectHandler[S, C any](flow *Flow[S], handler func(context.Context, C) error) {
+            if flow == nil || handler == nil {
+              panic("axiom: flow and effect handler are required")
+            }
+            typ := reflect.TypeFor[C]()
+            flow.effects[typ] = func(ctx context.Context, command any) error {
+              typed, ok := command.(C)
+              if !ok {
+                return fmt.Errorf("axiom: effect type mismatch: got %T", command)
+              }
+              return handler(ctx, typed)
+            }
+          }
+
+          func AddClaim[S any](flow *Flow[S], claim func(S) error) {
+            if flow == nil || claim == nil {
+              panic("axiom: flow and claim are required")
+            }
+            flow.claims = append(flow.claims, claim)
+          }
+
+          type FlowHistoryEntry struct {
+            Sequence int
+            Type string
+            Name string
+            Data any
+            CreatedAt time.Time
+          }
+
+          type FlowStore interface {
+            Load(ctx context.Context, flow, id string) (state []byte, history []FlowHistoryEntry, found bool, err error)
+            Save(ctx context.Context, flow, id string, state []byte, history []FlowHistoryEntry) error
+          }
+
+          type memoryFlowRecord struct {
+            state []byte
+            history []FlowHistoryEntry
+          }
+
+          type MemoryFlowStore struct {
+            mu sync.Mutex
+            records map[string]memoryFlowRecord
+          }
+
+          func NewMemoryFlowStore() *MemoryFlowStore {
+            return &MemoryFlowStore{records: map[string]memoryFlowRecord{}}
+          }
+
+          func (s *MemoryFlowStore) key(flow, id string) string { return flow + "\x00" + id }
+
+          func (s *MemoryFlowStore) Load(_ context.Context, flow, id string) ([]byte, []FlowHistoryEntry, bool, error) {
+            s.mu.Lock()
+            defer s.mu.Unlock()
+            value, ok := s.records[s.key(flow, id)]
+            if !ok {
+              return nil, nil, false, nil
+            }
+            return append([]byte(nil), value.state...), append([]FlowHistoryEntry(nil), value.history...), true, nil
+          }
+
+          func (s *MemoryFlowStore) Save(_ context.Context, flow, id string, state []byte, history []FlowHistoryEntry) error {
+            s.mu.Lock()
+            defer s.mu.Unlock()
+            s.records[s.key(flow, id)] = memoryFlowRecord{
+              state: append([]byte(nil), state...),
+              history: append([]FlowHistoryEntry(nil), history...),
+            }
+            return nil
+          }
+
+          type flowConfig struct { store FlowStore }
+          type FlowOption func(*flowConfig) error
+
+          func WithFlowStore(store FlowStore) FlowOption {
+            return func(config *flowConfig) error {
+              if store == nil { return fmt.Errorf("axiom: flow store must not be nil") }
+              config.store = store
+              return nil
+            }
+          }
+
+          type FlowEngine[S any] struct {
+            flow *Flow[S]
+            store FlowStore
+          }
+
+          func OpenFlow[S any](flow *Flow[S], opts ...FlowOption) (*FlowEngine[S], error) {
+            if flow == nil || flow.name == "" {
+              return nil, fmt.Errorf("axiom: named flow is required")
+            }
+            config := flowConfig{store: NewMemoryFlowStore()}
+            for _, opt := range opts {
+              if err := opt(&config); err != nil { return nil, err }
+            }
+            return &FlowEngine[S]{flow: flow, store: config.store}, nil
+          }
+
+          type FlowExecution[S any] struct {
+            engine *FlowEngine[S]
+            id string
+          }
+
+          func (e *FlowEngine[S]) Execution(id string) *FlowExecution[S] {
+            return &FlowExecution[S]{engine: e, id: id}
+          }
+
+          func (e *FlowExecution[S]) Dispatch(ctx context.Context, event any) error {
+            if e == nil || e.engine == nil || e.id == "" { return fmt.Errorf("axiom: valid flow execution is required") }
+            handler, normalized, err := e.engine.flow.handlerFor(event)
+            if err != nil { return err }
+            state, history, err := e.load(ctx)
+            if err != nil { return err }
+            result, err := handler(ctx, state, normalized)
+            if err != nil { return err }
+            for _, claim := range e.engine.flow.claims {
+              if err := claim(result.State); err != nil { return fmt.Errorf("axiom: claim failed: %w", err) }
+            }
+            history = append(history, FlowHistoryEntry{Sequence: len(history)+1, Type: "EventHandled", Name: typeName(normalized), Data: normalized, CreatedAt: time.Now().UTC()})
+            for _, effect := range result.Effects {
+              effectHandler, command, err := e.engine.flow.effectFor(effect.Command)
+              if err != nil { return err }
+              if err := effectHandler(ctx, command); err != nil { return err }
+              history = append(history, FlowHistoryEntry{Sequence: len(history)+1, Type: "EffectCompleted", Name: typeName(command), Data: command, CreatedAt: time.Now().UTC()})
+            }
+            data, err := json.Marshal(result.State)
+            if err != nil { return err }
+            return e.engine.store.Save(ctx, e.engine.flow.name, e.id, data, history)
+          }
+
+          func (e *FlowExecution[S]) State(ctx context.Context) (S, error) {
+            state, _, err := e.load(ctx)
+            return state, err
+          }
+
+          func (e *FlowExecution[S]) History(ctx context.Context) ([]FlowHistoryEntry, error) {
+            _, history, _, err := e.engine.store.Load(ctx, e.engine.flow.name, e.id)
+            return history, err
+          }
+
+          func (e *FlowExecution[S]) load(ctx context.Context) (S, []FlowHistoryEntry, error) {
+            var state S
+            data, history, found, err := e.engine.store.Load(ctx, e.engine.flow.name, e.id)
+            if err != nil { return state, nil, err }
+            if !found {
+              data, err = json.Marshal(e.engine.flow.initial)
+              if err != nil { return state, nil, err }
+            }
+            if err := json.Unmarshal(data, &state); err != nil { return state, nil, err }
+            return state, history, nil
+          }
+
+          func (f *Flow[S]) handlerFor(event any) (flowHandler[S], any, error) {
+            if event == nil { return nil, nil, fmt.Errorf("axiom: event is required") }
+            typ := reflect.TypeOf(event)
+            if handler, ok := f.handlers[typ]; ok { return handler, event, nil }
+            value := reflect.ValueOf(event)
+            if typ.Kind() == reflect.Pointer && !value.IsNil() {
+              if handler, ok := f.handlers[typ.Elem()]; ok { return handler, value.Elem().Interface(), nil }
+            }
+            return nil, nil, fmt.Errorf("axiom: no handler registered for %T", event)
+          }
+
+          func (f *Flow[S]) effectFor(command any) (flowEffectHandler, any, error) {
+            if command == nil { return nil, nil, fmt.Errorf("axiom: effect command is required") }
+            typ := reflect.TypeOf(command)
+            if handler, ok := f.effects[typ]; ok { return handler, command, nil }
+            value := reflect.ValueOf(command)
+            if typ.Kind() == reflect.Pointer && !value.IsNil() {
+              if handler, ok := f.effects[typ.Elem()]; ok { return handler, value.Elem().Interface(), nil }
+            }
+            return nil, nil, fmt.Errorf("axiom: no effect handler registered for %T", command)
+          }
+
+          func typeName(value any) string {
+            typ := reflect.TypeOf(value)
+            if typ == nil { return "" }
+            if typ.Kind() == reflect.Pointer { typ = typ.Elem() }
+            if typ.PkgPath() == "" { return typ.Name() }
+            return typ.PkgPath() + "." + typ.Name()
+          }
+          EOF
+
+            mkdir -p model
+            cat > model/model.go <<'EOF'
+          // Package model provides a file-free declarative Go builder that
+          // compiles into the same canonical Plan as AXM and TOML.
+          package model
+
+          import (
+            "encoding/json"
+            "fmt"
+            "reflect"
+            "sort"
+            "strings"
+            "time"
+
+            "github.com/Homiakus/axiom"
+          )
+
+          type Expr struct { text string }
+          func (e Expr) String() string { return e.text }
+          func Raw(value string) Expr { return Expr{text: strings.TrimSpace(value)} }
+          func Ref(name string) Expr { return Raw(name) }
+          func Lit(value any) Expr {
+            if duration, ok := value.(time.Duration); ok { return Raw(duration.String()) }
+            data, _ := json.Marshal(value)
+            return Raw(string(data))
+          }
+          func Eq(a, b Expr) Expr { return binary(a, "==", b) }
+          func Ne(a, b Expr) Expr { return binary(a, "!=", b) }
+          func GT(a, b Expr) Expr { return binary(a, ">", b) }
+          func GTE(a, b Expr) Expr { return binary(a, ">=", b) }
+          func LT(a, b Expr) Expr { return binary(a, "<", b) }
+          func LTE(a, b Expr) Expr { return binary(a, "<=", b) }
+          func And(values ...Expr) Expr { return join("and", values) }
+          func Or(values ...Expr) Expr { return join("or", values) }
+          func Not(value Expr) Expr { return Raw("not (" + value.text + ")") }
+          func Exists(value Expr) Expr { return Raw(value.text + " exists") }
+          func Implies(a, b Expr) Expr { return binary(a, "implies", b) }
+          func binary(a Expr, op string, b Expr) Expr { return Raw("(" + a.text + " " + op + " " + b.text + ")") }
+          func join(op string, values []Expr) Expr {
+            parts := make([]string, 0, len(values))
+            for _, value := range values { if value.text != "" { parts = append(parts, "("+value.text+")") } }
+            return Raw(strings.Join(parts, " "+op+" "))
+          }
+
+          type Trigger struct { text string }
+          func OnSignal(name string) Trigger { return Trigger{text: name} }
+          func OnChanged(field Expr) Trigger { return Trigger{text: "changed(" + field.text + ")"} }
+          func OnTimer(expression string) Trigger { return Trigger{text: "timer(" + expression + ")"} }
+
+          type fieldDecl struct { goName, name, typ string; defaultValue *Expr }
+          type schemaDecl struct { name string; fields []fieldDecl }
+          type computedDecl struct { name, typ string; expr Expr }
+          type factDecl struct { name string; when []Expr; expose map[string]Expr }
+          type policyDecl struct { name string; entries map[string]Expr }
+          type activityDecl struct { name string; require []Expr; input map[string]Expr; output map[string]string; effect, policy string; idempotency *Expr }
+          type ruleDecl struct { name string; triggers []Trigger; when, require []Expr; run string; writes map[string]Expr }
+          type claimDecl struct { name string; expressions []Expr }
+          type queryDecl struct { name string; values map[string]Expr }
+
+          type Definition struct {
+            name, version string
+            events, states []schemaDecl
+            computeds []computedDecl
+            facts []factDecl
+            policies []policyDecl
+            activities []activityDecl
+            rules []ruleDecl
+            claims []claimDecl
+            queries []queryDecl
+          }
+
+          func New(name string) *Definition { return &Definition{name: name, version: "1"} }
+          func (d *Definition) Version(version string) *Definition { d.version = version; return d }
+
+          type StateRef[T any] struct { definition *Definition; index int }
+          type EventRef[T any] struct { definition *Definition; index int }
+
+          func State[T any](d *Definition, name string) *StateRef[T] {
+            declaration := schemaFromType(reflect.TypeFor[T](), name)
+            d.states = append(d.states, declaration)
+            return &StateRef[T]{definition: d, index: len(d.states)-1}
+          }
+
+          func Event[T any](d *Definition, name string) *EventRef[T] {
+            declaration := schemaFromType(reflect.TypeFor[T](), name)
+            d.events = append(d.events, declaration)
+            return &EventRef[T]{definition: d, index: len(d.events)-1}
+          }
+
+          func (s *StateRef[T]) Field(name string) Expr { return Ref(s.definition.states[s.index].name + "." + fieldName(s.definition.states[s.index], name)) }
+          func (s *StateRef[T]) Changed(name string) Trigger { return OnChanged(s.Field(name)) }
+          func (s *StateRef[T]) Default(name string, value any) *StateRef[T] {
+            declaration := &s.definition.states[s.index]
+            field := fieldIndex(*declaration, name)
+            expression := Lit(value)
+            declaration.fields[field].defaultValue = &expression
+            return s
+          }
+          func (e *EventRef[T]) Field(name string) Expr { return Ref("signal." + fieldName(e.definition.events[e.index], name)) }
+          func (e *EventRef[T]) Trigger() Trigger { return OnSignal(e.definition.events[e.index].name) }
+
+          func (d *Definition) Computed(name, typ string, expression Expr) *Definition {
+            d.computeds = append(d.computeds, computedDecl{name: name, typ: typ, expr: expression}); return d
+          }
+          func (d *Definition) Fact(name string, when []Expr, expose map[string]Expr) *Definition {
+            d.facts = append(d.facts, factDecl{name: name, when: when, expose: expose}); return d
+          }
+
+          type PolicyBuilder struct { definition *Definition; index int }
+          func (d *Definition) Policy(name string) *PolicyBuilder {
+            d.policies = append(d.policies, policyDecl{name: name, entries: map[string]Expr{}})
+            return &PolicyBuilder{definition: d, index: len(d.policies)-1}
+          }
+          func (p *PolicyBuilder) Retry(value int) *PolicyBuilder { p.entry("retry", Lit(value)); return p }
+          func (p *PolicyBuilder) Timeout(value time.Duration) *PolicyBuilder { p.entry("timeout", Lit(value)); return p }
+          func (p *PolicyBuilder) Concurrency(value string) *PolicyBuilder { p.entry("concurrency", Raw(value)); return p }
+          func (p *PolicyBuilder) Idempotency(value string) *PolicyBuilder { p.entry("idempotency", Raw(value)); return p }
+          func (p *PolicyBuilder) entry(name string, value Expr) { p.definition.policies[p.index].entries[name] = value }
+
+          type ActivityBuilder struct { definition *Definition; index int }
+          func (d *Definition) Activity(name string) *ActivityBuilder {
+            d.activities = append(d.activities, activityDecl{name: name, input: map[string]Expr{}, output: map[string]string{}, effect: "none"})
+            return &ActivityBuilder{definition: d, index: len(d.activities)-1}
+          }
+          func (a *ActivityBuilder) Require(values ...Expr) *ActivityBuilder { a.definition.activities[a.index].require = append(a.definition.activities[a.index].require, values...); return a }
+          func (a *ActivityBuilder) Input(name string, expression Expr) *ActivityBuilder { a.definition.activities[a.index].input[name] = expression; return a }
+          func (a *ActivityBuilder) Output(name, typ string) *ActivityBuilder { a.definition.activities[a.index].output[name] = typ; return a }
+          func (a *ActivityBuilder) Effect(value string) *ActivityBuilder { a.definition.activities[a.index].effect = value; return a }
+          func (a *ActivityBuilder) Policy(name string) *ActivityBuilder { a.definition.activities[a.index].policy = name; return a }
+          func (a *ActivityBuilder) IdempotencyKey(value Expr) *ActivityBuilder { a.definition.activities[a.index].idempotency = &value; return a }
+
+          type RuleBuilder struct { definition *Definition; index int }
+          func (d *Definition) Rule(name string) *RuleBuilder {
+            d.rules = append(d.rules, ruleDecl{name: name, writes: map[string]Expr{}})
+            return &RuleBuilder{definition: d, index: len(d.rules)-1}
+          }
+          func (r *RuleBuilder) On(values ...Trigger) *RuleBuilder { r.definition.rules[r.index].triggers = append(r.definition.rules[r.index].triggers, values...); return r }
+          func (r *RuleBuilder) When(values ...Expr) *RuleBuilder { r.definition.rules[r.index].when = append(r.definition.rules[r.index].when, values...); return r }
+          func (r *RuleBuilder) Require(values ...Expr) *RuleBuilder { r.definition.rules[r.index].require = append(r.definition.rules[r.index].require, values...); return r }
+          func (r *RuleBuilder) Run(activity string) *RuleBuilder { r.definition.rules[r.index].run = activity; return r }
+          func (r *RuleBuilder) Set(target, value Expr) *RuleBuilder { r.definition.rules[r.index].writes[target.text] = value; return r }
+
+          func (d *Definition) Claim(name string, expressions ...Expr) *Definition { d.claims = append(d.claims, claimDecl{name: name, expressions: expressions}); return d }
+          func (d *Definition) Query(name string, values map[string]Expr) *Definition { d.queries = append(d.queries, queryDecl{name: name, values: values}); return d }
+
+          func (d *Definition) CompilePlan() (*axiom.Plan, error) { return d.Compile() }
+          func (d *Definition) Compile() (*axiom.Plan, error) {
+            source := []byte(d.Source())
+            plan, err := axiom.CompilePlan(source, axiom.WithSourceName("go:model:"+d.name))
+            if err != nil { return nil, err }
+            plan.Format = "go:model"
+            plan.Version = d.version
+            return plan, nil
+          }
+
+          func (d *Definition) Source() string {
+            var out strings.Builder
+            fmt.Fprintf(&out, "domain %s\n\n", d.name)
+            for _, value := range d.events { renderSchema(&out, "signal", value) }
+            for _, value := range d.states { renderSchema(&out, "context", value) }
+            for _, value := range d.computeds { fmt.Fprintf(&out, "computed %s: %s =\n  %s\n\n", value.name, value.typ, value.expr.text) }
+            for _, value := range d.facts {
+              fmt.Fprintf(&out, "fact %s when:\n", value.name); renderExprList(&out, value.when, 2)
+              if len(value.expose) > 0 { out.WriteString("expose:\n"); renderExprMap(&out, value.expose, 2) }
+              out.WriteByte('\n')
+            }
+            for _, value := range d.policies {
+              fmt.Fprintf(&out, "policy %s:\n", value.name); renderExprMap(&out, value.entries, 2); out.WriteByte('\n')
+            }
+            for _, value := range d.activities {
+              fmt.Fprintf(&out, "activity %s:\n", value.name)
+              if len(value.require) > 0 { out.WriteString("  require:\n"); renderExprList(&out, value.require, 4) }
+              if len(value.input) > 0 { out.WriteString("  input:\n"); renderExprMap(&out, value.input, 4) }
+              if len(value.output) > 0 { out.WriteString("  output:\n"); renderTypeMap(&out, value.output, 4) }
+              fmt.Fprintf(&out, "  effect: %s\n", value.effect)
+              if value.idempotency != nil { fmt.Fprintf(&out, "  idempotencyKey: %s\n", value.idempotency.text) }
+              if value.policy != "" { fmt.Fprintf(&out, "  policy: %s\n", value.policy) }
+              out.WriteByte('\n')
+            }
+            for _, value := range d.rules {
+              fmt.Fprintf(&out, "rule %s:\n", value.name)
+              for _, trigger := range value.triggers { fmt.Fprintf(&out, "  on %s\n", trigger.text) }
+              if len(value.when) > 0 { out.WriteString("  when:\n"); renderExprList(&out, value.when, 4) }
+              if len(value.require) > 0 { out.WriteString("  require:\n"); renderExprList(&out, value.require, 4) }
+              if value.run != "" { fmt.Fprintf(&out, "  run: %s\n", value.run) }
+              if len(value.writes) > 0 { out.WriteString("  write:\n"); renderExprMap(&out, value.writes, 4) }
+              out.WriteByte('\n')
+            }
+            for _, value := range d.claims { fmt.Fprintf(&out, "claim %s:\n  always:\n", value.name); renderExprList(&out, value.expressions, 4); out.WriteByte('\n') }
+            for _, value := range d.queries { fmt.Fprintf(&out, "query %s:\n  return:\n", value.name); renderExprMap(&out, value.values, 4); out.WriteByte('\n') }
+            return out.String()
+          }
+
+          func schemaFromType(typ reflect.Type, name string) schemaDecl {
+            for typ.Kind() == reflect.Pointer { typ = typ.Elem() }
+            if typ.Kind() != reflect.Struct { panic("axiom/model: state and event types must be structs") }
+            declaration := schemaDecl{name: name}
+            for index := 0; index < typ.NumField(); index++ {
+              field := typ.Field(index)
+              if !field.IsExported() { continue }
+              serialized := field.Tag.Get("axiom")
+              if serialized == "" { serialized = strings.Split(field.Tag.Get("json"), ",")[0] }
+              if serialized == "" { serialized = lowerFirst(field.Name) }
+              if serialized == "-" { continue }
+              declaration.fields = append(declaration.fields, fieldDecl{goName: field.Name, name: serialized, typ: axiomType(field.Type)})
+            }
+            return declaration
+          }
+          func axiomType(typ reflect.Type) string {
+            optional := false
+            if typ.Kind() == reflect.Pointer { optional = true; typ = typ.Elem() }
+            var value string
+            switch {
+            case typ == reflect.TypeFor[time.Time](): value = "Time"
+            case typ == reflect.TypeFor[time.Duration](): value = "Duration"
+            default:
+              switch typ.Kind() {
+              case reflect.String: value = "String"
+              case reflect.Bool: value = "Bool"
+              case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64: value = "Int"
+              case reflect.Float32, reflect.Float64: value = "Float"
+              case reflect.Slice, reflect.Array: value = "List<" + axiomType(typ.Elem()) + ">"
+              case reflect.Map, reflect.Struct: value = "Object"
+              default: value = "Any"
+              }
+            }
+            if optional { value += "?" }
+            return value
+          }
+          func fieldName(declaration schemaDecl, name string) string { return declaration.fields[fieldIndex(declaration, name)].name }
+          func fieldIndex(declaration schemaDecl, name string) int {
+            for index, field := range declaration.fields { if field.goName == name || field.name == name { return index } }
+            panic("axiom/model: unknown field " + declaration.name + "." + name)
+          }
+          func lowerFirst(value string) string { if value == "" { return value }; return strings.ToLower(value[:1]) + value[1:] }
+          func renderSchema(out *strings.Builder, kind string, declaration schemaDecl) {
+            fmt.Fprintf(out, "%s %s:\n", kind, declaration.name)
+            for _, field := range declaration.fields {
+              fmt.Fprintf(out, "  %s: %s", field.name, field.typ)
+              if field.defaultValue != nil { fmt.Fprintf(out, " = %s", field.defaultValue.text) }
+              out.WriteByte('\n')
+            }
+            out.WriteByte('\n')
+          }
+          func renderExprList(out *strings.Builder, values []Expr, indent int) { for _, value := range values { fmt.Fprintf(out, "%s%s\n", strings.Repeat(" ", indent), value.text) } }
+          func renderExprMap(out *strings.Builder, values map[string]Expr, indent int) { keys := sortedKeys(values); for _, key := range keys { fmt.Fprintf(out, "%s%s = %s\n", strings.Repeat(" ", indent), key, values[key].text) } }
+          func renderTypeMap(out *strings.Builder, values map[string]string, indent int) { keys := make([]string, 0, len(values)); for key := range values { keys = append(keys, key) }; sort.Strings(keys); for _, key := range keys { fmt.Fprintf(out, "%s%s: %s\n", strings.Repeat(" ", indent), key, values[key]) } }
+          func sortedKeys(values map[string]Expr) []string { keys := make([]string, 0, len(values)); for key := range values { keys = append(keys, key) }; sort.Strings(keys); return keys }
+          EOF
+
+            mkdir -p table
+            cat > table/toml.go <<'EOF'
+          // Package table implements a TOML decision-table frontend.
+          package table
+
+          import (
+            "encoding/json"
+            "fmt"
+            "os"
+            "sort"
+            "strings"
+
+            "github.com/Homiakus/axiom"
+            "github.com/pelletier/go-toml/v2"
+          )
+
+          type Source struct { Data []byte; Name string }
+          func Bytes(data []byte) Source { return Source{Data: append([]byte(nil), data...), Name: "inline.toml"} }
+          func Named(name string, data []byte) Source { return Source{Data: append([]byte(nil), data...), Name: name} }
+          func Load(path string) (*axiom.Plan, error) { data, err := os.ReadFile(path); if err != nil { return nil, err }; return Named(path, data).CompilePlan() }
+          func Parse(data []byte) (*axiom.Plan, error) { return Bytes(data).CompilePlan() }
+
+          type workflow struct { Name string `toml:"name"`; Version string `toml:"version"` }
+          type event struct { Name string `toml:"name"`; Fields map[string]string `toml:"fields"` }
+          type policy struct { Name string `toml:"name"`; Retry int `toml:"retry"`; Timeout string `toml:"timeout"`; Concurrency string `toml:"concurrency"`; Idempotency string `toml:"idempotency"` }
+          type activity struct { Name string `toml:"name"`; Require []string `toml:"require"`; Input map[string]string `toml:"input"`; Output map[string]string `toml:"output"`; Effect string `toml:"effect"`; Policy string `toml:"policy"`; IdempotencyKey string `toml:"idempotency_key"` }
+          type transition struct { Name string `toml:"name"`; On string `toml:"on"`; Changed string `toml:"changed"`; Timer string `toml:"timer"`; When []string `toml:"when"`; Require []string `toml:"require"`; Activity string `toml:"activity"`; Set map[string]string `toml:"set"` }
+          type claim struct { Name string `toml:"name"`; Always []string `toml:"always"` }
+          type query struct { Name string `toml:"name"`; Return map[string]string `toml:"return"` }
+          type document struct { Workflow workflow `toml:"workflow"`; State map[string]map[string]any `toml:"state"`; Events []event `toml:"event"`; Policies []policy `toml:"policy"`; Activities []activity `toml:"activity"`; Transitions []transition `toml:"transition"`; Claims []claim `toml:"claim"`; Queries []query `toml:"query"` }
+
+          func (s Source) CompilePlan() (*axiom.Plan, error) {
+            var document document
+            if err := toml.Unmarshal(s.Data, &document); err != nil { return nil, fmt.Errorf("table: parse TOML: %w", err) }
+            source, err := render(document)
+            if err != nil { return nil, err }
+            name := s.Name; if name == "" { name = "inline.toml" }
+            plan, err := axiom.CompilePlan([]byte(source), axiom.WithSourceName(name))
+            if err != nil { return nil, err }
+            plan.Format = "toml"
+            if document.Workflow.Version != "" { plan.Version = document.Workflow.Version }
+            return plan, nil
+          }
+
+          func render(value document) (string, error) {
+            if value.Workflow.Name == "" { return "", fmt.Errorf("table: workflow.name is required") }
+            var out strings.Builder
+            fmt.Fprintf(&out, "domain %s\n\n", value.Workflow.Name)
+            for _, event := range value.Events {
+              fmt.Fprintf(&out, "signal %s:\n", event.Name); renderStringMap(&out, event.Fields, ":", 2); out.WriteByte('\n')
+            }
+            stateNames := keys(value.State)
+            for _, stateName := range stateNames {
+              fmt.Fprintf(&out, "context %s:\n", stateName)
+              fieldNames := keys(value.State[stateName])
+              for _, fieldName := range fieldNames {
+                typ, defaultValue, hasDefault, err := field(value.State[stateName][fieldName])
+                if err != nil { return "", fmt.Errorf("table: state.%s.%s: %w", stateName, fieldName, err) }
+                fmt.Fprintf(&out, "  %s: %s", fieldName, typ)
+                if hasDefault { fmt.Fprintf(&out, " = %s", defaultValue) }
+                out.WriteByte('\n')
+              }
+              out.WriteByte('\n')
+            }
+            for _, policy := range value.Policies {
+              fmt.Fprintf(&out, "policy %s:\n", policy.Name)
+              if policy.Retry > 0 { fmt.Fprintf(&out, "  retry = %d\n", policy.Retry) }
+              if policy.Timeout != "" { fmt.Fprintf(&out, "  timeout = %s\n", policy.Timeout) }
+              if policy.Concurrency != "" { fmt.Fprintf(&out, "  concurrency = %s\n", policy.Concurrency) }
+              if policy.Idempotency != "" { fmt.Fprintf(&out, "  idempotency = %s\n", policy.Idempotency) }
+              out.WriteByte('\n')
+            }
+            for _, activity := range value.Activities {
+              fmt.Fprintf(&out, "activity %s:\n", activity.Name)
+              renderList(&out, "require", activity.Require, 2)
+              renderStringSection(&out, "input", activity.Input, " = ", 2)
+              renderStringSection(&out, "output", activity.Output, ": ", 2)
+              effect := activity.Effect; if effect == "" { effect = "none" }
+              fmt.Fprintf(&out, "  effect: %s\n", effect)
+              if activity.IdempotencyKey != "" { fmt.Fprintf(&out, "  idempotencyKey: %s\n", activity.IdempotencyKey) }
+              if activity.Policy != "" { fmt.Fprintf(&out, "  policy: %s\n", activity.Policy) }
+              out.WriteByte('\n')
+            }
+            for _, transition := range value.Transitions {
+              fmt.Fprintf(&out, "rule %s:\n", transition.Name)
+              switch { case transition.On != "": fmt.Fprintf(&out, "  on %s\n", transition.On); case transition.Changed != "": fmt.Fprintf(&out, "  on changed(%s)\n", transition.Changed); case transition.Timer != "": fmt.Fprintf(&out, "  on timer(%s)\n", transition.Timer) }
+              renderList(&out, "when", transition.When, 2)
+              renderList(&out, "require", transition.Require, 2)
+              if transition.Activity != "" { fmt.Fprintf(&out, "  run: %s\n", transition.Activity) }
+              renderStringSection(&out, "write", transition.Set, " = ", 2)
+              out.WriteByte('\n')
+            }
+            for _, claim := range value.Claims { fmt.Fprintf(&out, "claim %s:\n", claim.Name); renderList(&out, "always", claim.Always, 2); out.WriteByte('\n') }
+            for _, query := range value.Queries { fmt.Fprintf(&out, "query %s:\n", query.Name); renderStringSection(&out, "return", query.Return, " = ", 2); out.WriteByte('\n') }
+            return out.String(), nil
+          }
+
+          func field(value any) (string, string, bool, error) {
+            if text, ok := value.(string); ok {
+              if isType(text) { return text, "", false, nil }
+              data, _ := json.Marshal(text); return "String", string(data), true, nil
+            }
+            if table, ok := value.(map[string]any); ok {
+              typ, _ := table["type"].(string); if typ == "" { return "", "", false, fmt.Errorf("inline table requires type") }
+              defaultValue, exists := table["default"]
+              if !exists { return typ, "", false, nil }
+              encoded, err := literal(defaultValue); return typ, encoded, true, err
+            }
+            encoded, err := literal(value)
+            switch value.(type) { case bool: return "Bool", encoded, true, err; case int64, int32, int: return "Int", encoded, true, err; case float64, float32: return "Float", encoded, true, err }
+            return "Any", encoded, true, err
+          }
+          func literal(value any) (string, error) { data, err := json.Marshal(value); return string(data), err }
+          func isType(value string) bool { base := strings.TrimSuffix(value, "?"); return base == "String" || base == "Int" || base == "Float" || base == "Bool" || base == "Time" || base == "Duration" || base == "Object" || base == "Any" || strings.HasPrefix(base, "List<") || strings.HasPrefix(base, "Map<") }
+          func keys[T any](values map[string]T) []string { result := make([]string, 0, len(values)); for key := range values { result = append(result, key) }; sort.Strings(result); return result }
+          func renderStringMap(out *strings.Builder, values map[string]string, separator string, indent int) { for _, key := range keys(values) { fmt.Fprintf(out, "%s%s%s %s\n", strings.Repeat(" ", indent), key, separator, values[key]) } }
+          func renderList(out *strings.Builder, name string, values []string, indent int) { if len(values) == 0 { return }; fmt.Fprintf(out, "%s%s:\n", strings.Repeat(" ", indent), name); for _, value := range values { fmt.Fprintf(out, "%s%s\n", strings.Repeat(" ", indent+2), value) } }
+          func renderStringSection(out *strings.Builder, name string, values map[string]string, separator string, indent int) { if len(values) == 0 { return }; fmt.Fprintf(out, "%s%s:\n", strings.Repeat(" ", indent), name); for _, key := range keys(values) { fmt.Fprintf(out, "%s%s%s%s\n", strings.Repeat(" ", indent+2), key, separator, values[key]) } }
+          EOF
+
+            mkdir -p store/pebble
+            cat > store/pebble/pebble.go <<'EOF'
+          // Package pebble exposes the durable Pebble-backed Axiom store.
+          package pebble
+
+          import internal "github.com/Homiakus/axiom/internal/store/pebble"
+
+          type Store = internal.Store
+          type Option = internal.Option
+
+          var (
+            Open = internal.Open
+            WithNoSync = internal.WithNoSync
+            WithSyncEvery = internal.WithSyncEvery
+            WithJSONCodec = internal.WithJSONCodec
+            WithGobCodec = internal.WithGobCodec
+          )
+          EOF
+
+            cat > cmd/axiomgen/main.go <<'EOF'
+          package main
+
+          import (
+            "encoding/json"
+            "fmt"
+            "os"
+
+            "github.com/Homiakus/axiom/cmd/axiomgen/internal/generate"
+          )
+
+          func main() {
+            if err := run(os.Args[1:]); err != nil {
+              fmt.Fprintf(os.Stderr, "axiomgen: %v\n", err)
+              os.Exit(1)
+            }
+          }
+
+          func run(args []string) error {
+            request, err := parseArgs(args)
+            if err != nil { return err }
+            result, err := generate.Run(request)
+            if err != nil { return err }
+            encoder := json.NewEncoder(os.Stdout)
+            encoder.SetIndent("", "  ")
+            return encoder.Encode(result)
+          }
+
+          func parseArgs(args []string) (generate.Request, error) {
+            var request generate.Request
+            for index := 0; index < len(args); index++ {
+              switch args[index] {
+              case "--file": index++; if index >= len(args) { return request, fmt.Errorf("--file requires a value") }; request.File = args[index]
+              case "--out": index++; if index >= len(args) { return request, fmt.Errorf("--out requires a value") }; request.OutDir = args[index]
+              case "--package": index++; if index >= len(args) { return request, fmt.Errorf("--package requires a value") }; request.PackageName = args[index]
+              default: return request, fmt.Errorf("usage: axiomgen --file <workflow.axm> [--out <dir>] [--package <name>]")
+              }
+            }
+            if request.File == "" { return request, fmt.Errorf("--file is required") }
+            return request, nil
+          }
+          EOF
+
+            mkdir -p examples/go-first
+            cat > examples/go-first/main.go <<'EOF'
+          package main
+
+          import (
+            "context"
+            "fmt"
+
+            "github.com/Homiakus/axiom"
+          )
+
+          type State struct { Count int `json:"count"` }
+          type Increment struct { By int `json:"by"` }
+          type LogCount struct { Count int }
+
+          func main() {
+            flow := axiom.NewFlow("counter", State{})
+            axiom.Handle(flow, func(_ context.Context, state State, event Increment) (axiom.FlowResult[State], error) {
+              state.Count += event.By
+              return axiom.Next(state, axiom.Call(LogCount{Count: state.Count})), nil
+            })
+            axiom.EffectHandler(flow, func(_ context.Context, command LogCount) error {
+              fmt.Println(command.Count)
+              return nil
+            })
+            engine, _ := axiom.OpenFlow(flow)
+            _ = engine.Execution("counter-1").Dispatch(context.Background(), Increment{By: 2})
+          }
+          EOF
+
+            mkdir -p examples/model
+            cat > examples/model/main.go <<'EOF'
+          package main
+
+          import (
+            "context"
+            "log"
+            "time"
+
+            "github.com/Homiakus/axiom"
+            "github.com/Homiakus/axiom/model"
+          )
+
+          type User struct { ID *string `json:"id"`; Email *string `json:"email"`; WelcomeSent bool `json:"welcomeSent"` }
+          type UserRegistered struct { UserID string `json:"userId"`; Email string `json:"email"` }
+          func (UserRegistered) AxiomEventName() string { return "UserRegistered" }
+
+          func main() {
+            definition := model.New("Welcome")
+            user := model.State[User](definition, "User").Default("WelcomeSent", false)
+            registered := model.Event[UserRegistered](definition, "UserRegistered")
+            definition.Policy("emailPolicy").Retry(2).Timeout(5*time.Second).Concurrency("once").Idempotency("required")
+            definition.Activity("SendWelcomeEmail").Input("userId", user.Field("ID")).Input("email", user.Field("Email")).Output("sent", "Bool").Effect("external").IdempotencyKey(user.Field("ID")).Policy("emailPolicy")
+            definition.Rule("captureRegistration").On(registered.Trigger()).Set(user.Field("ID"), registered.Field("UserID")).Set(user.Field("Email"), registered.Field("Email"))
+            definition.Rule("sendWelcomeEmail").On(user.Changed("Email")).When(model.Eq(user.Field("WelcomeSent"), model.Lit(false))).Run("SendWelcomeEmail").Set(user.Field("WelcomeSent"), model.Ref("output.sent"))
+            definition.Claim("welcomeSentRequiresEmail", model.Implies(model.Eq(user.Field("WelcomeSent"), model.Lit(true)), model.Exists(user.Field("Email"))))
+
+            engine, err := axiom.Open(definition, axiom.Act("SendWelcomeEmail", func(context.Context, axiom.Input) (axiom.Output, error) { return axiom.Output{"sent": true}, nil }))
+            if err != nil { log.Fatal(err) }
+            if err := engine.Execution("user-1").Dispatch(context.Background(), UserRegistered{UserID: "user-1", Email: "user@example.com"}); err != nil { log.Fatal(err) }
+          }
+          EOF
+
+            mkdir -p examples/table
+            cat > examples/table/welcome.toml <<'EOF'
+          [workflow]
+          name = "Welcome"
+          version = "1"
+
+          [state.User]
+          id = "String?"
+          email = "String?"
+          welcomeSent = false
+
+          [[event]]
+          name = "UserRegistered"
+          [event.fields]
+          userId = "String"
+          email = "String"
+
+          [[policy]]
+          name = "emailPolicy"
+          retry = 2
+          timeout = "5s"
+          concurrency = "once"
+          idempotency = "required"
+
+          [[activity]]
+          name = "SendWelcomeEmail"
+          effect = "external"
+          policy = "emailPolicy"
+          idempotency_key = "User.id"
+          [activity.input]
+          userId = "User.id"
+          email = "User.email"
+          [activity.output]
+          sent = "Bool"
+
+          [[transition]]
+          name = "captureRegistration"
+          on = "UserRegistered"
+          [transition.set]
+          "User.id" = "signal.userId"
+          "User.email" = "signal.email"
+
+          [[transition]]
+          name = "sendWelcomeEmail"
+          changed = "User.email"
+          when = ["User.welcomeSent == false"]
+          activity = "SendWelcomeEmail"
+          [transition.set]
+          "User.welcomeSent" = "output.sent"
+
+          [[claim]]
+          name = "welcomeSentRequiresEmail"
+          always = ["User.welcomeSent == true implies User.email exists"]
+          EOF
+
+            cat > go_first_test.go <<'EOF'
+          package axiom_test
+
+          import (
+            "context"
+            "testing"
+
+            "github.com/Homiakus/axiom"
+            "github.com/Homiakus/axiom/model"
+            "github.com/Homiakus/axiom/table"
+          )
+
+          type counterState struct { Count int `json:"count"` }
+          type increment struct { By int `json:"by"` }
+
+          func TestGoFirstFlow(t *testing.T) {
+            flow := axiom.NewFlow("counter", counterState{})
+            axiom.Handle(flow, func(_ context.Context, state counterState, event increment) (axiom.FlowResult[counterState], error) { state.Count += event.By; return axiom.Next(state), nil })
+            engine, err := axiom.OpenFlow(flow); if err != nil { t.Fatal(err) }
+            run := engine.Execution("one")
+            if err := run.Dispatch(context.Background(), increment{By: 3}); err != nil { t.Fatal(err) }
+            state, err := run.State(context.Background()); if err != nil { t.Fatal(err) }
+            if state.Count != 3 { t.Fatalf("count = %d", state.Count) }
+          }
+
+          func TestModelBuilderCompiles(t *testing.T) {
+            type state struct { Value int `json:"value"` }
+            type event struct { Value int `json:"value"` }
+            definition := model.New("Builder")
+            current := model.State[state](definition, "Current")
+            incoming := model.Event[event](definition, "SetValue")
+            definition.Rule("set").On(incoming.Trigger()).Set(current.Field("Value"), incoming.Field("Value"))
+            if _, err := definition.Compile(); err != nil { t.Fatal(err) }
+          }
+
+          func TestTOMLCompiles(t *testing.T) {
+            source := []byte(`[workflow]
+          name = "Table"
+          [state.Counter]
+          value = 0
+          [[event]]
+          name = "Increment"
+          [event.fields]
+          by = "Int"
+          [[transition]]
+          name = "increment"
+          on = "Increment"
+          [transition.set]
+          "Counter.value" = "Counter.value + signal.by"
+          `)
+            if _, err := table.Parse(source); err != nil { t.Fatal(err) }
+          }
+          EOF
+
+            cat > README.md <<'EOF'
+          # Axiom
+
+          Axiom is a deterministic state-transition, workflow and decision engine for Go. Files are optional: start with typed Go reducers, use the declarative Go builder when static analysis matters, or load AXM/TOML into the same canonical `Plan`.
+
+          ## Install
+
+          ```bash
+          go get github.com/Homiakus/axiom
+          ```
+
+          ## Fastest start: typed Go flow
+
+          ```go
+          type State struct { Count int }
+          type Increment struct { By int }
+
+          flow := axiom.NewFlow("counter", State{})
+          axiom.Handle(flow, func(ctx context.Context, state State, event Increment) (axiom.FlowResult[State], error) {
+              state.Count += event.By
+              return axiom.Next(state), nil
+          })
+
+          engine, _ := axiom.OpenFlow(flow)
+          run := engine.Execution("counter-1")
+          _ = run.Dispatch(ctx, Increment{By: 2})
+          state, _ := run.State(ctx)
+          ```
+
+          This mode is file-free and fully typed. Because handlers are arbitrary Go code, its analysis level is `axiom.AnalysisOpaque`.
+
+          ## Declarative Go model
+
+          `model` keeps the model in Go while preserving compiler validation, dependency indexes, claims and impact analysis:
+
+          ```go
+          definition := model.New("Welcome")
+          user := model.State[User](definition, "User")
+          registered := model.Event[UserRegistered](definition, "UserRegistered")
+
+          definition.Rule("capture").
+              On(registered.Trigger()).
+              Set(user.Field("ID"), registered.Field("UserID"))
+
+          engine, err := axiom.Open(definition)
+          ```
+
+          ## Optional frontends
+
+          ```go
+          plan, err := axm.Load("workflow.axm")
+          engine, err := plan.New()
+
+          plan, err = table.Load("workflow.toml")
+          engine, err = plan.New()
+          ```
+
+          AXM and TOML are frontends, not runtime requirements. Both compile into `axiom.Plan`.
+
+          ## Ergonomic execution API
+
+          ```go
+          run := engine.Execution("order-42")
+          err := run.Dispatch(ctx, OrderCreated{OrderID: "42"})
+
+          var state OrderState
+          err = run.State(ctx, &state)
+
+          history, err := run.History(ctx)
+          pending, err := run.PendingActivities(ctx)
+          explanation, err := run.Explain(ctx)
+          ```
+
+          `Dispatch` automatically creates a missing execution, sends the event and runs inline activities until idle. Existing `Start`, `Signal`, `Patch`, `Query` and `RunUntilIdle` methods remain available.
+
+          ## Packages
+
+          - `github.com/Homiakus/axiom` — canonical Plan, runtime and Go-first flow API
+          - `github.com/Homiakus/axiom/model` — declarative file-free builder
+          - `github.com/Homiakus/axiom/axm` — AXM frontend
+          - `github.com/Homiakus/axiom/table` — TOML transition-table frontend
+          - `github.com/Homiakus/axiom/store/pebble` — durable Pebble store
+          - `github.com/Homiakus/axiom/cmd/axiomgen` — optional typed boundary generator
+
+          ## Validation
+
+          ```bash
+          go test ./...
+          go vet ./...
+          ```
+
+          Licensed under Apache-2.0.
+          EOF
+
+            touch .go-first-migration-complete
+          fi
+
+          go get github.com/pelletier/go-toml/v2@latest
+          gofmt -w .
+          go mod tidy
+          go test ./...
+          go vet ./...
+
+      - name: Commit migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No migration changes to commit"
+            exit 0
+          fi
+          git commit -m "Implement Go-first Plan architecture [skip ci]"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
