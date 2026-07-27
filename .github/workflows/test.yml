@@ -12,24 +12,67 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
-          cache: false
+          cache: true
 
       - name: Verify module metadata
         run: |
           go mod tidy
-          (cd axiom-main/tools/axiomgen && go mod tidy)
-          git diff --exit-code -- go.mod go.sum axiom-main/tools/axiomgen/go.mod axiom-main/tools/axiomgen/go.sum
+          git diff --exit-code -- go.mod go.sum
 
-      - name: Test public module
+      - name: Test all packages
         run: go test ./...
 
-      - name: Test engine module
-        working-directory: axiom-main
-        run: go test ./...
+      - name: Vet all packages
+        run: go vet ./...
 
-      - name: Test code generator
-        working-directory: axiom-main/tools/axiomgen
-        run: go test ./...
+      - name: Test external consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          consumer="$(mktemp -d)"
+          cd "$consumer"
+          go mod init example.com/axiom-consumer
+          go mod edit -require=github.com/Homiakus/axiom@v0.0.0
+          go mod edit -replace=github.com/Homiakus/axiom="$GITHUB_WORKSPACE"
+          cat > consumer_test.go <<'EOF'
+          package consumer
+
+          import (
+            "context"
+            "testing"
+
+            "github.com/Homiakus/axiom"
+            "github.com/Homiakus/axiom/axm"
+            "github.com/Homiakus/axiom/model"
+            "github.com/Homiakus/axiom/table"
+          )
+
+          type state struct { Value int `json:"value"` }
+          type event struct { Value int `json:"value"` }
+
+          func TestPublicPackages(t *testing.T) {
+            flow := axiom.NewFlow("consumer", state{})
+            axiom.Handle(flow, func(_ context.Context, current state, incoming event) (axiom.FlowResult[state], error) {
+              current.Value = incoming.Value
+              return axiom.Next(current), nil
+            })
+            engine, err := axiom.OpenFlow(flow)
+            if err != nil { t.Fatal(err) }
+            if err := engine.Execution("one").Dispatch(context.Background(), event{Value: 7}); err != nil { t.Fatal(err) }
+
+            definition := model.New("Consumer")
+            current := model.State[state](definition, "Current")
+            incoming := model.Event[event](definition, "SetValue")
+            definition.Rule("set").On(incoming.Trigger()).Set(current.Field("Value"), incoming.Field("Value"))
+            if _, err := definition.Compile(); err != nil { t.Fatal(err) }
+
+            if _, err := axm.Parse([]byte("domain Empty\n")); err != nil { t.Fatal(err) }
+            if _, err := table.Parse([]byte("[workflow]\nname = \"EmptyTable\"\n")); err != nil { t.Fatal(err) }
+          }
+          EOF
+          go mod tidy
+          go test ./...
