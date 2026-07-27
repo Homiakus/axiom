@@ -18,6 +18,7 @@ type Options struct {
 	PackageName string
 	SourcePath  string
 	Source      []byte
+	Format      string
 }
 
 type File struct {
@@ -67,6 +68,9 @@ func generatedFile(module *compiler.Module, opts Options, domain string) ([]byte
 	fmt.Fprintln(&b, "\t\"fmt\"")
 	fmt.Fprintln(&b, "")
 	fmt.Fprintln(&b, "\t\"github.com/Homiakus/axiom\"")
+	if strings.EqualFold(opts.Format, "toml") {
+		fmt.Fprintln(&b, "\t\"github.com/Homiakus/axiom/table\"")
+	}
 	fmt.Fprintln(&b, ")")
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "const %sAXMHash = %q\n\n", domain, fmt.Sprintf("%x", hash[:]))
@@ -74,7 +78,7 @@ func generatedFile(module *compiler.Module, opts Options, domain string) ([]byte
 	writeActivityNameConsts(&b, activities, comments)
 	writeTypes(&b, module, activities, comments)
 	writeInterface(&b, domain, activities, comments)
-	writeLoadAndNew(&b, domain, activities)
+	writeLoadAndNew(&b, domain, activities, opts)
 	writeAdapters(&b, module, activities)
 	writeHelpers(&b)
 	return format.Source(b.Bytes())
@@ -217,13 +221,25 @@ func writeInterface(b *bytes.Buffer, domain string, activities []lang.ActivityDe
 	fmt.Fprintln(b)
 }
 
-func writeLoadAndNew(b *bytes.Buffer, domain string, activities []lang.ActivityDecl) {
+func writeLoadAndNew(b *bytes.Buffer, domain string, activities []lang.ActivityDecl, opts Options) {
+	path := opts.SourcePath
+	if path == "" {
+		path = domain + ".axm"
+	}
 	fmt.Fprintf(b, "func Load%s() (*axiom.App, error) {\n", domain)
-	fmt.Fprintf(b, "\tmodule, err := axiom.CompileAny([]byte(%sAXMSource), axiom.WithSourceName(%q))\n", domain, domain+".axm")
-	fmt.Fprintln(b, "\tif err != nil {")
-	fmt.Fprintln(b, "\t\treturn nil, err")
-	fmt.Fprintln(b, "\t}")
-	fmt.Fprintf(b, "\treturn &axiom.App{Path: %q, Module: module}, nil\n", domain+".axm")
+	if strings.EqualFold(opts.Format, "toml") {
+		fmt.Fprintf(b, "\tplan, err := table.Parse([]byte(%sAXMSource))\n", domain)
+		fmt.Fprintln(b, "\tif err != nil {")
+		fmt.Fprintln(b, "\t\treturn nil, err")
+		fmt.Fprintln(b, "\t}")
+		fmt.Fprintf(b, "\treturn &axiom.App{Path: %q, Module: plan.Module()}, nil\n", filepath.ToSlash(path))
+	} else {
+		fmt.Fprintf(b, "\tmodule, err := axiom.CompileAny([]byte(%sAXMSource), axiom.WithSourceName(%q))\n", domain, filepath.ToSlash(path))
+		fmt.Fprintln(b, "\tif err != nil {")
+		fmt.Fprintln(b, "\t\treturn nil, err")
+		fmt.Fprintln(b, "\t}")
+		fmt.Fprintf(b, "\treturn &axiom.App{Path: %q, Module: module}, nil\n", filepath.ToSlash(path))
+	}
 	fmt.Fprintln(b, "}")
 	fmt.Fprintln(b)
 	fmt.Fprintf(b, "func New%s(impl %sActivities, opts ...axiom.Option) (*axiom.Engine, error) {\n", domain, domain)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/Homiakus/axiom"
 	"github.com/Homiakus/axiom/cmd/axiomgen/internal/codegen"
+	"github.com/Homiakus/axiom/table"
 )
 
 type Request struct {
@@ -75,7 +76,7 @@ func Preview(req Request) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	module, err := axiom.CompileAny(source, axiom.WithSourceName(req.File))
+	module, formatName, err := compileSource(req.File, source)
 	if err != nil {
 		return nil, err
 	}
@@ -83,6 +84,7 @@ func Preview(req Request) (*Plan, error) {
 		PackageName: req.PackageName,
 		SourcePath:  req.File,
 		Source:      source,
+		Format:      formatName,
 	})
 	if err != nil {
 		return nil, err
@@ -96,13 +98,15 @@ func Preview(req Request) (*Plan, error) {
 		Package: req.PackageName,
 		files:   files,
 	}
-	// If a previous .gen.go exists, extract old source and compute diff.
-	if genPath := generatedFilePath(req.OutDir, module.Domain); genPath != "" {
-		if oldSrc, err := extractAXMSource(genPath); err == nil && len(oldSrc) > 0 {
-			plan.oldSource = oldSrc
-			if oldMod, err := axiom.CompileAny(oldSrc, axiom.WithSourceName(req.File)); err == nil {
-				src, _ := os.ReadFile(req.File)
-				plan.Diff = codegen.Diff(oldSrc, src, oldMod, module)
+	// AXM keeps semantic source diff support. Other frontends still get deterministic regeneration.
+	if formatName == "axm" {
+		if genPath := generatedFilePath(req.OutDir, module.Domain); genPath != "" {
+			if oldSrc, err := extractAXMSource(genPath); err == nil && len(oldSrc) > 0 {
+				plan.oldSource = oldSrc
+				if oldMod, err := axiom.CompileAny(oldSrc, axiom.WithSourceName(req.File)); err == nil {
+					src, _ := os.ReadFile(req.File)
+					plan.Diff = codegen.Diff(oldSrc, src, oldMod, module)
+				}
 			}
 		}
 	}
@@ -126,6 +130,21 @@ func Preview(req Request) (*Plan, error) {
 		})
 	}
 	return plan, nil
+}
+
+func compileSource(path string, source []byte) (*axiom.Module, string, error) {
+	if strings.EqualFold(filepath.Ext(path), ".toml") {
+		plan, err := table.Parse(source)
+		if err != nil {
+			return nil, "", err
+		}
+		return plan.Module(), "toml", nil
+	}
+	module, err := axiom.CompileAny(source, axiom.WithSourceName(path))
+	if err != nil {
+		return nil, "", err
+	}
+	return module, "axm", nil
 }
 
 func Run(req Request) (Result, error) {
