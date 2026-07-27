@@ -1,0 +1,273 @@
+name: Refactor repository into Go library
+
+on:
+  push:
+    branches:
+      - agent/go-library-refactor
+    paths:
+      - .github/workflows/refactor-library.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/go-library-refactor
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+
+      - name: Convert repository to one importable module
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s dotglob nullglob
+
+          test -d axiom-main
+          cp -a axiom-main/. .
+          rm -rf axiom-main axiom-studio axiom_triz_full_docs
+
+          # The public package lives at the module root.
+          mv pkg/axiom/*.go .
+          rm -rf pkg
+
+          # Keep the generator, but remove its separate module and TUI shell.
+          mkdir -p cmd/axiomgen/internal
+          mv tools/axiomgen/internal/codegen cmd/axiomgen/internal/
+          mv tools/axiomgen/internal/generate cmd/axiomgen/internal/
+          mv tools/axiomgen/main.go cmd/axiomgen/main.go
+          rm -rf tools
+
+          # Remove applications, generated demos, workspace files and redundant tests.
+          rm -rf cmd/axiom examples/control-panel examples/hydropilot internal/generated
+          rm -f go.work go.work.sum example_files_test.go
+
+          # Keep only compact, useful examples.
+          mkdir -p /tmp/axiom-examples
+          cp examples/axiom-files/welcome.axm /tmp/axiom-examples/welcome.axm
+          if [[ -f examples/triz/hydropilot_mini.axm ]]; then
+            cp examples/triz/hydropilot_mini.axm /tmp/axiom-examples/triz.axm
+          fi
+          rm -rf examples
+          mkdir -p examples/basic
+          cp /tmp/axiom-examples/welcome.axm examples/basic/workflow.axm
+          if [[ -f /tmp/axiom-examples/triz.axm ]]; then
+            mkdir -p examples/triz
+            cp /tmp/axiom-examples/triz.axm examples/triz/workflow.axm
+          fi
+
+          # Keep only reference documentation that belongs to the library.
+          mkdir -p /tmp/axiom-docs
+          cp docs/axiom-file-specification.md /tmp/axiom-docs/dsl.md
+          cp docs/axiom-crfg.md /tmp/axiom-docs/runtime.md
+          cp docs/axiomgen.md /tmp/axiom-docs/codegen.md
+          rm -rf docs
+          mkdir docs
+          cp /tmp/axiom-docs/* docs/
+
+          go mod edit -module=github.com/Homiakus/axiom
+
+          # Rewrite internal imports and generator paths for the root module.
+          while IFS= read -r -d '' file; do
+            sed -i \
+              -e 's#"axiom/internal/#"github.com/Homiakus/axiom/internal/#g' \
+              -e 's#"axiom/pkg/axiom"#"github.com/Homiakus/axiom"#g' \
+              -e 's#"axiom/tools/axiomgen/internal/#"github.com/Homiakus/axiom/cmd/axiomgen/internal/#g' \
+              -e 's#axiom/pkg/axiom#github.com/Homiakus/axiom#g' \
+              -e 's#axiom/tools/axiomgen/internal/#github.com/Homiakus/axiom/cmd/axiomgen/internal/#g' \
+              "$file"
+          done < <(find . -type f -name '*.go' -print0)
+
+          cat > cmd/axiomgen/main.go <<'EOF'
+          package main
+
+          import (
+            "encoding/json"
+            "fmt"
+            "os"
+
+            "github.com/Homiakus/axiom/cmd/axiomgen/internal/generate"
+          )
+
+          func main() {
+            if err := run(os.Args[1:]); err != nil {
+              fmt.Fprintf(os.Stderr, "axiomgen: %v\n", err)
+              os.Exit(1)
+            }
+          }
+
+          func run(args []string) error {
+            req, err := parseArgs(args)
+            if err != nil {
+              return err
+            }
+            result, err := generate.Run(req)
+            if err != nil {
+              return err
+            }
+            encoder := json.NewEncoder(os.Stdout)
+            encoder.SetIndent("", "  ")
+            return encoder.Encode(result)
+          }
+
+          func parseArgs(args []string) (generate.Request, error) {
+            var req generate.Request
+            for i := 0; i < len(args); i++ {
+              switch args[i] {
+              case "--file":
+                i++
+                if i >= len(args) { return req, fmt.Errorf("--file requires a value") }
+                req.File = args[i]
+              case "--out":
+                i++
+                if i >= len(args) { return req, fmt.Errorf("--out requires a value") }
+                req.OutDir = args[i]
+              case "--package":
+                i++
+                if i >= len(args) { return req, fmt.Errorf("--package requires a value") }
+                req.PackageName = args[i]
+              default:
+                return req, fmt.Errorf("usage: axiomgen --file <file.axm> [--out <dir>] [--package <name>]")
+              }
+            }
+            if req.File == "" { return req, fmt.Errorf("--file is required") }
+            return req, nil
+          }
+          EOF
+
+          cat > examples/basic/main.go <<'EOF'
+          package main
+
+          import (
+            "context"
+            _ "embed"
+            "log"
+
+            "github.com/Homiakus/axiom"
+          )
+
+          //go:embed workflow.axm
+          var workflow []byte
+
+          func main() {
+            engine, err := axiom.CompileAndNew(workflow,
+              axiom.Act("SendWelcomeEmail", func(_ context.Context, input axiom.Input) (axiom.Output, error) {
+                log.Printf("send welcome email to %v", input["email"])
+                return axiom.Output{"sent": true}, nil
+              }),
+            )
+            if err != nil { log.Fatal(err) }
+
+            ctx := context.Background()
+            if err := engine.Start(ctx, "example", nil); err != nil { log.Fatal(err) }
+            if err := engine.Signal(ctx, "example", "UserRegistered", axiom.Input{
+              "userId": "u-1",
+              "email": "user@example.com",
+            }); err != nil { log.Fatal(err) }
+            if err := engine.RunUntilIdle(ctx, "example"); err != nil { log.Fatal(err) }
+          }
+          EOF
+
+          cat > README.md <<'EOF'
+          # Axiom
+
+          Axiom is an embeddable deterministic workflow, rules and state-transition library for Go. It keeps domain behaviour in a declarative `.axm` model and exposes a small Go API for compilation, execution, activities, persistence, replay and diagnostics.
+
+          ## Install
+
+          ```bash
+          go get github.com/Homiakus/axiom
+          ```
+
+          ## Minimal use
+
+          ```go
+          source, err := os.ReadFile("workflow.axm")
+          if err != nil { return err }
+
+          engine, err := axiom.CompileAndNew(source,
+            axiom.Act("SendEmail", sendEmail),
+          )
+          if err != nil { return err }
+
+          if err := engine.Start(ctx, "order-42", nil); err != nil { return err }
+          if err := engine.Signal(ctx, "order-42", "OrderCreated", axiom.Input{
+            "orderId": "42",
+          }); err != nil { return err }
+          return engine.RunUntilIdle(ctx, "order-42")
+          ```
+
+          ## Public API
+
+          - `Load`, `Compile`, `CompileAny`, `CompileBundle`
+          - `New`, `CompileAndNew`, `Act`, `Acts`
+          - memory store by default; `OpenPebble` for durable execution
+          - deterministic fast runtime, activities, retries and idempotency
+          - claims, queries, structured diagnostics, history and replay
+          - compatibility and impact analysis through `ModuleBundle`
+          - optional typed-code generator: `go run github.com/Homiakus/axiom/cmd/axiomgen@latest --file workflow.axm`
+
+          ## Repository layout
+
+          ```text
+          .
+          ├── axiom.go, bundle.go       # public package
+          ├── internal/                 # parser, compiler, runtime and stores
+          ├── cmd/axiomgen/             # optional type-safe Go code generator
+          ├── examples/                 # minimal executable models
+          └── docs/                     # DSL, runtime and generator reference
+          ```
+
+          ## Verification
+
+          ```bash
+          go test ./...
+          go vet ./...
+          ```
+
+          The library uses Apache-2.0 terms; see `LICENSE`.
+          EOF
+
+          cat > .github/workflows/test.yml <<'EOF'
+          name: test
+          on:
+            push:
+            pull_request:
+          permissions:
+            contents: read
+          jobs:
+            go:
+              runs-on: ubuntu-latest
+              steps:
+                - uses: actions/checkout@v4
+                - uses: actions/setup-go@v5
+                  with:
+                    go-version-file: go.mod
+                    cache: true
+                - run: go test ./...
+                - run: go vet ./...
+          EOF
+
+          # The one-shot migration workflow must not remain in the library.
+          rm -f .github/workflows/refactor-library.yml
+
+          gofmt -w .
+          go mod tidy
+          go test ./...
+          go vet ./...
+
+      - name: Commit generated refactor
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Refactor Axiom into a Go library [skip ci]"
+          git push origin HEAD:agent/go-library-refactor
