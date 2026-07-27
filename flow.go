@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"sync"
 	"time"
+
+	"github.com/Homiakus/axiom/internal/syncx"
 )
 
 // Effect is an opaque command emitted by a Go-first reducer.
@@ -148,6 +150,7 @@ func WithFlowStore(store FlowStore) FlowOption {
 type FlowEngine[S any] struct {
 	flow  *Flow[S]
 	store FlowStore
+	locks *syncx.KeyedLocker
 }
 
 func OpenFlow[S any](flow *Flow[S], opts ...FlowOption) (*FlowEngine[S], error) {
@@ -160,7 +163,7 @@ func OpenFlow[S any](flow *Flow[S], opts ...FlowOption) (*FlowEngine[S], error) 
 			return nil, err
 		}
 	}
-	return &FlowEngine[S]{flow: flow, store: config.store}, nil
+	return &FlowEngine[S]{flow: flow, store: config.store, locks: syncx.NewKeyedLocker()}, nil
 }
 
 type FlowExecution[S any] struct {
@@ -176,6 +179,8 @@ func (e *FlowExecution[S]) Dispatch(ctx context.Context, event any) error {
 	if e == nil || e.engine == nil || e.id == "" {
 		return fmt.Errorf("axiom: valid flow execution is required")
 	}
+	unlock := e.engine.locks.Lock(e.id)
+	defer unlock()
 	handler, normalized, err := e.engine.flow.handlerFor(event)
 	if err != nil {
 		return err
@@ -212,11 +217,15 @@ func (e *FlowExecution[S]) Dispatch(ctx context.Context, event any) error {
 }
 
 func (e *FlowExecution[S]) State(ctx context.Context) (S, error) {
+	unlock := e.engine.locks.Lock(e.id)
+	defer unlock()
 	state, _, err := e.load(ctx)
 	return state, err
 }
 
 func (e *FlowExecution[S]) History(ctx context.Context) ([]FlowHistoryEntry, error) {
+	unlock := e.engine.locks.Lock(e.id)
+	defer unlock()
 	_, history, _, err := e.engine.store.Load(ctx, e.engine.flow.name, e.id)
 	return history, err
 }

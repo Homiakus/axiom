@@ -36,15 +36,27 @@ func (e *Engine) Execution(id string) *Run {
 // ID returns the durable execution identifier.
 func (r *Run) ID() string { return r.id }
 
+func (r *Run) lock() (func(), error) {
+	if r == nil || r.engine == nil {
+		return nil, fmt.Errorf("axiom: execution handle is not initialized")
+	}
+	if r.id == "" {
+		return nil, fmt.Errorf("axiom: execution id is required")
+	}
+	if r.engine.executionLocks == nil {
+		return nil, fmt.Errorf("axiom: execution lock registry is not initialized")
+	}
+	return r.engine.executionLocks.Lock(r.id), nil
+}
+
 // Dispatch creates the execution when needed, sends an event and drains
 // inline activities until the execution is idle.
 func (r *Run) Dispatch(ctx context.Context, event any) error {
-	if r == nil || r.engine == nil {
-		return fmt.Errorf("axiom: execution handle is not initialized")
+	unlock, err := r.lock()
+	if err != nil {
+		return err
 	}
-	if r.id == "" {
-		return fmt.Errorf("axiom: execution id is required")
-	}
+	defer unlock()
 	name, payload, err := eventPayload(event)
 	if err != nil {
 		return err
@@ -65,9 +77,11 @@ func (r *Run) Dispatch(ctx context.Context, event any) error {
 
 // Signal dispatches an explicitly named signal and drains inline work.
 func (r *Run) Signal(ctx context.Context, name string, payload map[string]any) error {
-	if r == nil || r.engine == nil {
-		return fmt.Errorf("axiom: execution handle is not initialized")
+	unlock, err := r.lock()
+	if err != nil {
+		return err
 	}
+	defer unlock()
 	if _, err := r.engine.store.GetExecution(ctx, r.id); err != nil {
 		if !errors.Is(err, ErrExecutionNotFound) {
 			return err
@@ -85,6 +99,11 @@ func (r *Run) Signal(ctx context.Context, name string, payload map[string]any) e
 // State decodes the execution context into target. If the plan contains
 // one context and target is a struct, that context is decoded directly.
 func (r *Run) State(ctx context.Context, target any) error {
+	unlock, err := r.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if target == nil {
 		return fmt.Errorf("axiom: state target is required")
 	}
@@ -114,6 +133,11 @@ func (r *Run) State(ctx context.Context, target any) error {
 }
 
 func (r *Run) Status(ctx context.Context) (Status, error) {
+	unlock, err := r.lock()
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	execution, err := r.engine.store.GetExecution(ctx, r.id)
 	if err != nil {
 		return "", err
@@ -122,10 +146,20 @@ func (r *Run) Status(ctx context.Context) (Status, error) {
 }
 
 func (r *Run) History(ctx context.Context) ([]HistoryEntry, error) {
+	unlock, err := r.lock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	return r.engine.store.ListHistory(ctx, r.id)
 }
 
 func (r *Run) PendingActivities(ctx context.Context) ([]ActivityTask, error) {
+	unlock, err := r.lock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	result, err := r.engine.Query(ctx, r.id, "pendingActivities")
 	if err != nil {
 		return nil, err
@@ -138,6 +172,11 @@ func (r *Run) PendingActivities(ctx context.Context) ([]ActivityTask, error) {
 }
 
 func (r *Run) Explain(ctx context.Context) (*Explanation, error) {
+	unlock, err := r.lock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	execution, err := r.engine.store.GetExecution(ctx, r.id)
 	if err != nil {
 		return nil, err
@@ -159,17 +198,22 @@ func (r *Run) Explain(ctx context.Context) (*Explanation, error) {
 }
 
 func (r *Run) Cancel(ctx context.Context) error {
-	return r.engine.withStoreTransaction(ctx, func() error {
-		execution, err := r.engine.store.GetExecution(ctx, r.id)
+	unlock, err := r.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return r.engine.withStoreTransaction(ctx, func(working *Engine) error {
+		execution, err := working.store.GetExecution(ctx, r.id)
 		if err != nil {
 			return err
 		}
 		execution.Status = StatusCanceled
 		execution.UpdatedAt = time.Now().UTC()
-		if err := r.engine.store.AppendHistory(ctx, r.id, "ExecutionCanceled", nil); err != nil {
+		if err := working.store.AppendHistory(ctx, r.id, "ExecutionCanceled", nil); err != nil {
 			return err
 		}
-		return r.engine.store.SaveExecution(ctx, execution)
+		return working.store.SaveExecution(ctx, execution)
 	})
 }
 

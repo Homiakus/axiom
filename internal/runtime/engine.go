@@ -16,8 +16,8 @@ import (
 var ErrExecutionNotFound = errors.New("execution not found")
 
 func (e *Engine) Start(ctx context.Context, executionID string, initialContext map[string]any) error {
-	return e.withStoreTransaction(ctx, func() error {
-		return e.start(ctx, executionID, initialContext)
+	return e.withStoreTransaction(ctx, func(working *Engine) error {
+		return working.start(ctx, executionID, initialContext)
 	})
 }
 
@@ -77,8 +77,8 @@ func (e *Engine) start(ctx context.Context, executionID string, initialContext m
 }
 
 func (e *Engine) Signal(ctx context.Context, executionID string, signalName string, payload map[string]any) error {
-	return e.withStoreTransaction(ctx, func() error {
-		return e.signal(ctx, executionID, signalName, payload)
+	return e.withStoreTransaction(ctx, func(working *Engine) error {
+		return working.signal(ctx, executionID, signalName, payload)
 	})
 }
 
@@ -109,8 +109,8 @@ func (e *Engine) signal(ctx context.Context, executionID string, signalName stri
 }
 
 func (e *Engine) Patch(ctx context.Context, executionID string, patch map[string]any) error {
-	return e.withStoreTransaction(ctx, func() error {
-		return e.patch(ctx, executionID, patch)
+	return e.withStoreTransaction(ctx, func(working *Engine) error {
+		return working.patch(ctx, executionID, patch)
 	})
 }
 
@@ -163,8 +163,8 @@ func (e *Engine) RunUntilIdle(ctx context.Context, executionID string) error {
 			return diag.Error{Code: "AX501", Kind: "config", Entity: task.ActivityName, Message: fmt.Sprintf("activity %s is not registered", task.ActivityName), Hint: "Register the Go function with WithActivity or Register before running the engine."}
 		}
 		result, runErr := activity(ctx, cloneAnyMap(task.Input))
-		if err := e.withStoreTransaction(ctx, func() error {
-			return e.completeActivity(ctx, executionID, task, result, runErr)
+		if err := e.withStoreTransaction(ctx, func(working *Engine) error {
+			return working.completeActivity(ctx, executionID, task, result, runErr)
 		}); err != nil {
 			return err
 		}
