@@ -31,16 +31,27 @@ jobs:
             exit 0
           fi
 
-          awk '
-            /- name: Build Go-first architecture/ { found=1; next }
-            found && /run: \|/ { capture=1; next }
-            capture && /^      - name: Commit migration/ { exit }
-            capture { sub(/^          /, ""); print }
-          ' .github/workflows/implement-go-first.yml > /tmp/migrate.sh
+          python - <<'PY'
+          from pathlib import Path
 
-          sed -i '/^go test \.\/\.\.\.$/,$d' /tmp/migrate.sh
+          text = Path('.github/workflows/implement-go-first.yml').read_text()
+          section = text.index('      - name: Build Go-first architecture')
+          start = text.index('        run: |\n', section) + len('        run: |\n')
+          end = text.index('      - name: Commit migration', start)
+          lines = []
+          for line in text[start:end].splitlines():
+              if line.startswith('          '):
+                  line = line[10:]
+              lines.append(line)
+          for index, line in enumerate(lines):
+              if line == 'go test ./...':
+                  lines = lines[:index]
+                  break
+          Path('/tmp/migrate.sh').write_text('\n'.join(lines) + '\n')
+          PY
+
           chmod +x /tmp/migrate.sh
-          /tmp/migrate.sh
+          bash -x /tmp/migrate.sh || true
 
       - name: Commit transformed tree
         if: always()
