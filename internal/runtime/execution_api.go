@@ -1,11 +1,14 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -248,9 +251,59 @@ func eventPayload(event any) (string, map[string]any, error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("axiom: encode event: %w", err)
 	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
 	payload := map[string]any{}
-	if err := json.Unmarshal(data, &payload); err != nil {
+	if err := decoder.Decode(&payload); err != nil {
 		return "", nil, fmt.Errorf("axiom: event must encode as an object: %w", err)
 	}
-	return name, payload, nil
+	normalized, err := normalizeJSONNumbers(payload)
+	if err != nil {
+		return "", nil, fmt.Errorf("axiom: normalize event numbers: %w", err)
+	}
+	return name, normalized.(map[string]any), nil
+}
+
+func normalizeJSONNumbers(value any) (any, error) {
+	switch typed := value.(type) {
+	case json.Number:
+		text := typed.String()
+		if strings.ContainsAny(text, ".eE") {
+			parsed, err := strconv.ParseFloat(text, 64)
+			if err != nil {
+				return nil, err
+			}
+			return parsed, nil
+		}
+		parsed, err := strconv.ParseInt(text, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		if strconv.IntSize == 64 || (parsed >= -1<<31 && parsed <= 1<<31-1) {
+			return int(parsed), nil
+		}
+		return parsed, nil
+	case []any:
+		result := make([]any, len(typed))
+		for index, item := range typed {
+			normalized, err := normalizeJSONNumbers(item)
+			if err != nil {
+				return nil, err
+			}
+			result[index] = normalized
+		}
+		return result, nil
+	case map[string]any:
+		result := make(map[string]any, len(typed))
+		for key, item := range typed {
+			normalized, err := normalizeJSONNumbers(item)
+			if err != nil {
+				return nil, err
+			}
+			result[key] = normalized
+		}
+		return result, nil
+	default:
+		return value, nil
+	}
 }
