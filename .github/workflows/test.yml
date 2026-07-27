@@ -30,6 +30,18 @@ jobs:
           set -o pipefail
           go test ./... 2>&1 | tee test-artifacts/go-test.log
 
+      - name: Run coffee machine example
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./examples/coffee-machine 2>&1 | tee test-artifacts/coffee-machine.log
+          grep -F 'принято:    350,00 ₽' test-artifacts/coffee-machine.log
+          grep -F 'возвращено: 120,00 ₽' test-artifacts/coffee-machine.log
+          grep -F 'выручка:    230,00 ₽' test-artifacts/coffee-machine.log
+          grep -F 'касса:      230,00 ₽' test-artifacts/coffee-machine.log
+          grep -F 'кредит:     0,00 ₽' test-artifacts/coffee-machine.log
+          grep -F 'напитков:   2' test-artifacts/coffee-machine.log
+
       - name: Upload test diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
