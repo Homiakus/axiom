@@ -26,6 +26,9 @@ jobs:
       - name: Test all packages
         run: go test ./...
 
+      - name: Race test critical packages
+        run: go test -race . ./internal/runtime/... ./internal/store/...
+
       - name: Vet all packages
         run: go vet ./...
 
@@ -76,3 +79,34 @@ jobs:
           EOF
           go mod tidy
           go test ./...
+
+  performance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Run p50 p95 p99 baseline
+        run: |
+          mkdir -p artifacts
+          go run ./cmd/axiombench \
+            -memory-ops 20000 \
+            -pebble-ops 1000 \
+            -replay-events 1000 \
+            -replay-runs 200 \
+            -concurrency 8 \
+            -strict=false \
+            -json artifacts/benchmark-results.json \
+            -markdown artifacts/benchmark-results.md
+          cat artifacts/benchmark-results.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: axiom-performance-results
+          path: artifacts/
+          retention-days: 30
