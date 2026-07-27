@@ -1,0 +1,57 @@
+name: apply-go-first
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.ref == 'agent/go-first-api'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Extract and apply migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f .go-first-migration-complete ]]; then
+            echo "Migration is already applied"
+            exit 0
+          fi
+
+          awk '
+            /- name: Build Go-first architecture/ { found=1; next }
+            found && /run: \|/ { capture=1; next }
+            capture && /^      - name: Commit migration/ { exit }
+            capture { sub(/^          /, ""); print }
+          ' .github/workflows/implement-go-first.yml > /tmp/migrate.sh
+
+          sed -i '/^          go test \.\/\.\.\.$/,$d' /tmp/migrate.sh
+          chmod +x /tmp/migrate.sh
+          /tmp/migrate.sh
+
+      - name: Commit transformed tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "Apply Go-first architecture migration [skip ci]"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
