@@ -43,10 +43,6 @@ jobs:
               if line.startswith('          '):
                   line = line[10:]
               lines.append(line)
-          for index, line in enumerate(lines):
-              if line == 'go test ./...':
-                  lines = lines[:index]
-                  break
           Path('/tmp/migrate.sh').write_text('\n'.join(lines) + '\n')
           PY
 
