@@ -1,0 +1,26 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - name: Test public module
+        run: go test ./...
+      - name: Test engine module
+        working-directory: axiom-main
+        run: go test ./...
+      - name: Test code generator
+        working-directory: axiom-main/tools/axiomgen
+        run: go test ./...
