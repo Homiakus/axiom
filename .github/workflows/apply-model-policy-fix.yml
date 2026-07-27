@@ -1,0 +1,119 @@
+name: apply model policy fix
+
+on:
+  push:
+    branches:
+      - agent/verify-coffee-example
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'Fix Go model policy rendering'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/verify-coffee-example
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Patch renderer and add regression test
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('model/model.go')
+          text = path.read_text()
+
+          old_call = '\t\trenderExprMap(&out, value.entries, 2)\n'
+          new_call = '\t\trenderPolicyMap(&out, value.entries, 2)\n'
+          if old_call not in text:
+              raise SystemExit('policy renderer call not found')
+          text = text.replace(old_call, new_call, 1)
+
+          marker = '''func renderTypeMap(out *strings.Builder, values map[string]string, indent int) {\n'''
+          helper = '''// renderPolicyMap uses the canonical AXM policy syntax: key: value.\n// Other expression maps use key = expression.\nfunc renderPolicyMap(out *strings.Builder, values map[string]Expr, indent int) {\n\tkeys := sortedKeys(values)\n\tfor _, key := range keys {\n\t\tfmt.Fprintf(out, "%s%s: %s\\n", strings.Repeat(" ", indent), key, values[key].text)\n\t}\n}\n\n'''
+          if marker not in text:
+              raise SystemExit('renderTypeMap marker not found')
+          text = text.replace(marker, helper + marker, 1)
+          path.write_text(text)
+          PY
+
+          cat > model/model_test.go <<'EOF'
+          package model
+
+          import (
+          	"strings"
+          	"testing"
+          	"time"
+          )
+
+          type policyTestState struct {
+          	Done bool `json:"done"`
+          }
+
+          type policyTestEvent struct {
+          	ID string `json:"id"`
+          }
+
+          func TestPolicyUsesCanonicalSyntaxAndCompiles(t *testing.T) {
+          	definition := New("PolicyModel")
+          	state := State[policyTestState](definition, "State").Default("Done", false)
+          	event := Event[policyTestEvent](definition, "Run")
+
+          	definition.Policy("hardware").
+          		Retry(2).
+          		Timeout(time.Second).
+          		Concurrency("once").
+          		Idempotency("required")
+
+          	definition.Activity("DoWork").
+          		Input("id", event.Field("ID")).
+          		Output("done", "Bool").
+          		Effect("external").
+          		IdempotencyKey(event.Field("ID")).
+          		Policy("hardware")
+
+          	definition.Rule("run").
+          		On(event.Trigger()).
+          		Run("DoWork").
+          		Set(state.Field("Done"), Ref("output.done"))
+
+          	source := definition.Source()
+          	for _, expected := range []string{
+          		"  concurrency: once",
+          		"  idempotency: required",
+          		"  retry: 2",
+          		"  timeout: 1s",
+          	} {
+          		if !strings.Contains(source, expected) {
+          			t.Fatalf("generated source does not contain %q:\n%s", expected, source)
+          		}
+          	}
+          	if strings.Contains(source, "concurrency = once") {
+          		t.Fatalf("policy was rendered as an expression map:\n%s", source)
+          	}
+
+          	if _, err := definition.Compile(); err != nil {
+          		t.Fatalf("compile generated policy: %v\n%s", err, source)
+          	}
+          }
+          EOF
+
+          gofmt -w model/model.go model/model_test.go
+          go test ./model
+
+      - name: Commit fix
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add model/model.go model/model_test.go
+          git commit -m 'Fix Go model policy rendering'
+          git push origin HEAD:agent/verify-coffee-example
