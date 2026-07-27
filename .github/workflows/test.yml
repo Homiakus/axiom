@@ -1,44 +1,35 @@
-name: finalize-modules
+name: test
 
 on:
+  push:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  finalize:
+  go:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
-
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
           cache: false
 
-      - name: Normalize module metadata
+      - name: Verify module metadata
         run: |
           go mod tidy
           (cd axiom-main/tools/axiomgen && go mod tidy)
+          git diff --exit-code -- go.mod go.sum axiom-main/tools/axiomgen/go.mod axiom-main/tools/axiomgen/go.sum
 
-      - name: Validate final modules
-        run: |
-          go test ./...
-          (cd axiom-main && go test ./...)
-          (cd axiom-main/tools/axiomgen && go test ./...)
+      - name: Test public module
+        run: go test ./...
 
-      - name: Commit normalized module files
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add go.mod go.sum axiom-main/tools/axiomgen/go.mod axiom-main/tools/axiomgen/go.sum
-          if git diff --cached --quiet; then
-            echo "Module files are already normalized"
-            exit 0
-          fi
-          git commit -m "Normalize module metadata [skip ci]"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+      - name: Test engine module
+        working-directory: axiom-main
+        run: go test ./...
+
+      - name: Test code generator
+        working-directory: axiom-main/tools/axiomgen
+        run: go test ./...
