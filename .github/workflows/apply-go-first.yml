@@ -38,11 +38,12 @@ jobs:
             capture { sub(/^          /, ""); print }
           ' .github/workflows/implement-go-first.yml > /tmp/migrate.sh
 
-          sed -i '/^          go test \.\/\.\.\.$/,$d' /tmp/migrate.sh
+          sed -i '/^go test \.\/\.\.\.$/,$d' /tmp/migrate.sh
           chmod +x /tmp/migrate.sh
           /tmp/migrate.sh
 
       - name: Commit transformed tree
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
