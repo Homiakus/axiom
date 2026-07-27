@@ -1,241 +1,242 @@
 # Axiom
 
-**Русский**: [README.md](README.md) · **English**
+[Русский](README.md) · **English**
 
 [![CI](https://github.com/Homiakus/axiom/actions/workflows/test.yml/badge.svg)](https://github.com/Homiakus/axiom/actions/workflows/test.yml)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**Axiom is a deterministic state-transition, workflow and decision engine for Go.**
+Axiom is a Go library for state transitions, workflows and decision tables.
 
-Use ordinary typed Go reducers for the shortest path, the declarative Go model when static validation matters, or AXM/TOML definitions when workflows must live outside application code. Every statically analyzable frontend compiles into the same canonical `axiom.Plan` and runs on the same deterministic runtime.
+It is intended for cases where changing an in-memory struct is not enough. One model can define:
 
-Axiom is designed for systems where state changes must be explainable, replayable and safe under concurrency: business workflows, control logic, approvals, orchestration, decision tables and durable background activities.
+- typed events;
+- state transition rules;
+- invariants checked before commit;
+- external operations with retry and idempotency policies;
+- transactional persistence;
+- history, explanations and replay.
 
-## Why Axiom
+Definition files are optional. A process can be expressed as typed Go handlers, a declarative Go model, AXM or TOML. Declarative sources compile into the same `axiom.Plan` and run on the same engine.
 
-- **Go-first:** start without a DSL or generated files.
-- **Deterministic:** the same plan, state and event produce the same transition result.
-- **Typed boundaries:** dispatch named Go structs instead of hand-built maps.
-- **Static validation:** declarative models, AXM and TOML are validated before execution.
-- **Durable execution:** use the embedded Pebble store for transactional persistence.
-- **Replay and audit:** reconstruct state from history and inspect why rules fired.
-- **Concurrency safe:** updates to one execution are serialized; independent executions remain parallel.
-- **Activities:** isolate external side effects behind registered Go handlers.
-- **Claims:** enforce invariants as part of the transition model.
-- **Impact analysis:** compare compiled bundles and identify affected rules and fields.
+## When to use it
+
+Axiom fits state owned by a specific aggregate such as an order, approval request, device or production batch, especially when every transition must be validated and recorded.
+
+Typical uses include:
+
+- order and payment processing;
+- approval workflows;
+- device state control;
+- background operations with retries;
+- decision tables;
+- state reconstruction from history;
+- explaining why a rule fired.
+
+## When not to use it
+
+Axiom is unnecessary for plain CRUD without transitions or invariants. It is not a message broker, distributed scheduler or cross-process lock manager. Serialization for one `execution ID` is process-local to one `Engine`; distributed ownership must be provided separately.
 
 ## Install
 
-Axiom currently requires Go 1.26 or newer.
+Go 1.26 or newer is required.
 
 ```bash
 go get github.com/Homiakus/axiom
 ```
 
-## Choose an API
+## Main example: capture a payment and send a receipt
 
-| API | Best for | Files required | Static analysis |
-|---|---|---:|---:|
-| Typed Go Flow | Application-local reducers, commands and state machines | No | Opaque |
-| Declarative Go Model | Validated workflows expressed entirely in Go | No | Full |
-| AXM frontend | Rich versioned workflow definitions | Yes | Full |
-| TOML table frontend | Transition tables maintained as configuration | Yes | Full |
-| Low-level runtime | Existing integrations and explicit lifecycle control | Optional | Depends on source |
+The example models one order and two events:
 
-## Fastest start: typed Go Flow
+1. `OrderCreated` stores the order ID, customer email and total.
+2. `PaymentCaptured` stores the payment ID and marks the order as paid.
+3. A successful payment schedules the external `SendReceipt` operation.
+4. Claims reject a paid order without a payment ID and a sent receipt without payment.
+5. State and history are stored in Pebble and can be reconstructed by replay.
 
-A Flow is a typed reducer with optional effects and claims. It is the smallest API surface and requires no schema file.
+The core model is shown below. The complete runnable program is in [`examples/order/main.go`](examples/order/main.go).
 
 ```go
-package main
+definition := model.New("Order").Version("1")
 
-import (
-    "context"
-    "fmt"
-    "log"
+order := model.State[Order](definition, "Order").
+    Default("Paid", false).
+    Default("ReceiptSent", false)
 
-    "github.com/Homiakus/axiom"
+created := model.Event[OrderCreated](definition, "OrderCreated")
+captured := model.Event[PaymentCaptured](definition, "PaymentCaptured")
+
+definition.Policy("receiptPolicy").
+    Retry(3).
+    Timeout(3 * time.Second).
+    Concurrency("once").
+    Idempotency("required")
+
+definition.Activity("SendReceipt").
+    Input("orderId", order.Field("ID")).
+    Input("email", order.Field("CustomerEmail")).
+    Input("paymentId", order.Field("PaymentID")).
+    Output("sent", "Bool").
+    Effect("external").
+    IdempotencyKey(order.Field("PaymentID")).
+    Policy("receiptPolicy")
+
+definition.Rule("createOrder").
+    On(created.Trigger()).
+    Set(order.Field("ID"), created.Field("OrderID")).
+    Set(order.Field("CustomerEmail"), created.Field("CustomerEmail")).
+    Set(order.Field("Total"), created.Field("Total"))
+
+definition.Rule("capturePayment").
+    On(captured.Trigger()).
+    Set(order.Field("PaymentID"), captured.Field("PaymentID")).
+    Set(order.Field("Paid"), model.Lit(true))
+
+definition.Rule("sendReceipt").
+    On(order.Changed("Paid")).
+    When(model.Eq(order.Field("Paid"), model.Lit(true))).
+    Run("SendReceipt").
+    Set(order.Field("ReceiptSent"), model.Ref("output.sent"))
+
+definition.Claim(
+    "paidOrderHasPaymentID",
+    model.Implies(
+        model.Eq(order.Field("Paid"), model.Lit(true)),
+        model.Exists(order.Field("PaymentID")),
+    ),
 )
 
+definition.Claim(
+    "receiptRequiresPayment",
+    model.Implies(
+        model.Eq(order.Field("ReceiptSent"), model.Lit(true)),
+        model.Eq(order.Field("Paid"), model.Lit(true)),
+    ),
+)
+```
+
+Compile, attach durable storage and dispatch typed events:
+
+```go
+plan, err := definition.Compile()
+if err != nil {
+    return err
+}
+
+store, err := axiom.OpenPebble("data/orders")
+if err != nil {
+    return err
+}
+defer store.Close()
+
+engine, err := plan.New(
+    axiom.WithStore(store),
+    axiom.Act("SendReceipt", sendReceipt),
+)
+if err != nil {
+    return err
+}
+
+run := engine.Execution("order-42")
+
+if err := run.Dispatch(ctx, OrderCreated{
+    OrderID:       "order-42",
+    CustomerEmail: "customer@example.com",
+    Total:         12900,
+}); err != nil {
+    return err
+}
+
+if err := run.Dispatch(ctx, PaymentCaptured{
+    PaymentID: "pay-9001",
+}); err != nil {
+    return err
+}
+
+var state Order
+if err := run.State(ctx, &state); err != nil {
+    return err
+}
+
+history, err := run.History(ctx)
+if err != nil {
+    return err
+}
+
+replayed, err := axiom.ReplayFromHistory(plan.Module(), history)
+```
+
+### What this example demonstrates
+
+- Invalid field names, expression types, rules and claims fail during `Compile`, before event processing.
+- If a transition violates a claim, the new state and history are not committed.
+- External effects are separated from rules and receive explicit retry and idempotency configuration.
+- `Dispatch` creates an execution on first use and drains inline work until it is idle.
+- Concurrent calls for one `execution ID` are serialized and do not lose updates.
+- History records events, state writes and activity outcomes.
+- `ReplayFromHistory` reconstructs state with the same compiled plan version.
+
+Run the full example:
+
+```bash
+go run ./examples/order
+```
+
+## Choose a modeling style
+
+| Style | Use it when | Separate files | Static analysis |
+|---|---|---:|---:|
+| Typed Go Flow | A small local state machine needs arbitrary Go logic | No | No |
+| Declarative Go model | Rules and invariants must be checked before startup | No | Full |
+| AXM | A rich versioned model lives outside application code | Yes | Full |
+| TOML | The workflow is easiest to maintain as a transition table | Yes | Full |
+| Low-level API | Explicit `Start`, `Signal`, `Patch` and `RunUntilIdle` control is required | Optional | Depends on source |
+
+## Minimal Typed Go Flow
+
+A declarative model is not required for simple cases:
+
+```go
 type Counter struct {
-    Count int `json:"count"`
-}
-
-type Increment struct {
-    By int `json:"by"`
-}
-
-type LogCount struct {
     Count int
 }
 
-func main() {
-    ctx := context.Background()
-
-    flow := axiom.NewFlow("counter", Counter{})
-
-    axiom.Handle(flow, func(
-        _ context.Context,
-        state Counter,
-        event Increment,
-    ) (axiom.FlowResult[Counter], error) {
-        state.Count += event.By
-        return axiom.Next(
-            state,
-            axiom.Call(LogCount{Count: state.Count}),
-        ), nil
-    })
-
-    axiom.EffectHandler(flow, func(_ context.Context, command LogCount) error {
-        fmt.Printf("count=%d\n", command.Count)
-        return nil
-    })
-
-    axiom.AddClaim(flow, func(state Counter) error {
-        if state.Count < 0 {
-            return fmt.Errorf("count must not be negative")
-        }
-        return nil
-    })
-
-    engine, err := axiom.OpenFlow(flow)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    run := engine.Execution("counter-1")
-    if err := run.Dispatch(ctx, Increment{By: 2}); err != nil {
-        log.Fatal(err)
-    }
-
-    state, err := run.State(ctx)
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Println(state.Count) // 2
+type Increment struct {
+    By int
 }
+
+flow := axiom.NewFlow("counter", Counter{})
+
+axiom.Handle(flow, func(
+    _ context.Context,
+    state Counter,
+    event Increment,
+) (axiom.FlowResult[Counter], error) {
+    state.Count += event.By
+    return axiom.Next(state), nil
+})
+
+engine, err := axiom.OpenFlow(flow)
+if err != nil {
+    return err
+}
+
+run := engine.Execution("counter-1")
+if err := run.Dispatch(ctx, Increment{By: 2}); err != nil {
+    return err
+}
+
+state, err := run.State(ctx)
 ```
 
-Flow handlers are arbitrary Go code, so their analysis level is `axiom.AnalysisOpaque`. A failed claim, handler or effect does not commit the new state or history.
+A `Flow` contains arbitrary Go code, so Axiom cannot build a complete dependency graph for it. Its analysis level is `axiom.AnalysisOpaque`.
 
-Run the complete example:
+## AXM and TOML
 
-```bash
-go run ./examples/go-first
-```
-
-## Declarative Go Model
-
-The `model` package keeps the workflow in Go while preserving compiler validation, dependency indexes, activities, claims, replay and impact analysis.
+AXM and TOML are only sources for `axiom.Plan`; the engine is format-independent.
 
 ```go
-package main
-
-import (
-    "context"
-    "log"
-    "time"
-
-    "github.com/Homiakus/axiom"
-    "github.com/Homiakus/axiom/model"
-)
-
-type User struct {
-    ID          *string `json:"id"`
-    Email       *string `json:"email"`
-    WelcomeSent bool    `json:"welcomeSent"`
-}
-
-type UserRegistered struct {
-    UserID string `json:"userId"`
-    Email  string `json:"email"`
-}
-
-func (UserRegistered) AxiomEventName() string { return "UserRegistered" }
-
-func main() {
-    definition := model.New("Welcome")
-
-    user := model.State[User](definition, "User").
-        Default("WelcomeSent", false)
-    registered := model.Event[UserRegistered](definition, "UserRegistered")
-
-    definition.Policy("emailPolicy").
-        Retry(2).
-        Timeout(5 * time.Second).
-        Concurrency("once").
-        Idempotency("required")
-
-    definition.Activity("SendWelcomeEmail").
-        Input("userId", user.Field("ID")).
-        Input("email", user.Field("Email")).
-        Output("sent", "Bool").
-        Effect("external").
-        IdempotencyKey(user.Field("ID")).
-        Policy("emailPolicy")
-
-    definition.Rule("captureRegistration").
-        On(registered.Trigger()).
-        Set(user.Field("ID"), registered.Field("UserID")).
-        Set(user.Field("Email"), registered.Field("Email"))
-
-    definition.Rule("sendWelcomeEmail").
-        On(user.Changed("Email")).
-        When(model.Eq(user.Field("WelcomeSent"), model.Lit(false))).
-        Run("SendWelcomeEmail").
-        Set(user.Field("WelcomeSent"), model.Ref("output.sent"))
-
-    definition.Claim(
-        "welcomeSentRequiresEmail",
-        model.Implies(
-            model.Eq(user.Field("WelcomeSent"), model.Lit(true)),
-            model.Exists(user.Field("Email")),
-        ),
-    )
-
-    engine, err := axiom.Open(
-        definition,
-        axiom.Act("SendWelcomeEmail", func(
-            context.Context,
-            axiom.Input,
-        ) (axiom.Output, error) {
-            return axiom.Output{"sent": true}, nil
-        }),
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    err = engine.Execution("user-1").Dispatch(
-        context.Background(),
-        UserRegistered{
-            UserID: "user-1",
-            Email:  "user@example.com",
-        },
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-}
-```
-
-Run the complete example:
-
-```bash
-go run ./examples/model
-```
-
-## Optional AXM and TOML frontends
-
-Definitions outside application code compile into the same `axiom.Plan` used by the declarative Go model.
-
-```go
-import (
-    "github.com/Homiakus/axiom/axm"
-    "github.com/Homiakus/axiom/table"
-)
-
 axmPlan, err := axm.Load("workflow.axm")
 if err != nil {
     return err
@@ -247,22 +248,14 @@ if err != nil {
     return err
 }
 tableEngine, err := tablePlan.New()
-
-_, _ = axmEngine, tableEngine
 ```
 
-AXM and TOML are frontends, not runtime requirements. Applications can choose one representation per subsystem and still share execution, storage and observability infrastructure.
-
 ## Execution API
-
-A compiled engine exposes an ergonomic handle for a single durable execution:
 
 ```go
 run := engine.Execution("order-42")
 
-// Creates the execution when absent, dispatches the typed event and drains
-// registered inline activities until the execution becomes idle.
-err := run.Dispatch(ctx, OrderCreated{OrderID: "42"})
+err := run.Dispatch(ctx, OrderCreated{OrderID: "order-42"})
 
 var state OrderState
 err = run.State(ctx, &state)
@@ -274,7 +267,7 @@ explanation, err := run.Explain(ctx)
 err = run.Cancel(ctx)
 ```
 
-The low-level lifecycle remains available when explicit orchestration is needed:
+The lower-level lifecycle remains available:
 
 ```go
 err := engine.Start(ctx, "order-42", initialContext)
@@ -284,78 +277,42 @@ result, err := engine.Query(ctx, "order-42", "state")
 err = engine.RunUntilIdle(ctx, "order-42")
 ```
 
-## Durable storage with Pebble
+## Pebble write modes
 
-The default compiled runtime store is in-memory. For durable execution, open a Pebble-backed transactional store and close it during shutdown.
+The compiled engine uses memory storage by default. Use Pebble for durable state.
 
 ```go
+// fsync on every commit
 store, err := axiom.OpenPebble("data/axiom")
-if err != nil {
-    return err
-}
-defer store.Close()
 
-engine, err := axiom.Open(
-    definition,
-    axiom.WithStore(store),
-    axiom.WithProductionMode(),
-    axiom.Act("ChargeCard", chargeCard),
+// Faster, but recent writes may be lost after process or machine failure.
+store, err = axiom.OpenPebble(
+    "data/axiom",
+    axiom.PebbleNoSync(),
 )
-```
 
-Durability modes:
-
-```go
-// Synchronous commits: strongest durability, highest write latency.
-store, err := axiom.OpenPebble("data/axiom")
-
-// No fsync on every commit: faster, but recent writes may be lost after a
-// process or machine failure.
-store, err = axiom.OpenPebble("data/axiom", axiom.PebbleNoSync())
-
-// Group commits by flushing periodically.
+// Periodic flush instead of fsync on each operation.
 store, err = axiom.OpenPebble(
     "data/axiom",
     axiom.PebbleSyncEvery(10*time.Millisecond),
 )
 ```
 
-`WithProductionMode` enables the strict fast runtime and requires a transactional store. It is intended to fail during startup instead of silently falling back to unsupported execution paths.
+`WithProductionMode` enables the strict fast engine and requires a transactional store. Unsupported model constructs fail engine creation instead of silently using a slower path.
 
-## Activities and side effects
+## Concurrency
 
-Rules describe when an activity is scheduled; Go implements the actual external call.
+These guarantees apply inside one process and one `Engine` instance:
 
-```go
-func chargeCard(ctx context.Context, input axiom.Input) (axiom.Output, error) {
-    // Make the external operation idempotent using the key supplied by the plan.
-    return axiom.Output{
-        "transactionId": "txn-123",
-        "approved":      true,
-    }, nil
-}
+- operations for one `execution ID` are serialized;
+- different `execution ID` values may run concurrently;
+- state and history commit atomically with a transactional store;
+- Pebble transactions do not replace the shared store inside `Engine`;
+- integers retain their type after Pebble persistence and reopen.
 
-engine, err := axiom.Open(
-    definition,
-    axiom.Act("ChargeCard", chargeCard),
-)
-```
+If multiple processes can modify the same `execution ID`, add ownership routing, a distributed lock or a store with equivalent guarantees.
 
-For external effects, model an idempotency key and a retry policy. Axiom records scheduled, completed and failed activities in execution history.
-
-## Concurrency model
-
-Axiom provides process-local linearizability for operations submitted through one engine instance:
-
-- updates to the **same execution ID** are serialized;
-- operations for **different execution IDs** may proceed concurrently;
-- Pebble transactions never replace or expose the engine's shared store object;
-- state and history are committed atomically when the store supports transactions;
-- typed integer values remain integers across dispatch and Pebble reopen.
-
-For coordination across multiple processes, place one ownership or routing layer in front of each execution ID, or implement a distributed store with equivalent transactional and concurrency guarantees.
-
-## Replay, history and explanation
+## History, explanation and replay
 
 ```go
 history, err := engine.Execution("order-42").History(ctx)
@@ -363,7 +320,7 @@ if err != nil {
     return err
 }
 
-replayed, err := axiom.ReplayFromHistory(engine.Module(), history)
+replayed, err := axiom.ReplayFromHistory(plan.Module(), history)
 if err != nil {
     return err
 }
@@ -371,28 +328,26 @@ if err != nil {
 explanation, err := engine.Execution("order-42").Explain(ctx)
 ```
 
-Replay validates module identity and reconstructs deterministic runtime state from recorded history. Use the same compiled plan version that produced the history.
+Replay requires the same plan version that produced the history. A module hash mismatch is an error.
 
-## Performance baseline
+## Performance
 
-The current CI baseline was measured on a shared GitHub-hosted `linux/amd64` runner with Go 1.26.5, 4 logical CPUs and concurrency 8. These numbers are useful for coarse regression detection, not as hardware-independent SLAs.
+The current baseline was measured on a shared GitHub runner: `linux/amd64`, Go 1.26.5, 4 logical CPUs and concurrency 8. The numbers are suitable for coarse regression detection, not as hardware-independent SLAs.
 
 | Scenario | p95 | p99 | Throughput |
 |---|---:|---:|---:|
-| Go-first Flow, distinct executions | 3.841 ms | 4.788 ms | 9,028 ops/s |
-| Go-first Flow, one contended execution | 20.777 ms | 24.880 ms | 772 ops/s |
-| Compiled runtime, distinct executions | 0.505 ms | 3.011 ms | 55,011 ops/s |
-| Compiled runtime, one contended execution | 1.085 ms | 1.437 ms | 50,938 ops/s |
-| Compiled runtime, cold memory execution | 0.800 ms | 4.058 ms | 40,239 ops/s |
-| Pebble NoSync, cold durable execution | 3.904 ms | 5.061 ms | 8,773 ops/s |
-| Pebble Sync, cold durable execution | 8.688 ms | 10.225 ms | 1,437 ops/s |
-| Replay of a 1,000-event history | 1.977 ms | 2.541 ms | 761 runs/s |
+| Go Flow, distinct executions | 3.841 ms | 4.788 ms | 9,028 ops/s |
+| Go Flow, one contended execution | 20.777 ms | 24.880 ms | 772 ops/s |
+| Compiled engine, distinct executions | 0.505 ms | 3.011 ms | 55,011 ops/s |
+| Compiled engine, one contended execution | 1.085 ms | 1.437 ms | 50,938 ops/s |
+| Cold memory execution | 0.800 ms | 4.058 ms | 40,239 ops/s |
+| Pebble NoSync | 3.904 ms | 5.061 ms | 8,773 ops/s |
+| Pebble Sync | 8.688 ms | 10.225 ms | 1,437 ops/s |
+| Replay of 1,000 events | 1.977 ms | 2.541 ms | 761 replays/s |
 
-The compiled runtime currently has the strongest tail latency. A long-lived, contended Go-first Flow is slower because its current memory store copies and serializes the complete history on each save.
+Detailed report: [`benchmarks/latest.md`](benchmarks/latest.md).
 
-See [`benchmarks/latest.md`](benchmarks/latest.md) for p50, maximum latency, methodology, resilience coverage and reproduction commands.
-
-Run the percentile harness locally:
+Run locally:
 
 ```bash
 go run ./cmd/axiombench \
@@ -406,32 +361,30 @@ go run ./cmd/axiombench \
   -markdown benchmark-results.md
 ```
 
-## Resilience validation
+## CI coverage
 
-The test suite covers:
-
-- concurrent updates to one Go-first execution;
-- concurrent updates to one compiled execution;
-- independent parallel Pebble executions;
-- transaction rollback after a failed Flow effect;
-- typed event integer preservation;
-- integer preservation through Pebble close and reopen;
-- exact replay reconstruction;
-- a 16-worker, 8,000-operation Flow soak test;
-- Go's race detector for the runtime and stores;
-- an external consumer module importing public packages only.
+- tests for all packages;
+- the race detector for the engine and stores;
+- concurrent updates to one execution;
+- parallel Pebble transactions;
+- rollback after a failed effect;
+- integer type preservation;
+- replay and final-state validation;
+- a 16-worker, 8,000-operation soak test;
+- an external consumer module that imports public packages only;
+- strict p50, p95 and p99 benchmark runs.
 
 ## Packages
 
 | Package | Purpose |
 |---|---|
-| `github.com/Homiakus/axiom` | Canonical Plan, compiled runtime, typed execution API and Go-first Flow |
-| `github.com/Homiakus/axiom/model` | Declarative, file-free, statically validated Go builder |
-| `github.com/Homiakus/axiom/axm` | AXM parser and Plan frontend |
-| `github.com/Homiakus/axiom/table` | TOML transition-table frontend |
-| `github.com/Homiakus/axiom/store/pebble` | Public durable Pebble store package |
-| `github.com/Homiakus/axiom/cmd/axiomgen` | Optional typed-boundary code generator |
-| `github.com/Homiakus/axiom/cmd/axiombench` | Percentile and resilience benchmark harness |
+| `github.com/Homiakus/axiom` | `Plan`, engine, execution API and Typed Go Flow |
+| `github.com/Homiakus/axiom/model` | Declarative Go model |
+| `github.com/Homiakus/axiom/axm` | AXM loading |
+| `github.com/Homiakus/axiom/table` | TOML transition tables |
+| `github.com/Homiakus/axiom/store/pebble` | Public Pebble store package |
+| `github.com/Homiakus/axiom/cmd/axiomgen` | Optional typed-boundary generation |
+| `github.com/Homiakus/axiom/cmd/axiombench` | Load testing and percentile reporting |
 
 ## Development
 
@@ -442,18 +395,6 @@ go test ./...
 go test -race . ./internal/runtime/... ./internal/store/...
 go vet ./...
 ```
-
-CI also builds a separate consumer module to verify that applications can use the public API without importing internal packages.
-
-## Design guidance
-
-- Use **Flow** when the transition logic is ordinary application code and static inspection is not required.
-- Use **model**, **AXM** or **TOML** when validation, impact analysis, explicit claims and explainability are first-class requirements.
-- Keep effects idempotent and model their keys explicitly.
-- Use stable execution IDs based on the business aggregate being protected.
-- Use Pebble Sync when committed state must survive power loss; use NoSync only when the recovery-point tradeoff is acceptable.
-- Pin plan versions for durable histories and replay them with the same compiled module.
-- Measure strict latency objectives on dedicated hardware with fixed CPU, storage and Go versions.
 
 ## License
 
