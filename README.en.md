@@ -177,6 +177,8 @@ definition.Activity("DispenseCappuccino").
 
 If the hardware handler fails, accounting and inventory writes from that transition are not committed.
 
+This example uses the regular compiled runtime because its accounting claims contain arithmetic expressions that the strict fast runtime intentionally rejects today. Enable `WithProductionMode` only for models covered by the strict expression subset.
+
 ## Accounting invariants
 
 After each transition Axiom checks:
@@ -228,7 +230,6 @@ store, err := axiom.OpenPebble("data/coffee-machine")
 
 engine, err := plan.New(
     axiom.WithStore(store),
-    axiom.WithProductionMode(),
     axiom.Act("DispenseEspresso", dispenseEspresso),
     axiom.Act("DispenseCappuccino", dispenseCappuccino),
     axiom.Act("ReturnMoney", returnMoney),

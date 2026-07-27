@@ -296,7 +296,6 @@ func main() {
 
 	engine, err := plan.New(
 		axiom.WithStore(store),
-		axiom.WithProductionMode(),
 		axiom.Act("DispenseEspresso", dispenseDrink("espresso")),
 		axiom.Act("DispenseCappuccino", dispenseDrink("cappuccino")),
 		axiom.Act("ReturnMoney", returnMoney),

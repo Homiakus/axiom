@@ -299,7 +299,6 @@ definition.Activity("DispenseCappuccino").
 ```go
 engine, err := plan.New(
     axiom.WithStore(store),
-    axiom.WithProductionMode(),
     axiom.Act("DispenseCappuccino", func(
         ctx context.Context,
         input axiom.Input,
@@ -312,6 +311,8 @@ engine, err := plan.New(
 ```
 
 Если обработчик вернёт ошибку, денежные и складские изменения перехода не должны быть зафиксированы.
+
+В этом примере используется обычный скомпилированный runtime: денежные инварианты содержат арифметические выражения, которые строгий fast runtime пока намеренно не принимает. `WithProductionMode` следует включать только для моделей, полностью поддерживаемых строгим набором выражений.
 
 ## Денежные инварианты
 
@@ -405,7 +406,6 @@ defer store.Close()
 
 engine, err := plan.New(
     axiom.WithStore(store),
-    axiom.WithProductionMode(),
     axiom.Act("DispenseEspresso", dispenseEspresso),
     axiom.Act("DispenseCappuccino", dispenseCappuccino),
     axiom.Act("ReturnMoney", returnMoney),
