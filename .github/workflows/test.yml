@@ -1,4 +1,4 @@
-name: finalize-library
+name: finalize-modules
 
 on:
   pull_request:
@@ -25,52 +25,20 @@ jobs:
           go mod tidy
           (cd axiom-main/tools/axiomgen && go mod tidy)
 
-      - name: Install final CI workflow
-        run: |
-          cat > .github/workflows/test.yml <<'EOF'
-          name: test
-
-          on:
-            push:
-            pull_request:
-
-          permissions:
-            contents: read
-
-          jobs:
-            go:
-              runs-on: ubuntu-latest
-              steps:
-                - uses: actions/checkout@v4
-                - uses: actions/setup-go@v5
-                  with:
-                    go-version: '1.26.x'
-                    cache: false
-                - name: Verify module metadata
-                  run: |
-                    go mod tidy
-                    (cd axiom-main/tools/axiomgen && go mod tidy)
-                    git diff --exit-code -- go.mod go.sum axiom-main/tools/axiomgen/go.mod axiom-main/tools/axiomgen/go.sum
-                - name: Test public module
-                  run: go test ./...
-                - name: Test engine module
-                  working-directory: axiom-main
-                  run: go test ./...
-                - name: Test code generator
-                  working-directory: axiom-main/tools/axiomgen
-                  run: go test ./...
-          EOF
-
-      - name: Validate final tree
+      - name: Validate final modules
         run: |
           go test ./...
           (cd axiom-main && go test ./...)
           (cd axiom-main/tools/axiomgen && go test ./...)
 
-      - name: Commit normalized files
+      - name: Commit normalized module files
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add go.mod go.sum axiom-main/tools/axiomgen/go.mod axiom-main/tools/axiomgen/go.sum .github/workflows/test.yml
+          git add go.mod go.sum axiom-main/tools/axiomgen/go.mod axiom-main/tools/axiomgen/go.sum
+          if git diff --cached --quiet; then
+            echo "Module files are already normalized"
+            exit 0
+          fi
           git commit -m "Normalize module metadata [skip ci]"
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
