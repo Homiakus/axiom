@@ -293,7 +293,7 @@ func (d *Definition) Source() string {
 	}
 	for _, value := range d.policies {
 		fmt.Fprintf(&out, "policy %s:\n", value.name)
-		renderExprMap(&out, value.entries, 2)
+		renderPolicyMap(&out, value.entries, 2)
 		out.WriteByte('\n')
 	}
 	for _, value := range d.activities {
@@ -455,6 +455,16 @@ func renderExprMap(out *strings.Builder, values map[string]Expr, indent int) {
 		fmt.Fprintf(out, "%s%s = %s\n", strings.Repeat(" ", indent), key, values[key].text)
 	}
 }
+
+// renderPolicyMap uses the canonical AXM policy syntax: key: value.
+// Other expression maps use key = expression.
+func renderPolicyMap(out *strings.Builder, values map[string]Expr, indent int) {
+	keys := sortedKeys(values)
+	for _, key := range keys {
+		fmt.Fprintf(out, "%s%s: %s\n", strings.Repeat(" ", indent), key, values[key].text)
+	}
+}
+
 func renderTypeMap(out *strings.Builder, values map[string]string, indent int) {
 	keys := make([]string, 0, len(values))
 	for key := range values {

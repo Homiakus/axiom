@@ -12,9 +12,8 @@ import (
 	"github.com/Homiakus/axiom/model"
 )
 
-// Все денежные суммы хранятся в копейках.
-// Так 14000 означает 140,00 ₽. Целые числа исключают ошибки округления,
-// которые появляются при использовании float64 для денег.
+// Деньги хранятся целыми копейками. Значение 14000 означает 140,00 ₽.
+// Для денежных расчётов намеренно не используется float64.
 const (
 	espressoPriceKopecks   = 9000
 	cappuccinoPriceKopecks = 14000
@@ -27,26 +26,25 @@ const (
 	cappuccinoMilkML  = 120
 )
 
-// Machine — всё состояние одного физического кофейного автомата.
-// Один execution ID соответствует одному автомату и защищает его состояние
-// от потерянных обновлений при параллельных событиях.
+// Machine содержит всё долговременное состояние одного физического автомата.
+// В приложении одному автомату соответствует один execution ID.
 type Machine struct {
-	// Деньги текущего покупателя, ещё не превращённые в выручку.
+	// Деньги текущего покупателя, ещё не признанные выручкой.
 	CreditKopecks int `json:"creditKopecks"`
 
-	// Накопительные счётчики для аудита денежных потоков.
+	// Накопительные денежные счётчики.
 	AcceptedKopecks int `json:"acceptedKopecks"`
 	ReturnedKopecks int `json:"returnedKopecks"`
 	RevenueKopecks  int `json:"revenueKopecks"`
 	CashboxKopecks  int `json:"cashboxKopecks"`
 
-	// Остатки расходных материалов.
+	// Остатки ингредиентов и расходных материалов.
 	WaterML int `json:"waterML"`
 	BeansG  int `json:"beansG"`
 	MilkML  int `json:"milkML"`
 	Cups    int `json:"cups"`
 
-	// Данные для экрана автомата и технического журнала.
+	// Данные для экрана, телеметрии и технического журнала.
 	DrinksServed      int    `json:"drinksServed"`
 	LastDrink         string `json:"lastDrink"`
 	LastChangeKopecks int    `json:"lastChangeKopecks"`
@@ -60,8 +58,8 @@ type MoneyInserted struct {
 
 func (MoneyInserted) AxiomEventName() string { return "MoneyInserted" }
 
-// Отдельный тип события для каждого напитка не позволяет клиенту подменить
-// цену или рецепт в payload. Цена и расход ингредиентов заданы в модели.
+// Для каждого напитка используется отдельный тип события. Клиент передаёт
+// только идентификатор покупки и не может подменить цену или рецепт.
 type EspressoRequested struct {
 	PurchaseID string `json:"purchaseId"`
 }
@@ -82,7 +80,6 @@ type CancelRequested struct {
 func (CancelRequested) AxiomEventName() string { return "CancelRequested" }
 
 // add и sub строят арифметические выражения декларативной модели.
-// Они вычисляются исполнителем относительно состояния до перехода.
 func add(left, right model.Expr) model.Expr {
 	return model.Raw(fmt.Sprintf("(%s + %s)", left, right))
 }
@@ -95,7 +92,7 @@ func main() {
 	ctx := context.Background()
 
 	// ---------------------------------------------------------------------
-	// 1. Описание состояния и событий
+	// 1. Состояние и события
 	// ---------------------------------------------------------------------
 	definition := model.New("CoffeeMachine").Version("1")
 
@@ -120,10 +117,10 @@ func main() {
 	cancelRequested := model.Event[CancelRequested](definition, "CancelRequested")
 
 	// ---------------------------------------------------------------------
-	// 2. Политика внешних операций
+	// 2. Политика работы с оборудованием
 	// ---------------------------------------------------------------------
-	// Приготовление напитка и возврат денег воздействуют на реальное железо.
-	// Политика задаёт повторы, тайм-аут, последовательность выполнения и
+	// Приготовление напитка и возврат денег являются внешними действиями.
+	// Политика задаёт повторы, тайм-аут, последовательное выполнение и
 	// обязательный ключ идемпотентности.
 	definition.Policy("hardwarePolicy").
 		Retry(2).
@@ -134,11 +131,15 @@ func main() {
 	// ---------------------------------------------------------------------
 	// 3. Внешние операции
 	// ---------------------------------------------------------------------
+	// Цена и сдача вычисляются до обращения к оборудованию. Обработчик
+	// возвращает подтверждённые значения, которые затем учитываются в кассе.
 	definition.Activity("DispenseEspresso").
 		Input("purchaseId", espressoRequested.Field("PurchaseID")).
 		Input("priceKopecks", model.Lit(espressoPriceKopecks)).
 		Input("changeKopecks", sub(machine.Field("CreditKopecks"), model.Lit(espressoPriceKopecks))).
 		Output("dispensed", "Bool").
+		Output("priceKopecks", "Int").
+		Output("changeKopecks", "Int").
 		Effect("external").
 		IdempotencyKey(espressoRequested.Field("PurchaseID")).
 		Policy("hardwarePolicy")
@@ -148,6 +149,8 @@ func main() {
 		Input("priceKopecks", model.Lit(cappuccinoPriceKopecks)).
 		Input("changeKopecks", sub(machine.Field("CreditKopecks"), model.Lit(cappuccinoPriceKopecks))).
 		Output("dispensed", "Bool").
+		Output("priceKopecks", "Int").
+		Output("changeKopecks", "Int").
 		Effect("external").
 		IdempotencyKey(cappuccinoRequested.Field("PurchaseID")).
 		Policy("hardwarePolicy")
@@ -156,6 +159,7 @@ func main() {
 		Input("operationId", cancelRequested.Field("OperationID")).
 		Input("amountKopecks", machine.Field("CreditKopecks")).
 		Output("returned", "Bool").
+		Output("amountKopecks", "Int").
 		Effect("external").
 		IdempotencyKey(cancelRequested.Field("OperationID")).
 		Policy("hardwarePolicy")
@@ -163,8 +167,8 @@ func main() {
 	// ---------------------------------------------------------------------
 	// 4. Правила переходов
 	// ---------------------------------------------------------------------
-	// Принятые деньги одновременно увеличивают кредит покупателя,
-	// физическую кассу и общий счётчик принятых средств.
+	// Принятые деньги увеличивают кредит покупателя, физическую кассу и
+	// общий счётчик принятых средств.
 	definition.Rule("acceptMoney").
 		On(moneyInserted.Trigger()).
 		When(model.GT(moneyInserted.Field("AmountKopecks"), model.Lit(0))).
@@ -172,9 +176,7 @@ func main() {
 		Set(machine.Field("AcceptedKopecks"), add(machine.Field("AcceptedKopecks"), moneyInserted.Field("AmountKopecks"))).
 		Set(machine.Field("CashboxKopecks"), add(machine.Field("CashboxKopecks"), moneyInserted.Field("AmountKopecks")))
 
-	// Espresso можно приготовить только при достаточном кредите и запасах.
-	// Все денежные и складские изменения фиксируются одним переходом.
-	espressoChange := sub(machine.Field("CreditKopecks"), model.Lit(espressoPriceKopecks))
+	// Эспрессо выдаётся только при достаточном кредите и остатках.
 	definition.Rule("sellEspresso").
 		On(espressoRequested.Trigger()).
 		When(
@@ -185,18 +187,18 @@ func main() {
 		).
 		Run("DispenseEspresso").
 		Set(machine.Field("CreditKopecks"), model.Lit(0)).
-		Set(machine.Field("ReturnedKopecks"), add(machine.Field("ReturnedKopecks"), espressoChange)).
-		Set(machine.Field("RevenueKopecks"), add(machine.Field("RevenueKopecks"), model.Lit(espressoPriceKopecks))).
-		Set(machine.Field("CashboxKopecks"), sub(machine.Field("CashboxKopecks"), espressoChange)).
+		Set(machine.Field("ReturnedKopecks"), add(machine.Field("ReturnedKopecks"), model.Ref("output.changeKopecks"))).
+		Set(machine.Field("RevenueKopecks"), add(machine.Field("RevenueKopecks"), model.Ref("output.priceKopecks"))).
+		Set(machine.Field("CashboxKopecks"), sub(machine.Field("CashboxKopecks"), model.Ref("output.changeKopecks"))).
 		Set(machine.Field("WaterML"), sub(machine.Field("WaterML"), model.Lit(espressoWaterML))).
 		Set(machine.Field("BeansG"), sub(machine.Field("BeansG"), model.Lit(espressoBeansG))).
 		Set(machine.Field("Cups"), sub(machine.Field("Cups"), model.Lit(1))).
 		Set(machine.Field("DrinksServed"), add(machine.Field("DrinksServed"), model.Lit(1))).
 		Set(machine.Field("LastDrink"), model.Lit("espresso")).
-		Set(machine.Field("LastChangeKopecks"), espressoChange).
+		Set(machine.Field("LastChangeKopecks"), model.Ref("output.changeKopecks")).
 		Set(machine.Field("LastDispensed"), model.Ref("output.dispensed"))
 
-	cappuccinoChange := sub(machine.Field("CreditKopecks"), model.Lit(cappuccinoPriceKopecks))
+	// Капучино дополнительно проверяет и списывает молоко.
 	definition.Rule("sellCappuccino").
 		On(cappuccinoRequested.Trigger()).
 		When(
@@ -208,33 +210,33 @@ func main() {
 		).
 		Run("DispenseCappuccino").
 		Set(machine.Field("CreditKopecks"), model.Lit(0)).
-		Set(machine.Field("ReturnedKopecks"), add(machine.Field("ReturnedKopecks"), cappuccinoChange)).
-		Set(machine.Field("RevenueKopecks"), add(machine.Field("RevenueKopecks"), model.Lit(cappuccinoPriceKopecks))).
-		Set(machine.Field("CashboxKopecks"), sub(machine.Field("CashboxKopecks"), cappuccinoChange)).
+		Set(machine.Field("ReturnedKopecks"), add(machine.Field("ReturnedKopecks"), model.Ref("output.changeKopecks"))).
+		Set(machine.Field("RevenueKopecks"), add(machine.Field("RevenueKopecks"), model.Ref("output.priceKopecks"))).
+		Set(machine.Field("CashboxKopecks"), sub(machine.Field("CashboxKopecks"), model.Ref("output.changeKopecks"))).
 		Set(machine.Field("WaterML"), sub(machine.Field("WaterML"), model.Lit(cappuccinoWaterML))).
 		Set(machine.Field("BeansG"), sub(machine.Field("BeansG"), model.Lit(cappuccinoBeansG))).
 		Set(machine.Field("MilkML"), sub(machine.Field("MilkML"), model.Lit(cappuccinoMilkML))).
 		Set(machine.Field("Cups"), sub(machine.Field("Cups"), model.Lit(1))).
 		Set(machine.Field("DrinksServed"), add(machine.Field("DrinksServed"), model.Lit(1))).
 		Set(machine.Field("LastDrink"), model.Lit("cappuccino")).
-		Set(machine.Field("LastChangeKopecks"), cappuccinoChange).
+		Set(machine.Field("LastChangeKopecks"), model.Ref("output.changeKopecks")).
 		Set(machine.Field("LastDispensed"), model.Ref("output.dispensed"))
 
-	// Отмена возвращает весь текущий кредит. Выручка при этом не меняется.
+	// Отмена возвращает весь текущий кредит. Выручка не изменяется.
 	definition.Rule("cancelPurchase").
 		On(cancelRequested.Trigger()).
 		When(model.GT(machine.Field("CreditKopecks"), model.Lit(0))).
 		Run("ReturnMoney").
-		Set(machine.Field("CashboxKopecks"), sub(machine.Field("CashboxKopecks"), machine.Field("CreditKopecks"))).
-		Set(machine.Field("ReturnedKopecks"), add(machine.Field("ReturnedKopecks"), machine.Field("CreditKopecks"))).
-		Set(machine.Field("LastChangeKopecks"), machine.Field("CreditKopecks")).
+		Set(machine.Field("CashboxKopecks"), sub(machine.Field("CashboxKopecks"), model.Ref("output.amountKopecks"))).
+		Set(machine.Field("ReturnedKopecks"), add(machine.Field("ReturnedKopecks"), model.Ref("output.amountKopecks"))).
+		Set(machine.Field("LastChangeKopecks"), model.Ref("output.amountKopecks")).
 		Set(machine.Field("CreditKopecks"), model.Lit(0))
 
 	// ---------------------------------------------------------------------
 	// 5. Инварианты
 	// ---------------------------------------------------------------------
-	// Главный бухгалтерский инвариант:
-	// принято = возвращено + выручка + неиспользованный кредит.
+	// Принятые деньги должны находиться ровно в одном из трёх мест:
+	// возвращены покупателям, признаны выручкой или лежат в текущем кредите.
 	definition.Claim(
 		"moneyIsConserved",
 		model.Eq(
@@ -246,8 +248,8 @@ func main() {
 		),
 	)
 
-	// При нулевом стартовом разменном фонде физическая касса должна быть
-	// равна выручке плюс текущий кредит покупателя.
+	// При нулевом стартовом разменном фонде физическая касса равна выручке
+	// плюс неиспользованный кредит текущего покупателя.
 	definition.Claim(
 		"cashboxMatchesAccounting",
 		model.Eq(
@@ -271,17 +273,17 @@ func main() {
 	)
 
 	// ---------------------------------------------------------------------
-	// 6. Компиляция и запуск
+	// 6. Компиляция и хранение
 	// ---------------------------------------------------------------------
-	// Compile проверяет ссылки на поля, типы выражений, правила, activities
-	// и claims до того, как автомат примет первую монету.
+	// Compile проверяет имена полей, типы выражений, правила, activities и
+	// claims до того, как автомат примет первую монету.
 	plan, err := definition.Compile()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// В примере используется временный каталог. В реальном автомате это будет
-	// постоянный путь на диске, например /var/lib/coffee-machine/axiom.
+	// Для демонстрации используется временный каталог. В реальном автомате
+	// здесь будет постоянный путь, например /var/lib/coffee-machine/axiom.
 	dir, err := os.MkdirTemp("", "axiom-coffee-machine-")
 	if err != nil {
 		log.Fatal(err)
@@ -294,9 +296,10 @@ func main() {
 	}
 	defer store.Close()
 
+	// Pebble отвечает за транзакционное хранение. Строгий fast runtime здесь
+	// не включён, потому что бухгалтерские Claims используют арифметику.
 	engine, err := plan.New(
 		axiom.WithStore(store),
-		axiom.WithProductionMode(),
 		axiom.Act("DispenseEspresso", dispenseDrink("espresso")),
 		axiom.Act("DispenseCappuccino", dispenseDrink("cappuccino")),
 		axiom.Act("ReturnMoney", returnMoney),
@@ -305,6 +308,9 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// ---------------------------------------------------------------------
+	// 7. Три пользовательских операции
+	// ---------------------------------------------------------------------
 	// Один execution хранит состояние одного физического автомата.
 	run := engine.Execution("coffee-machine-01")
 
@@ -321,7 +327,7 @@ func main() {
 	must(run.Dispatch(ctx, CancelRequested{OperationID: "cancel-0003"}))
 
 	// ---------------------------------------------------------------------
-	// 7. Чтение состояния, истории и replay
+	// 8. Состояние, история и replay
 	// ---------------------------------------------------------------------
 	var current Machine
 	must(run.State(ctx, &current))
@@ -331,8 +337,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Replay строит состояние заново из журнала. Хеш плана проверяется,
-	// поэтому историю нельзя случайно воспроизвести другой версией модели.
+	// Replay строит состояние заново из журнала и проверяет хеш плана.
 	replayed, err := axiom.ReplayFromHistory(plan.Module(), history)
 	if err != nil {
 		log.Fatal(err)
@@ -345,10 +350,17 @@ func main() {
 	fmt.Printf("  касса:      %s\n", rubles(current.CashboxKopecks))
 	fmt.Printf("  кредит:     %s\n", rubles(current.CreditKopecks))
 	fmt.Printf("  напитков:   %d\n", current.DrinksServed)
+	fmt.Printf("  вода:       %d мл\n", current.WaterML)
+	fmt.Printf("  кофе:       %d г\n", current.BeansG)
+	fmt.Printf("  молоко:     %d мл\n", current.MilkML)
+	fmt.Printf("  стаканы:    %d\n", current.Cups)
 	fmt.Printf("  записей истории: %d\n", len(history))
 	fmt.Printf("  статус после replay: %s\n", replayed.Status)
 }
 
+// dispenseDrink имитирует контроллер кофемолки, нагревателя, насосов и
+// механизма выдачи сдачи. В реальном приложении обработчик обязан хранить
+// PurchaseID и не повторять уже завершённую физическую операцию.
 func dispenseDrink(name string) axiom.Activity {
 	return func(_ context.Context, input axiom.Input) (axiom.Output, error) {
 		fmt.Printf(
@@ -358,7 +370,11 @@ func dispenseDrink(name string) axiom.Activity {
 			rubles(input["changeKopecks"].(int)),
 			input["purchaseId"],
 		)
-		return axiom.Output{"dispensed": true}, nil
+		return axiom.Output{
+			"dispensed":     true,
+			"priceKopecks":  input["priceKopecks"],
+			"changeKopecks": input["changeKopecks"],
+		}, nil
 	}
 }
 
@@ -368,7 +384,10 @@ func returnMoney(_ context.Context, input axiom.Input) (axiom.Output, error) {
 		rubles(input["amountKopecks"].(int)),
 		input["operationId"],
 	)
-	return axiom.Output{"returned": true}, nil
+	return axiom.Output{
+		"returned":      true,
+		"amountKopecks": input["amountKopecks"],
+	}, nil
 }
 
 func must(err error) {
@@ -377,7 +396,7 @@ func must(err error) {
 	}
 }
 
-// Форматирование выполняется без float64: 14000 -> "140,00 ₽".
+// Форматирование также выполняется без float64: 14000 -> "140,00 ₽".
 func rubles(kopecks int) string {
 	return fmt.Sprintf("%d,%02d ₽", kopecks/100, kopecks%100)
 }
