@@ -1,0 +1,51 @@
+[workflow]
+name = "Welcome"
+version = "1"
+
+[state.User]
+id = "String?"
+email = "String?"
+welcomeSent = false
+
+[[event]]
+name = "UserRegistered"
+[event.fields]
+userId = "String"
+email = "String"
+
+[[policy]]
+name = "emailPolicy"
+retry = 2
+timeout = "5s"
+concurrency = "once"
+idempotency = "required"
+
+[[activity]]
+name = "SendWelcomeEmail"
+effect = "external"
+policy = "emailPolicy"
+idempotency_key = "User.id"
+[activity.input]
+userId = "User.id"
+email = "User.email"
+[activity.output]
+sent = "Bool"
+
+[[transition]]
+name = "captureRegistration"
+on = "UserRegistered"
+[transition.set]
+"User.id" = "signal.userId"
+"User.email" = "signal.email"
+
+[[transition]]
+name = "sendWelcomeEmail"
+changed = "User.email"
+when = ["User.welcomeSent == false"]
+activity = "SendWelcomeEmail"
+[transition.set]
+"User.welcomeSent" = "output.sent"
+
+[[claim]]
+name = "welcomeSentRequiresEmail"
+always = ["User.welcomeSent == true implies User.email exists"]
