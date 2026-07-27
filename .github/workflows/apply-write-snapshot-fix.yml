@@ -1,0 +1,177 @@
+name: apply atomic write evaluation fix
+
+on:
+  push:
+    branches:
+      - agent/verify-coffee-example
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'Evaluate rule writes from one state snapshot'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/verify-coffee-example
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Patch write evaluation and add regression test
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('internal/runtime/engine.go')
+          text = path.read_text()
+          start = text.index('func (e *Engine) applyWrites(')
+          end = text.index('\ntype contextRollback struct {', start)
+          replacement = r'''func (e *Engine) applyWrites(ctx context.Context, execution *Execution, rule lang.RuleDecl, env evalEnv) ([]string, error) {
+	if err := e.checkClaimsFast(execution, nil); err != nil {
+		return nil, err
+	}
+
+	// Every right-hand side is evaluated against the same pre-transition
+	// snapshot. Applying writes while evaluating later expressions makes the
+	// result depend on target ordering and breaks atomic transition semantics.
+	evaluationEnv := env
+	evaluationEnv.execution = cloneExecution(execution)
+	type evaluatedWrite struct {
+		name  string
+		value any
+	}
+	evaluated := make([]evaluatedWrite, 0, len(rule.Writes))
+	for _, write := range rule.Writes {
+		value, err := evalExpr(write.Expr, evaluationEnv)
+		if err != nil {
+			return nil, fmt.Errorf("rule %s write %s: %w", rule.Name, write.Name, err)
+		}
+		if err := e.checkContextValue(write.Name, value); err != nil {
+			return nil, fmt.Errorf("rule %s write %s: %w", rule.Name, write.Name, err)
+		}
+		evaluated = append(evaluated, evaluatedWrite{name: write.Name, value: value})
+	}
+
+	rollback := contextRollback{}
+	changed := make([]string, 0, len(evaluated))
+	writes := make(map[string]any, len(evaluated))
+	for _, write := range evaluated {
+		rollback.capture(execution, write.name)
+		if e.setContextValue(execution, write.name, write.value) {
+			changed = append(changed, write.name)
+			writes[write.name] = write.value
+		}
+	}
+	sort.Strings(changed)
+	if len(changed) > 0 {
+		beforeComputed := cloneAnyMap(execution.Computed)
+		beforeFacts := cloneFacts(execution.Facts)
+		beforeFast := e.cloneFastState(execution)
+		changedAtoms, err := e.recomputeFast(execution, changedSet(changed))
+		if err != nil {
+			rollback.restore(e, execution)
+			execution.Computed = beforeComputed
+			execution.Facts = beforeFacts
+			e.restoreFastState(execution, beforeFast)
+			return nil, err
+		}
+		if err := e.checkClaimsFast(execution, changedAtoms); err != nil {
+			rollback.restore(e, execution)
+			execution.Computed = beforeComputed
+			execution.Facts = beforeFacts
+			e.restoreFastState(execution, beforeFast)
+			return nil, err
+		}
+	}
+	if err := e.store.AppendHistory(ctx, execution.ID, "WriteApplied", map[string]any{"rule": rule.Name, "writes": writes, "changed": changed, "values": e.changedValues(execution, changed)}); err != nil {
+		rollback.restore(e, execution)
+		return nil, err
+	}
+	return changed, nil
+}
+'''
+          path.write_text(text[:start] + replacement + text[end:])
+          PY
+
+          cat > internal/runtime/write_snapshot_test.go <<'EOF'
+          package runtime_test
+
+          import (
+          	"context"
+          	"testing"
+
+          	"github.com/Homiakus/axiom/internal/compiler"
+          	"github.com/Homiakus/axiom/internal/runtime"
+          	"github.com/Homiakus/axiom/internal/store/memory"
+          )
+
+          func TestRuleWritesUseOnePreTransitionSnapshot(t *testing.T) {
+          	module, err := compiler.Compile([]byte(`
+          domain WriteSnapshot
+
+          signal Purchase
+
+          context Account:
+            credit: Int = 200
+            change: Int = 0
+            revenue: Int = 0
+
+          rule purchase:
+            on Purchase
+            write:
+              Account.credit = 0
+              Account.change = Account.credit - 140
+              Account.revenue = Account.revenue + 140
+
+          claim conserved:
+            always:
+              Account.credit + Account.change + Account.revenue == 200
+          `))
+          	if err != nil {
+          		t.Fatal(err)
+          	}
+
+          	store := memory.NewStore()
+          	engine := runtime.NewEngine(module, store, nil)
+          	ctx := context.Background()
+          	if err := engine.Start(ctx, "machine", nil); err != nil {
+          		t.Fatal(err)
+          	}
+          	if err := engine.Signal(ctx, "machine", "Purchase", nil); err != nil {
+          		t.Fatal(err)
+          	}
+
+          	execution, err := store.GetExecution(ctx, "machine")
+          	if err != nil {
+          		t.Fatal(err)
+          	}
+          	account := execution.Context["Account"]
+          	if got := account["credit"]; got != 0 {
+          		t.Fatalf("credit = %v, want 0", got)
+          	}
+          	if got := account["change"]; got != 60 {
+          		t.Fatalf("change = %v, want 60 from the pre-transition credit", got)
+          	}
+          	if got := account["revenue"]; got != 140 {
+          		t.Fatalf("revenue = %v, want 140", got)
+          	}
+          }
+          EOF
+
+          gofmt -w internal/runtime/engine.go internal/runtime/write_snapshot_test.go
+          go test ./internal/runtime ./...
+
+      - name: Commit fix
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add internal/runtime/engine.go internal/runtime/write_snapshot_test.go
+          git commit -m 'Evaluate rule writes from one state snapshot'
+          git push origin HEAD:agent/verify-coffee-example
