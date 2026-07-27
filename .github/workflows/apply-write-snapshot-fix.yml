@@ -22,7 +22,7 @@ jobs:
           go-version: '1.26.x'
           cache: true
 
-      - name: Patch write evaluation and add regression test
+      - name: Patch write evaluation and add public API regression test
         shell: bash
         run: |
           python - <<'PY'
@@ -37,9 +37,9 @@ jobs:
 		return nil, err
 	}
 
-	// Every right-hand side is evaluated against the same pre-transition
-	// snapshot. Applying writes while evaluating later expressions makes the
-	// result depend on target ordering and breaks atomic transition semantics.
+	// Evaluate every right-hand side against one pre-transition snapshot.
+	// Otherwise the result depends on target ordering: an early write can
+	// change the value observed by a later expression in the same rule.
 	evaluationEnv := env
 	evaluationEnv.execution = cloneExecution(execution)
 	type evaluatedWrite struct {
@@ -99,79 +99,80 @@ jobs:
           path.write_text(text[:start] + replacement + text[end:])
           PY
 
-          cat > internal/runtime/write_snapshot_test.go <<'EOF'
-          package runtime_test
+          cat > write_snapshot_semantics_test.go <<'EOF'
+          package axiom_test
 
           import (
           	"context"
           	"testing"
 
-          	"github.com/Homiakus/axiom/internal/compiler"
-          	"github.com/Homiakus/axiom/internal/runtime"
-          	"github.com/Homiakus/axiom/internal/store/memory"
+          	"github.com/Homiakus/axiom"
+          	"github.com/Homiakus/axiom/model"
           )
 
+          type snapshotAccount struct {
+          	Balance int `json:"balance"`
+          	Change  int `json:"change"`
+          	Revenue int `json:"revenue"`
+          }
+
+          type snapshotPurchase struct{}
+
+          func (snapshotPurchase) AxiomEventName() string { return "Purchase" }
+
           func TestRuleWritesUseOnePreTransitionSnapshot(t *testing.T) {
-          	module, err := compiler.Compile([]byte(`
-          domain WriteSnapshot
+          	definition := model.New("WriteSnapshot")
+          	account := model.State[snapshotAccount](definition, "Account").
+          		Default("Balance", 200).
+          		Default("Change", 0).
+          		Default("Revenue", 0)
+          	purchase := model.Event[snapshotPurchase](definition, "Purchase")
 
-          signal Purchase
+          	definition.Rule("purchase").
+          		On(purchase.Trigger()).
+          		Set(account.Field("Balance"), model.Lit(0)).
+          		Set(account.Field("Change"), model.Raw("Account.balance - 140")).
+          		Set(account.Field("Revenue"), model.Raw("Account.revenue + 140"))
 
-          context Account:
-            credit: Int = 200
-            change: Int = 0
-            revenue: Int = 0
+          	definition.Claim(
+          		"conserved",
+          		model.Eq(
+          			model.Raw("Account.balance + Account.change + Account.revenue"),
+          			model.Lit(200),
+          		),
+          	)
 
-          rule purchase:
-            on Purchase
-            write:
-              Account.credit = 0
-              Account.change = Account.credit - 140
-              Account.revenue = Account.revenue + 140
-
-          claim conserved:
-            always:
-              Account.credit + Account.change + Account.revenue == 200
-          `))
+          	plan, err := definition.Compile()
           	if err != nil {
           		t.Fatal(err)
           	}
-
-          	store := memory.NewStore()
-          	engine := runtime.NewEngine(module, store, nil)
-          	ctx := context.Background()
-          	if err := engine.Start(ctx, "machine", nil); err != nil {
-          		t.Fatal(err)
-          	}
-          	if err := engine.Signal(ctx, "machine", "Purchase", nil); err != nil {
-          		t.Fatal(err)
-          	}
-
-          	execution, err := store.GetExecution(ctx, "machine")
+          	engine, err := plan.New()
           	if err != nil {
           		t.Fatal(err)
           	}
-          	account := execution.Context["Account"]
-          	if got := account["credit"]; got != 0 {
-          		t.Fatalf("credit = %v, want 0", got)
+          	run := engine.Execution("account")
+          	if err := run.Dispatch(context.Background(), snapshotPurchase{}); err != nil {
+          		t.Fatal(err)
           	}
-          	if got := account["change"]; got != 60 {
-          		t.Fatalf("change = %v, want 60 from the pre-transition credit", got)
+
+          	var state snapshotAccount
+          	if err := run.State(context.Background(), &state); err != nil {
+          		t.Fatal(err)
           	}
-          	if got := account["revenue"]; got != 140 {
-          		t.Fatalf("revenue = %v, want 140", got)
+          	if state.Balance != 0 || state.Change != 60 || state.Revenue != 140 {
+          		t.Fatalf("state = %+v, want balance=0 change=60 revenue=140", state)
           	}
           }
           EOF
 
-          gofmt -w internal/runtime/engine.go internal/runtime/write_snapshot_test.go
-          go test ./internal/runtime ./...
+          gofmt -w internal/runtime/engine.go write_snapshot_semantics_test.go
+          go test ./...
 
       - name: Commit fix
         shell: bash
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add internal/runtime/engine.go internal/runtime/write_snapshot_test.go
+          git add internal/runtime/engine.go write_snapshot_semantics_test.go
           git commit -m 'Evaluate rule writes from one state snapshot'
           git push origin HEAD:agent/verify-coffee-example
