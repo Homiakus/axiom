@@ -2,10 +2,10 @@ package runtime
 
 import "context"
 
-func (e *Engine) withStoreTransaction(ctx context.Context, fn func() error) error {
+func (e *Engine) withStoreTransaction(ctx context.Context, fn func(*Engine) error) error {
 	transactional, ok := e.store.(TransactionalStore)
 	if !ok {
-		return fn()
+		return fn(e)
 	}
 	e.storeMu.Lock()
 	defer e.storeMu.Unlock()
@@ -13,12 +13,18 @@ func (e *Engine) withStoreTransaction(ctx context.Context, fn func() error) erro
 	if err != nil {
 		return err
 	}
-	original := e.store
-	e.store = tx
-	defer func() {
-		e.store = original
-	}()
-	if err := fn(); err != nil {
+	working := &Engine{
+		module:         e.module,
+		store:          tx,
+		activities:     e.activities,
+		maxSteps:       e.maxSteps,
+		fast:           e.fast,
+		strictFast:     e.strictFast,
+		traceLevel:     e.traceLevel,
+		clock:          e.clock,
+		executionLocks: e.executionLocks,
+	}
+	if err := fn(working); err != nil {
 		_ = tx.Rollback()
 		return err
 	}

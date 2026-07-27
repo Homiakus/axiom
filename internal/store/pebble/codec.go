@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"sync"
 
+	"github.com/Homiakus/axiom/internal/jsonx"
 	"github.com/Homiakus/axiom/internal/runtime"
 )
 
@@ -58,10 +59,10 @@ func encodeValue(kind codecKind, value any) ([]byte, error) {
 
 func decodeValue(kind codecKind, data []byte, out any) error {
 	if kind == codecJSON {
-		return json.Unmarshal(data, out)
+		return jsonx.Decode(data, out)
 	}
 	if bytes.HasPrefix(data, []byte("json:")) {
-		return json.Unmarshal(data[len("json:"):], out)
+		return jsonx.Decode(data[len("json:"):], out)
 	}
 	if bytes.HasPrefix(data, []byte("gob:")) {
 		data = data[len("gob:"):]

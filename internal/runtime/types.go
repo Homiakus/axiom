@@ -7,6 +7,7 @@ import (
 
 	"github.com/Homiakus/axiom/internal/compiler"
 	"github.com/Homiakus/axiom/internal/diag"
+	"github.com/Homiakus/axiom/internal/syncx"
 )
 
 type FieldID = compiler.FieldID
@@ -155,15 +156,16 @@ const (
 )
 
 type Engine struct {
-	module     *compiler.Module
-	store      Store
-	activities ActivityRegistry
-	maxSteps   int
-	fast       *fastPlan
-	strictFast bool
-	traceLevel TraceLevel
-	storeMu    sync.Mutex
-	clock      Clock
+	module         *compiler.Module
+	store          Store
+	activities     ActivityRegistry
+	maxSteps       int
+	fast           *fastPlan
+	strictFast     bool
+	traceLevel     TraceLevel
+	storeMu        sync.Mutex
+	clock          Clock
+	executionLocks *syncx.KeyedLocker
 }
 
 func NewEngine(module *compiler.Module, store Store, activities ActivityRegistry) *Engine {
@@ -172,13 +174,14 @@ func NewEngine(module *compiler.Module, store Store, activities ActivityRegistry
 	}
 	fast := compileFastPlan(module, false)
 	return &Engine{
-		module:     module,
-		store:      store,
-		activities: activities,
-		maxSteps:   1000,
-		fast:       fast,
-		traceLevel: TraceAggregate,
-		clock:      systemClock{},
+		module:         module,
+		store:          store,
+		activities:     activities,
+		maxSteps:       1000,
+		fast:           fast,
+		traceLevel:     TraceAggregate,
+		clock:          systemClock{},
+		executionLocks: syncx.NewKeyedLocker(),
 	}
 }
 
