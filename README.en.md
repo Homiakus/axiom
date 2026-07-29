@@ -141,7 +141,7 @@ A failed condition means the rule does not run. A cappuccino cannot be dispensed
 ```go
 definition := model.New("CoffeeMachine").Version("1")
 
-machine := model.State[Machine](definition, "Machine").
+machine := model.Bind[Machine](definition, "Machine").
     Default("CreditKopecks", 0).
     Default("AcceptedKopecks", 0).
     Default("ReturnedKopecks", 0).
@@ -153,10 +153,10 @@ machine := model.State[Machine](definition, "Machine").
     Default("Cups", 50).
     Default("DrinksServed", 0)
 
-moneyInserted := model.Event[MoneyInserted](definition, "MoneyInserted")
-espressoRequested := model.Event[EspressoRequested](definition, "EspressoRequested")
-cappuccinoRequested := model.Event[CappuccinoRequested](definition, "CappuccinoRequested")
-cancelRequested := model.Event[CancelRequested](definition, "CancelRequested")
+moneyInserted := model.EventOf[MoneyInserted](definition)
+espressoRequested := model.EventOf[EspressoRequested](definition)
+cappuccinoRequested := model.EventOf[CappuccinoRequested](definition)
+cancelRequested := model.EventOf[CancelRequested](definition)
 ```
 
 ## Accepting money
@@ -166,43 +166,10 @@ All three counters are written by one transition.
 ```go
 definition.Rule("acceptMoney").
     On(moneyInserted.Trigger()).
-    When(model.GT(
-        moneyInserted.Field("AmountKopecks"),
-        model.Lit(0),
-    )).
-    Set(
-        machine.Field("CreditKopecks"),
-        add(
-            machine.Field("CreditKopecks"),
-            moneyInserted.Field("AmountKopecks"),
-        ),
-    ).
-    Set(
-        machine.Field("AcceptedKopecks"),
-        add(
-            machine.Field("AcceptedKopecks"),
-            moneyInserted.Field("AmountKopecks"),
-        ),
-    ).
-    Set(
-        machine.Field("CashboxKopecks"),
-        add(
-            machine.Field("CashboxKopecks"),
-            moneyInserted.Field("AmountKopecks"),
-        ),
-    )
-```
-
-The example uses small helpers to construct declarative arithmetic expressions:
-
-```go
-func add(left, right model.Expr) model.Expr {
-    return model.Raw(fmt.Sprintf("(%s + %s)", left, right))
-}
-
-func sub(left, right model.Expr) model.Expr {
-    return model.Raw(fmt.Sprintf("(%s - %s)", left, right))
-}
+    When(moneyInserted.Int("AmountKopecks").GT(0)).
+    Set(machine.Int("CreditKopecks"), machine.Int("CreditKopecks").Add(moneyInserted.Int("AmountKopecks"))).
+    Set(machine.Int("AcceptedKopecks"), machine.Int("AcceptedKopecks").Add(moneyInserted.Int("AmountKopecks"))).
+    Set(machine.Int("CashboxKopecks"), machine.Int("CashboxKopecks").Add(moneyInserted.Int("AmountKopecks")))
 ```
 
 ## Hardware-operation policy
@@ -229,37 +196,30 @@ definition.Policy("hardwarePolicy").
 Price and change are computed before hardware access. The handler returns confirmed values, and the rule accounts for those outputs.
 
 ```go
-cappuccinoChange := sub(
-    machine.Field("CreditKopecks"),
-    model.Lit(cappuccinoPriceKopecks),
-)
-
 definition.Activity("DispenseCappuccino").
-    Input("purchaseId", cappuccinoRequested.Field("PurchaseID")).
-    Input("priceKopecks", model.Lit(cappuccinoPriceKopecks)).
-    Input("changeKopecks", cappuccinoChange).
+    Input("purchaseId", cappuccinoRequested.String("PurchaseID")).
+    Input("priceKopecks", cappuccinoPriceKopecks).
+    Input("changeKopecks", machine.Int("CreditKopecks").Sub(cappuccinoPriceKopecks)).
     Output("dispensed", "Bool").
     Output("priceKopecks", "Int").
     Output("changeKopecks", "Int").
     Effect("external").
-    IdempotencyKey(cappuccinoRequested.Field("PurchaseID")).
+    IdempotencyKey(cappuccinoRequested.String("PurchaseID")).
     Policy("hardwarePolicy")
 ```
 
-Registering the handler:
+Registering the handler (uses strongly-typed `ActTyped`):
 
 ```go
-axiom.Act("DispenseCappuccino", func(
+axiom.ActTyped("DispenseCappuccino", func(
     ctx context.Context,
-    input axiom.Input,
-) (axiom.Output, error) {
-    // Real code sends commands to the hardware controller.
-    // It must remember PurchaseID and never dispense a second drink
-    // for an operation that has already completed.
-    return axiom.Output{
-        "dispensed":     true,
-        "priceKopecks":  input["priceKopecks"],
-        "changeKopecks": input["changeKopecks"],
+    input DispenseInput,
+) (DispenseOutput, error) {
+    // Real code sends commands to the hardware controller without map assertions.
+    return DispenseOutput{
+        Dispensed:     true,
+        PriceKopecks:  input.PriceKopecks,
+        ChangeKopecks: input.ChangeKopecks,
     }, nil
 })
 ```
@@ -272,52 +232,25 @@ If the handler fails, the rule must not account for revenue or deduct ingredient
 definition.Rule("sellCappuccino").
     On(cappuccinoRequested.Trigger()).
     When(
-        model.GTE(machine.Field("CreditKopecks"), model.Lit(14000)),
-        model.GTE(machine.Field("WaterML"), model.Lit(60)),
-        model.GTE(machine.Field("BeansG"), model.Lit(10)),
-        model.GTE(machine.Field("MilkML"), model.Lit(120)),
-        model.GTE(machine.Field("Cups"), model.Lit(1)),
+        machine.Int("CreditKopecks").GTE(14000),
+        machine.Int("WaterML").GTE(60),
+        machine.Int("BeansG").GTE(10),
+        machine.Int("MilkML").GTE(120),
+        machine.Int("Cups").GTE(1),
     ).
     Run("DispenseCappuccino").
-    Set(machine.Field("CreditKopecks"), model.Lit(0)).
-    Set(
-        machine.Field("ReturnedKopecks"),
-        add(
-            machine.Field("ReturnedKopecks"),
-            model.Ref("output.changeKopecks"),
-        ),
-    ).
-    Set(
-        machine.Field("RevenueKopecks"),
-        add(
-            machine.Field("RevenueKopecks"),
-            model.Ref("output.priceKopecks"),
-        ),
-    ).
-    Set(
-        machine.Field("CashboxKopecks"),
-        sub(
-            machine.Field("CashboxKopecks"),
-            model.Ref("output.changeKopecks"),
-        ),
-    ).
-    Set(machine.Field("WaterML"), sub(machine.Field("WaterML"), model.Lit(60))).
-    Set(machine.Field("BeansG"), sub(machine.Field("BeansG"), model.Lit(10))).
-    Set(machine.Field("MilkML"), sub(machine.Field("MilkML"), model.Lit(120))).
-    Set(machine.Field("Cups"), sub(machine.Field("Cups"), model.Lit(1))).
-    Set(
-        machine.Field("DrinksServed"),
-        add(machine.Field("DrinksServed"), model.Lit(1)),
-    ).
-    Set(machine.Field("LastDrink"), model.Lit("cappuccino")).
-    Set(
-        machine.Field("LastChangeKopecks"),
-        model.Ref("output.changeKopecks"),
-    ).
-    Set(
-        machine.Field("LastDispensed"),
-        model.Ref("output.dispensed"),
-    )
+    Set(machine.Int("CreditKopecks"), 0).
+    Set(machine.Int("ReturnedKopecks"), machine.Int("ReturnedKopecks").Add(model.OutputInt("changeKopecks"))).
+    Set(machine.Int("RevenueKopecks"), machine.Int("RevenueKopecks").Add(model.OutputInt("priceKopecks"))).
+    Set(machine.Int("CashboxKopecks"), machine.Int("CashboxKopecks").Sub(model.OutputInt("changeKopecks"))).
+    Set(machine.Int("WaterML"), machine.Int("WaterML").Sub(60)).
+    Set(machine.Int("BeansG"), machine.Int("BeansG").Sub(10)).
+    Set(machine.Int("MilkML"), machine.Int("MilkML").Sub(120)).
+    Set(machine.Int("Cups"), machine.Int("Cups").Sub(1)).
+    Set(machine.Int("DrinksServed"), machine.Int("DrinksServed").Add(1)).
+    Set(machine.String("LastDrink"), "cappuccino").
+    Set(machine.Int("LastChangeKopecks"), model.OutputInt("changeKopecks")).
+    Set(machine.Bool("LastDispensed"), model.OutputBool("dispensed"))
 ```
 
 ## Monetary invariants
@@ -326,21 +259,12 @@ Two equations are checked after each transition.
 
 ### Conservation of money
 
-```text
-accepted = returned + revenue + current credit
-```
-
 ```go
 definition.Claim(
     "moneyIsConserved",
-    model.Eq(
-        machine.Field("AcceptedKopecks"),
-        add(
-            machine.Field("ReturnedKopecks"),
-            add(
-                machine.Field("RevenueKopecks"),
-                machine.Field("CreditKopecks"),
-            ),
+    machine.Int("AcceptedKopecks").EQ(
+        machine.Int("ReturnedKopecks").Add(
+            machine.Int("RevenueKopecks").Add(machine.Int("CreditKopecks")),
         ),
     ),
 )
@@ -352,6 +276,15 @@ For a machine with no opening change float:
 
 ```text
 cashbox = revenue + current credit
+```
+
+```go
+definition.Claim(
+    "cashboxMatchesAccounting",
+    machine.Int("CashboxKopecks").EQ(
+        machine.Int("RevenueKopecks").Add(machine.Int("CreditKopecks")),
+    ),
+)
 ```
 
 With an opening float, add `OpeningFloatKopecks` to the right-hand side. A separate claim prevents negative money and stock values.
@@ -400,9 +333,9 @@ defer store.Close()
 
 engine, err := plan.New(
     axiom.WithStore(store),
-    axiom.Act("DispenseEspresso", dispenseEspresso),
-    axiom.Act("DispenseCappuccino", dispenseCappuccino),
-    axiom.Act("ReturnMoney", returnMoney),
+    axiom.ActTyped("DispenseEspresso", dispenseEspresso),
+    axiom.ActTyped("DispenseCappuccino", dispenseCappuccino),
+    axiom.ActTyped("ReturnMoney", returnMoney),
 )
 if err != nil {
     return err

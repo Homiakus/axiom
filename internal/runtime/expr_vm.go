@@ -7,9 +7,144 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/Homiakus/axiom/internal/lang"
 )
+
+var evalStackPool = sync.Pool{
+	New: func() any {
+		s := make([]any, 0, 16)
+		return &s
+	},
+}
+
+func (program *exprProgram) eval(env evalEnv) (any, error) {
+	if program == nil || len(program.instrs) == 0 {
+		return nil, nil
+	}
+	stackPtr := evalStackPool.Get().(*[]any)
+	stack := (*stackPtr)[:0]
+	defer func() {
+		for i := range stack {
+			stack[i] = nil
+		}
+		*stackPtr = stack[:0]
+		evalStackPool.Put(stackPtr)
+	}()
+
+	for _, in := range program.instrs {
+		switch in.op {
+		case opLoadConst:
+			stack = append(stack, in.value)
+		case opLoadField:
+			stack = append(stack, loadField(env, int(in.a), in.ref, in.s))
+		case opLoadAtom:
+			stack = append(stack, loadAtom(env, int(in.a), in.ref))
+		case opLoadSignal:
+			stack = append(stack, resolvePath(env.signal, in.s))
+		case opLoadOutput:
+			stack = append(stack, resolvePath(env.output, in.s))
+		case opLoadRef:
+			stack = append(stack, resolveRef(in.ref, env))
+		case opExists:
+			var val any
+			if len(stack) > 0 {
+				val = stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+			}
+			stack = append(stack, exists(val))
+		case opMissing:
+			var val any
+			if len(stack) > 0 {
+				val = stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+			}
+			stack = append(stack, !exists(val))
+		case opNot:
+			var val any
+			if len(stack) > 0 {
+				val = stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+			}
+			stack = append(stack, !truthy(val))
+		case opChangedField:
+			stack = append(stack, env.dirty.Fields != nil && env.dirty.Fields.has(int(in.a)))
+		case opChangedRef:
+			_, ok := env.changed[in.ref]
+			stack = append(stack, ok)
+		case opEq, opNe, opGt, opGe, opLt, opLe, opIn, opAnd, opOr, opImplies, opAdd, opSub:
+			var right, left any
+			if len(stack) >= 2 {
+				right = stack[len(stack)-1]
+				left = stack[len(stack)-2]
+				stack = stack[:len(stack)-2]
+			} else if len(stack) == 1 {
+				right = stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+			}
+			value, err := evalVMBinary(in.op, left, right)
+			if err != nil {
+				return nil, err
+			}
+			stack = append(stack, value)
+		case opList:
+			n := in.n
+			var values []any
+			if n > 0 && len(stack) >= n {
+				values = append([]any(nil), stack[len(stack)-n:]...)
+				stack = stack[:len(stack)-n]
+			}
+			stack = append(stack, values)
+		case opMap:
+			n := in.n
+			var values []any
+			if n > 0 && len(stack) >= n {
+				values = stack[len(stack)-n:]
+				stack = stack[:len(stack)-n]
+			}
+			out := make(map[string]any, n/2)
+			for i := 0; i+1 < len(values); i += 2 {
+				out[fmt.Sprint(values[i])] = values[i+1]
+			}
+			stack = append(stack, out)
+		case opHash:
+			n := in.n
+			var values []any
+			if n > 0 && len(stack) >= n {
+				values = stack[len(stack)-n:]
+				stack = stack[:len(stack)-n]
+			}
+			data, err := json.Marshal(values)
+			if err != nil {
+				return nil, err
+			}
+			sum := sha256.Sum256(data)
+			stack = append(stack, hex.EncodeToString(sum[:]))
+		case opPureCall:
+			n := in.n
+			var values []any
+			if n > 0 && len(stack) >= n {
+				values = stack[len(stack)-n:]
+				stack = stack[:len(stack)-n]
+			}
+			switch in.s {
+			case "fixed", "exponential":
+				parts := make([]string, 0, len(values))
+				for _, value := range values {
+					parts = append(parts, fmt.Sprint(value))
+				}
+				stack = append(stack, in.s+"("+strings.Join(parts, ",")+")")
+			default:
+				return nil, fmt.Errorf("unsupported pure call %s", in.s)
+			}
+		}
+	}
+	if len(stack) == 0 {
+		return nil, nil
+	}
+	return stack[len(stack)-1], nil
+}
 
 type opCode uint8
 
@@ -254,97 +389,6 @@ func (p *fastPlan) compileExpr(expr *lang.Expr) *exprProgram {
 		return nil
 	}
 	return p.compiler.compile(expr)
-}
-
-func (program *exprProgram) eval(env evalEnv) (any, error) {
-	stack := make([]any, 0, len(program.instrs))
-	pop := func() any {
-		if len(stack) == 0 {
-			return nil
-		}
-		value := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		return value
-	}
-	popN := func(n int) []any {
-		if n <= 0 {
-			return nil
-		}
-		if n > len(stack) {
-			n = len(stack)
-		}
-		values := append([]any{}, stack[len(stack)-n:]...)
-		stack = stack[:len(stack)-n]
-		return values
-	}
-	for _, in := range program.instrs {
-		switch in.op {
-		case opLoadConst:
-			stack = append(stack, cloneAny(in.value))
-		case opLoadField:
-			stack = append(stack, loadField(env, int(in.a), in.ref, in.s))
-		case opLoadAtom:
-			stack = append(stack, loadAtom(env, int(in.a), in.ref))
-		case opLoadSignal:
-			stack = append(stack, resolvePath(env.signal, in.s))
-		case opLoadOutput:
-			stack = append(stack, resolvePath(env.output, in.s))
-		case opLoadRef:
-			stack = append(stack, resolveRef(in.ref, env))
-		case opExists:
-			stack = append(stack, exists(pop()))
-		case opMissing:
-			stack = append(stack, !exists(pop()))
-		case opNot:
-			stack = append(stack, !truthy(pop()))
-		case opChangedField:
-			stack = append(stack, env.dirty.Fields != nil && env.dirty.Fields.has(int(in.a)))
-		case opChangedRef:
-			_, ok := env.changed[in.ref]
-			stack = append(stack, ok)
-		case opEq, opNe, opGt, opGe, opLt, opLe, opIn, opAnd, opOr, opImplies, opAdd, opSub:
-			right := pop()
-			left := pop()
-			value, err := evalVMBinary(in.op, left, right)
-			if err != nil {
-				return nil, err
-			}
-			stack = append(stack, value)
-		case opList:
-			stack = append(stack, popN(in.n))
-		case opMap:
-			values := popN(in.n)
-			out := map[string]any{}
-			for i := 0; i+1 < len(values); i += 2 {
-				out[fmt.Sprint(values[i])] = values[i+1]
-			}
-			stack = append(stack, out)
-		case opHash:
-			values := popN(in.n)
-			data, err := json.Marshal(values)
-			if err != nil {
-				return nil, err
-			}
-			sum := sha256.Sum256(data)
-			stack = append(stack, hex.EncodeToString(sum[:]))
-		case opPureCall:
-			values := popN(in.n)
-			switch in.s {
-			case "fixed", "exponential":
-				parts := make([]string, 0, len(values))
-				for _, value := range values {
-					parts = append(parts, fmt.Sprint(value))
-				}
-				stack = append(stack, in.s+"("+strings.Join(parts, ",")+")")
-			default:
-				return nil, fmt.Errorf("unsupported pure call %s", in.s)
-			}
-		}
-	}
-	if len(stack) == 0 {
-		return nil, nil
-	}
-	return stack[len(stack)-1], nil
 }
 
 func loadField(env evalEnv, fieldID int, ref string, tail string) any {

@@ -216,10 +216,10 @@ func resolveRef(ref string, env evalEnv) any {
 		return nil
 	}
 	if strings.HasPrefix(ref, "signal.") {
-		return resolvePath(env.signal, strings.TrimPrefix(ref, "signal."))
+		return resolvePath(env.signal, ref[7:])
 	}
 	if strings.HasPrefix(ref, "output.") {
-		return resolvePath(env.output, strings.TrimPrefix(ref, "output."))
+		return resolvePath(env.output, ref[7:])
 	}
 	if strings.HasPrefix(ref, "runtime.") {
 		return nil
@@ -233,13 +233,15 @@ func resolveRef(ref string, env evalEnv) any {
 	if fact, ok := env.execution.Facts[ref]; ok {
 		return fact.True
 	}
-	parts := strings.Split(ref, ".")
-	if len(parts) >= 2 {
-		if fact, ok := env.execution.Facts[parts[0]]; ok {
-			return resolvePath(fact.Exposed, strings.Join(parts[1:], "."))
+	dot := strings.IndexByte(ref, '.')
+	if dot >= 0 {
+		rootName := ref[:dot]
+		fieldPath := ref[dot+1:]
+		if fact, ok := env.execution.Facts[rootName]; ok {
+			return resolvePath(fact.Exposed, fieldPath)
 		}
-		if ctx, ok := env.execution.Context[parts[0]]; ok {
-			return resolvePath(ctx, strings.Join(parts[1:], "."))
+		if ctx, ok := env.execution.Context[rootName]; ok {
+			return resolvePath(ctx, fieldPath)
 		}
 	}
 	return nil
@@ -249,9 +251,17 @@ func resolvePath(root map[string]any, path string) any {
 	if root == nil || path == "" {
 		return nil
 	}
-	parts := strings.Split(path, ".")
 	var current any = root
-	for _, part := range parts {
+	remaining := path
+	for remaining != "" {
+		var part string
+		if idx := strings.IndexByte(remaining, '.'); idx >= 0 {
+			part = remaining[:idx]
+			remaining = remaining[idx+1:]
+		} else {
+			part = remaining
+			remaining = ""
+		}
 		switch value := current.(type) {
 		case map[string]any:
 			current = value[part]

@@ -99,6 +99,27 @@ func (r *Run) Signal(ctx context.Context, name string, payload map[string]any) e
 	return r.engine.RunUntilIdle(ctx, r.id)
 }
 
+// Patch applies field changes to the execution context and drains inline work.
+func (r *Run) Patch(ctx context.Context, patch map[string]any) error {
+	unlock, err := r.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if _, err := r.engine.store.GetExecution(ctx, r.id); err != nil {
+		if !errors.Is(err, ErrExecutionNotFound) {
+			return err
+		}
+		if err := r.engine.Start(ctx, r.id, nil); err != nil {
+			return err
+		}
+	}
+	if err := r.engine.Patch(ctx, r.id, patch); err != nil {
+		return err
+	}
+	return r.engine.RunUntilIdle(ctx, r.id)
+}
+
 // State decodes the execution context into target. If the plan contains
 // one context and target is a struct, that context is decoded directly.
 func (r *Run) State(ctx context.Context, target any) error {

@@ -25,6 +25,19 @@ func Lit(value any) Expr {
 	data, _ := json.Marshal(value)
 	return Raw(string(data))
 }
+
+func Int(v int) Expr        { return Lit(v) }
+func Int64(v int64) Expr    { return Lit(v) }
+func Float(v float64) Expr  { return Lit(v) }
+func String(v string) Expr  { return Lit(v) }
+func Bool(v bool) Expr      { return Lit(v) }
+
+func Add(a, b Expr) Expr    { return binary(a, "+", b) }
+func Sub(a, b Expr) Expr    { return binary(a, "-", b) }
+func Mul(a, b Expr) Expr    { return binary(a, "*", b) }
+func Div(a, b Expr) Expr    { return binary(a, "/", b) }
+func Mod(a, b Expr) Expr    { return binary(a, "%", b) }
+
 func Eq(a, b Expr) Expr                     { return binary(a, "==", b) }
 func Ne(a, b Expr) Expr                     { return binary(a, "!=", b) }
 func GT(a, b Expr) Expr                     { return binary(a, ">", b) }
@@ -194,12 +207,14 @@ func (d *Definition) Activity(name string) *ActivityBuilder {
 	d.activities = append(d.activities, activityDecl{name: name, input: map[string]Expr{}, output: map[string]string{}, effect: "none"})
 	return &ActivityBuilder{definition: d, index: len(d.activities) - 1}
 }
-func (a *ActivityBuilder) Require(values ...Expr) *ActivityBuilder {
-	a.definition.activities[a.index].require = append(a.definition.activities[a.index].require, values...)
+func (a *ActivityBuilder) Require(values ...any) *ActivityBuilder {
+	for _, v := range values {
+		a.definition.activities[a.index].require = append(a.definition.activities[a.index].require, toExpr(v))
+	}
 	return a
 }
-func (a *ActivityBuilder) Input(name string, expression Expr) *ActivityBuilder {
-	a.definition.activities[a.index].input[name] = expression
+func (a *ActivityBuilder) Input(name string, expression any) *ActivityBuilder {
+	a.definition.activities[a.index].input[name] = toExpr(expression)
 	return a
 }
 func (a *ActivityBuilder) Output(name, typ string) *ActivityBuilder {
@@ -214,8 +229,9 @@ func (a *ActivityBuilder) Policy(name string) *ActivityBuilder {
 	a.definition.activities[a.index].policy = name
 	return a
 }
-func (a *ActivityBuilder) IdempotencyKey(value Expr) *ActivityBuilder {
-	a.definition.activities[a.index].idempotency = &value
+func (a *ActivityBuilder) IdempotencyKey(value any) *ActivityBuilder {
+	expr := toExpr(value)
+	a.definition.activities[a.index].idempotency = &expr
 	return a
 }
 
@@ -232,25 +248,35 @@ func (r *RuleBuilder) On(values ...Trigger) *RuleBuilder {
 	r.definition.rules[r.index].triggers = append(r.definition.rules[r.index].triggers, values...)
 	return r
 }
-func (r *RuleBuilder) When(values ...Expr) *RuleBuilder {
-	r.definition.rules[r.index].when = append(r.definition.rules[r.index].when, values...)
+func (r *RuleBuilder) When(values ...any) *RuleBuilder {
+	for _, v := range values {
+		r.definition.rules[r.index].when = append(r.definition.rules[r.index].when, toExpr(v))
+	}
 	return r
 }
-func (r *RuleBuilder) Require(values ...Expr) *RuleBuilder {
-	r.definition.rules[r.index].require = append(r.definition.rules[r.index].require, values...)
+func (r *RuleBuilder) Require(values ...any) *RuleBuilder {
+	for _, v := range values {
+		r.definition.rules[r.index].require = append(r.definition.rules[r.index].require, toExpr(v))
+	}
 	return r
 }
 func (r *RuleBuilder) Run(activity string) *RuleBuilder {
 	r.definition.rules[r.index].run = activity
 	return r
 }
-func (r *RuleBuilder) Set(target, value Expr) *RuleBuilder {
-	r.definition.rules[r.index].writes[target.text] = value
+func (r *RuleBuilder) Set(target, value any) *RuleBuilder {
+	targetExpr := toExpr(target)
+	valueExpr := toExpr(value)
+	r.definition.rules[r.index].writes[targetExpr.text] = valueExpr
 	return r
 }
 
-func (d *Definition) Claim(name string, expressions ...Expr) *Definition {
-	d.claims = append(d.claims, claimDecl{name: name, expressions: expressions})
+func (d *Definition) Claim(name string, expressions ...any) *Definition {
+	exprs := make([]Expr, 0, len(expressions))
+	for _, e := range expressions {
+		exprs = append(exprs, toExpr(e))
+	}
+	d.claims = append(d.claims, claimDecl{name: name, expressions: exprs})
 	return d
 }
 func (d *Definition) Query(name string, values map[string]Expr) *Definition {

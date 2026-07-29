@@ -29,9 +29,12 @@ package axiom
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"sort"
+	"strings"
 
 	"github.com/Homiakus/axiom/internal/compiler"
 	"github.com/Homiakus/axiom/internal/diag"
@@ -203,6 +206,70 @@ func Act(name string, fn Activity) Option {
 		c.activities[name] = fn
 		return nil
 	}
+}
+
+// ActTyped registers an activity with typed Go struct inputs and outputs.
+//
+//	axiom.ActTyped("SendWelcomeEmail", func(ctx context.Context, in WelcomeInput) (WelcomeOutput, error) {
+//	    return WelcomeOutput{Sent: true}, nil
+//	})
+func ActTyped[In any, Out any](name string, fn func(ctx context.Context, input In) (Out, error)) Option {
+	return Act(name, func(ctx context.Context, input Input) (Output, error) {
+		data, err := json.Marshal(input)
+		if err != nil {
+			return nil, fmt.Errorf("axiom: marshal activity input for %s: %w", name, err)
+		}
+		var typedIn In
+		if err := json.Unmarshal(data, &typedIn); err != nil {
+			return nil, fmt.Errorf("axiom: decode activity input for %s: %w", name, err)
+		}
+		typedOut, err := fn(ctx, typedIn)
+		if err != nil {
+			return nil, err
+		}
+		return structToOutput(typedOut), nil
+	})
+}
+
+func structToOutput(v any) Output {
+	val := reflect.ValueOf(v)
+	for val.Kind() == reflect.Pointer {
+		val = val.Elem()
+	}
+	if !val.IsValid() {
+		return nil
+	}
+	if val.Kind() != reflect.Struct {
+		if m, ok := v.(Output); ok {
+			return m
+		}
+		if m, ok := v.(map[string]any); ok {
+			return m
+		}
+		return nil
+	}
+	out := Output{}
+	typ := val.Type()
+	for i := 0; i < val.NumField(); i++ {
+		sf := typ.Field(i)
+		if !sf.IsExported() {
+			continue
+		}
+		name := sf.Tag.Get("axiom")
+		if name == "" {
+			name = strings.Split(sf.Tag.Get("json"), ",")[0]
+		}
+		if name == "" {
+			if len(sf.Name) > 0 {
+				name = strings.ToLower(sf.Name[:1]) + sf.Name[1:]
+			}
+		}
+		if name == "-" {
+			continue
+		}
+		out[name] = val.Field(i).Interface()
+	}
+	return out
 }
 
 // Acts registers multiple activities from a registry.

@@ -713,3 +713,39 @@ claim noDoublePayment:
   always:
     Payment.paidCount <= 1
 `
+
+type typedEmailInput struct {
+	UserId string `json:"userId"`
+	Email  string `json:"email"`
+}
+
+type typedEmailOutput struct {
+	Sent bool `json:"sent"`
+}
+
+func TestActTypedAndRunPatch(t *testing.T) {
+	module, err := Compile([]byte(welcomeRuntimeSource))
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	calls := 0
+	engine, err := New(module, ActTyped("SendWelcomeEmail", func(ctx context.Context, in typedEmailInput) (typedEmailOutput, error) {
+		calls++
+		if in.UserId != "u1" || in.Email != "user@example.com" {
+			t.Fatalf("unexpected input: %#v", in)
+		}
+		return typedEmailOutput{Sent: true}, nil
+	}))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	ctx := context.Background()
+	run := engine.Execution("typed-1")
+	if err := run.Patch(ctx, Patch{"User.id": "u1", "User.email": "user@example.com"}); err != nil {
+		t.Fatalf("run.Patch() error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("ActTyped calls = %d, want 1", calls)
+	}
+}
+

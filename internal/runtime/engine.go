@@ -817,31 +817,36 @@ func (e *Engine) setContextValue(execution *Execution, target string, value any)
 }
 
 func setContextValue(execution *Execution, target string, value any) bool {
-	parts := strings.Split(target, ".")
-	if len(parts) < 2 {
+	firstDot := strings.IndexByte(target, '.')
+	if firstDot < 0 {
 		return false
 	}
-	contextName := parts[0]
-	fieldName := parts[1]
+	contextName := target[:firstDot]
+	rest := target[firstDot+1:]
 	if execution.Context[contextName] == nil {
 		execution.Context[contextName] = map[string]any{}
 	}
-	current := execution.Context[contextName][fieldName]
-	if len(parts) == 2 {
-		if reflect.DeepEqual(current, value) {
+	secondDot := strings.IndexByte(rest, '.')
+	if secondDot < 0 {
+		fieldName := rest
+		current := execution.Context[contextName][fieldName]
+		if typedEqual(current, value) {
 			return false
 		}
 		execution.Context[contextName][fieldName] = value
 		return true
 	}
+	fieldName := rest[:secondDot]
+	current := execution.Context[contextName][fieldName]
 	root, ok := current.(map[string]any)
 	if !ok || root == nil {
 		root = map[string]any{}
 	} else {
 		root = cloneAnyMap(root)
 	}
-	setNested(root, parts[2:], value)
-	if reflect.DeepEqual(current, root) {
+	parts := strings.Split(rest[secondDot+1:], ".")
+	setNested(root, parts, value)
+	if typedEqual(current, root) {
 		return false
 	}
 	execution.Context[contextName][fieldName] = root
@@ -905,11 +910,15 @@ func setNested(root map[string]any, path []string, value any) {
 }
 
 func contextFieldName(ref string) string {
-	parts := strings.Split(ref, ".")
-	if len(parts) < 2 {
+	first := strings.IndexByte(ref, '.')
+	if first < 0 {
 		return ref
 	}
-	return parts[0] + "." + parts[1]
+	second := strings.IndexByte(ref[first+1:], '.')
+	if second < 0 {
+		return ref
+	}
+	return ref[:first+1+second]
 }
 
 func changedSet(changed []string) map[string]struct{} {

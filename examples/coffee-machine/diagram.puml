@@ -1,0 +1,14 @@
+@startuml
+skinparam state {
+  StartColor #2C3E50
+  EndColor #2C3E50
+  BackgroundColor #ECF0F1
+  BorderColor #2980B9
+}
+
+[MoneyInserted] --> [acceptMoney] : MoneyInserted
+[CancelRequested] --> [cancelPurchase] : CancelRequested\n[runs ReturnMoney]
+[CappuccinoRequested] --> [sellCappuccino] : CappuccinoRequested\n[runs DispenseCappuccino]
+[EspressoRequested] --> [sellEspresso] : EspressoRequested\n[runs DispenseEspresso]
+
+@enduml

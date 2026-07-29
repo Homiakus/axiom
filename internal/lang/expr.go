@@ -292,6 +292,20 @@ func (p *exprParser) parsePrimary() (*Expr, error) {
 	}
 	tok := p.advance()
 	switch tok.kind {
+	case "-":
+		expr, err := p.parsePrimary()
+		if err != nil {
+			return nil, err
+		}
+		if expr.Kind == ExprLiteral {
+			switch v := expr.Value.(type) {
+			case int:
+				return &Expr{Kind: ExprLiteral, Value: -v}, nil
+			case float64:
+				return &Expr{Kind: ExprLiteral, Value: -v}, nil
+			}
+		}
+		return &Expr{Kind: ExprUnary, Op: "-", Left: expr}, nil
 	case "string":
 		value, err := strconv.Unquote(tok.value)
 		if err != nil {

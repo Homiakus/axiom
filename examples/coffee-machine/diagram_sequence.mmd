@@ -1,0 +1,25 @@
+sequenceDiagram
+  autonumber
+  actor Client
+  participant Engine
+  participant State
+  participant Activity
+
+  Client->>Engine: Signal MoneyInserted
+  Engine->>State: Rule acceptMoney applied writes
+  Client->>Engine: Signal CappuccinoRequested
+  Engine->>Activity: Schedule sellCappuccino
+  Activity-->>Engine: Output from sellCappuccino
+  Engine->>State: Rule sellCappuccino applied writes
+  Client->>Engine: Signal MoneyInserted
+  Engine->>State: Rule acceptMoney applied writes
+  Client->>Engine: Signal EspressoRequested
+  Engine->>Activity: Schedule sellEspresso
+  Activity-->>Engine: Output from sellEspresso
+  Engine->>State: Rule sellEspresso applied writes
+  Client->>Engine: Signal MoneyInserted
+  Engine->>State: Rule acceptMoney applied writes
+  Client->>Engine: Signal CancelRequested
+  Engine->>Activity: Schedule cancelPurchase
+  Activity-->>Engine: Output from cancelPurchase
+  Engine->>State: Rule cancelPurchase applied writes
