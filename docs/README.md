@@ -1,12 +1,40 @@
 # Документация Axiom
 
-## Основные документы
+Документация разделена по задачам, чтобы корневой README оставался кратким и пригодным для первого знакомства.
 
-- [README.md](../README.md) — обзор проекта, быстрый старт, полное API, архитектура, коды ошибок
-- [axiom-file-specification.md](axiom-file-specification.md) — полная спецификация `.axm` DSL: лексика, выражения, декларации (domain, signal, context, computed, fact, policy, activity, rule, claim, query), IR и валидация
-- [axiom-crfg.md](axiom-crfg.md) — контекстно-реактивная модель исполнения (CRFG): сущности, runtime pipeline, execution lifecycle, история и replay, индексы, fixpoint, timers, policies, claims, explainability
-- [axiomgen.md](axiomgen.md) — кодогенератор axiomgen: интерактивный TUI, CLI-флаги, типизированная обвязка, умный merge при изменении `.axm`, diff-отчёт
+## Начало работы
 
-## Проектные документы
+- [Обзор и быстрый старт](../README.md)
+- [Локальная разработка](../DEVELOPMENT.md)
+- [Правила внесения изменений](../CONTRIBUTING.md)
+- [Политика безопасности](../SECURITY.md)
 
-- [ТЗ на улучшение.md](ТЗ%20на%20улучшение.md) — техническое задание: целевая архитектура (ID-based state, bitset operations, expression VM), приоритеты P0/P1/P2
+## Архитектура и runtime
+
+- [Архитектура](../ARCHITECTURE.md)
+- [Runtime-семантика и текущие ограничения](runtime-semantics.md)
+- [Концептуальная модель CRFG](axiom-crfg.md)
+- [Go-first architecture](go-first-architecture.md)
+
+## Языки и инструменты
+
+- [Спецификация AXM](axiom-file-specification.md)
+- [Кодогенератор axiomgen](axiomgen.md)
+- [Примеры AXM](../examples/axiom-files/README.md)
+- [Примеры TOML](../examples/table/)
+- [Примеры TRIZ normalization](../examples/triz/)
+
+## Производительность
+
+- [Актуальный benchmark baseline](../benchmarks/latest.md)
+
+## Статус документов
+
+| Документ | Статус |
+|---|---|
+| `README.md` | Подтверждён public API и CI commands |
+| `ARCHITECTURE.md` | Подтверждён текущим code path; ограничения указаны явно |
+| `DEVELOPMENT.md` | Основан на `.github/workflows/test.yml` |
+| `axiom-file-specification.md` | Описывает реализованное подмножество parser/compiler/runtime |
+| `axiomgen.md` | Описывает текущий `cmd/axiomgen` |
+| `go-first-architecture.md` | Краткий обзор; требует расширения либо объединения с `ARCHITECTURE.md` |

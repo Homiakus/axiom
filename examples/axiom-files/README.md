@@ -1,28 +1,44 @@
-# Axiom Files — примеры .axm DSL
+# Примеры AXM
 
-Здесь лежат `.axm` файлы, которые используются как документационные примеры и
-как тестовые входные данные для компилятора и runtime библиотеки.
+Каталог содержит `.axm` models для документации, compiler/runtime tests и ручных экспериментов.
 
 ## Файлы
 
-| Файл | Domain | Описание | Что демонстрирует |
-|------|--------|---------|-------------------|
-| `welcome.axm` | Welcome | Минимальный welcome-flow | signal, context, computed, fact, policy, activity, rule, claim. Две rules: captureRegistration (on UserRegistered) и sendWelcomeEmail (on changed(User.email) с require RegisteredUser) |
-| `checkout.axm` | Checkout | Полноценный checkout-flow | Множественные activity (CheckInventory, CalculateRisk, ChargeCard), факты CanCheckout/CanPayByCard, claims paymentHasId/noDoublePayment, policies externalCall/paymentCritical |
-| `claims.axm` | Claims | Проверка инвариантов | Различные виды claim-условий: always, implies, exists, сравнения |
-| `reminder.axm` | Reminder | Сценарий напоминания | Timer-based rule: `on timer(24h after Order.createdAt)`, повторная отправка с проверкой состояния |
+| Файл | Domain | Назначение |
+|---|---|---|
+| `welcome.axm` | `Welcome` | signal, context, computed, fact, policy, activity, rules и claim |
+| `checkout.axm` | `Checkout` | несколько activities, facts, claims и policies |
+| `claims.axm` | `Claims` | инварианты и expression forms |
+| `reminder.axm` | `Reminder` | timer trigger и повторный сценарий на уровне модели |
 
-## Использование в тестах
+## Проверка compilation
 
-Файлы автоматически проверяются тестом `pkg/axiom/example_files_test.go` —
-каждый `.axm` компилируется, чтобы примеры не расходились с реальным компилятором.
-
-## Генерация Go-обвязки
-
-Для любого из этих файлов можно сгенерировать типизированную Go-обвязку:
+Из корня репозитория:
 
 ```bash
-go run ./tools/axiomgen --file examples/axiom-files/welcome.axm
+go test ./...
 ```
 
-Подробнее — в [документации axiomgen](../../docs/axiomgen.md).
+Каждый `.axm` файл в каталоге компилируется тестом `examples/axiom-files/examples_test.go`.
+
+## Генерация Go activity boundary
+
+```bash
+go run ./cmd/axiomgen \
+  --file examples/axiom-files/welcome.axm \
+  --out ./generated \
+  --package generated
+```
+
+Generator не имеет интерактивного режима. Он печатает JSON result и может создать или обновить files в `--out`.
+
+Подробнее: [документация axiomgen](../../docs/axiomgen.md).
+
+## Правило изменения examples
+
+При изменении AXM syntax или runtime semantics:
+
+1. обновите соответствующий example;
+2. добавьте или обновите test, который действительно читает этот file;
+3. выполните `go test ./...`;
+4. обновите `docs/axiom-file-specification.md` только после подтверждения parser/compiler/runtime support.

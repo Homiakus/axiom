@@ -42,6 +42,20 @@ jobs:
           grep -F 'кредит:     0,00 ₽' test-artifacts/coffee-machine.log
           grep -F 'напитков:   2' test-artifacts/coffee-machine.log
 
+      - name: Verify documented axiomgen command
+        shell: bash
+        run: |
+          set -euo pipefail
+          generated="$(mktemp -d)"
+          trap 'rm -rf "$generated"' EXIT
+          go run ./cmd/axiomgen \
+            --file examples/axiom-files/welcome.axm \
+            --out "$generated" \
+            --package generated \
+            > test-artifacts/axiomgen-result.json
+          test -s test-artifacts/axiomgen-result.json
+          test -n "$(find "$generated" -maxdepth 1 -type f -print -quit)"
+
       - name: Upload test diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
