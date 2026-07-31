@@ -9,6 +9,25 @@ import (
 	"github.com/Homiakus/axiom/internal/lang"
 )
 
+type durableActivityFailure struct {
+	cause error
+}
+
+func (e durableActivityFailure) Error() string {
+	return "activity execution failed"
+}
+
+func (e durableActivityFailure) Unwrap() error {
+	return e.cause
+}
+
+func redactActivityFailure(err error) error {
+	if err == nil {
+		return nil
+	}
+	return durableActivityFailure{cause: err}
+}
+
 // RunUntilIdleWithPolicies drains activity tasks while enforcing the retry and
 // timeout values declared by the activity policy.
 func (e *Engine) RunUntilIdleWithPolicies(ctx context.Context, executionID string) error {
@@ -51,9 +70,10 @@ func (e *Engine) runUntilIdleWithPolicies(ctx context.Context, executionID strin
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if runErr != nil && task.Attempt < task.MaxAttempts {
+		durableErr := redactActivityFailure(runErr)
+		if durableErr != nil && task.Attempt < task.MaxAttempts {
 			if err := e.withStoreTransaction(ctx, func(working *Engine) error {
-				return working.scheduleActivityRetry(ctx, task, runErr)
+				return working.scheduleActivityRetry(ctx, task, durableErr)
 			}); err != nil {
 				return err
 			}
@@ -61,7 +81,7 @@ func (e *Engine) runUntilIdleWithPolicies(ctx context.Context, executionID strin
 		}
 
 		if err := e.withStoreTransaction(ctx, func(working *Engine) error {
-			return working.completeActivity(ctx, executionID, task, result, runErr)
+			return working.completeActivity(ctx, executionID, task, result, durableErr)
 		}); err != nil {
 			return err
 		}
@@ -113,11 +133,11 @@ func (e *Engine) scheduleActivityRetry(ctx context.Context, task *ActivityTask, 
 		return err
 	}
 	return e.store.AppendHistory(ctx, task.ExecutionID, "ActivityRetryScheduled", map[string]any{
-		"activity":   task.ActivityName,
-		"rule":       task.RuleName,
-		"task":       task.ID,
-		"attempt":    task.Attempt,
+		"activity":    task.ActivityName,
+		"rule":        task.RuleName,
+		"task":        task.ID,
+		"attempt":     task.Attempt,
 		"maxAttempts": task.MaxAttempts,
-		"error":      runErr.Error(),
+		"error":       runErr.Error(),
 	})
 }
