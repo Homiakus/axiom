@@ -60,7 +60,7 @@ func (e *Engine) StartWorker(ctx context.Context, opts WorkerOptions) error {
 							return
 						}
 					}
-					if err := e.RunUntilIdle(workerCtx, opts.ExecutionID); err != nil {
+					if err := e.runUntilIdleWithPolicies(workerCtx, opts.ExecutionID); err != nil {
 						reportError(err)
 						return
 					}
