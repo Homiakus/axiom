@@ -1,5 +1,7 @@
 package runtime
 
+import "reflect"
+
 // CloneContext returns a deep copy of a context map (ContextName -> FieldName -> Value).
 func CloneContext(in map[string]map[string]any) map[string]map[string]any {
 	if in == nil {
@@ -58,19 +60,72 @@ func CloneAnyMap(in map[string]any) map[string]any {
 	return out
 }
 
-// CloneAny returns a deep copy of an arbitrary value, handling nested maps and slices.
+// CloneAny returns an isolated copy of maps, slices and arrays, including
+// named and typed collections stored behind interface values. Pointer values
+// are intentionally treated as opaque application objects.
 func CloneAny(value any) any {
-	switch v := value.(type) {
-	case map[string]any:
-		return CloneAnyMap(v)
-	case []any:
-		out := make([]any, len(v))
-		for i, item := range v {
-			out[i] = CloneAny(item)
+	cloned := cloneCollection(reflect.ValueOf(value))
+	if !cloned.IsValid() {
+		return nil
+	}
+	return cloned.Interface()
+}
+
+func cloneCollection(value reflect.Value) reflect.Value {
+	if !value.IsValid() {
+		return value
+	}
+	switch value.Kind() {
+	case reflect.Interface:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		cloned := cloneCollection(value.Elem())
+		out := reflect.New(value.Type()).Elem()
+		out.Set(cloned)
+		return out
+	case reflect.Map:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		out := reflect.MakeMapWithSize(value.Type(), value.Len())
+		iter := value.MapRange()
+		for iter.Next() {
+			cloned := cloneCollection(iter.Value())
+			if cloned.Type().AssignableTo(value.Type().Elem()) || value.Type().Elem().Kind() == reflect.Interface {
+				out.SetMapIndex(iter.Key(), cloned)
+			} else {
+				out.SetMapIndex(iter.Key(), iter.Value())
+			}
+		}
+		return out
+	case reflect.Slice:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		out := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
+		for i := 0; i < value.Len(); i++ {
+			cloned := cloneCollection(value.Index(i))
+			if cloned.Type().AssignableTo(out.Index(i).Type()) {
+				out.Index(i).Set(cloned)
+			} else {
+				out.Index(i).Set(value.Index(i))
+			}
+		}
+		return out
+	case reflect.Array:
+		out := reflect.New(value.Type()).Elem()
+		for i := 0; i < value.Len(); i++ {
+			cloned := cloneCollection(value.Index(i))
+			if cloned.Type().AssignableTo(out.Index(i).Type()) {
+				out.Index(i).Set(cloned)
+			} else {
+				out.Index(i).Set(value.Index(i))
+			}
 		}
 		return out
 	default:
-		return v
+		return value
 	}
 }
 
