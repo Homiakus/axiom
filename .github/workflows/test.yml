@@ -70,6 +70,15 @@ jobs:
       - name: Vet all packages
         run: go vet ./...
 
+      - name: Scan dependencies and reachable code
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      - name: Fuzz parser smoke test
+        run: go test ./internal/lang -run=^$ -fuzz=^FuzzParse$ -fuzztime=5s
+
+      - name: Fuzz TRIZ normalizer smoke test
+        run: go test ./internal/triz -run=^$ -fuzz=^FuzzNormalize$ -fuzztime=5s
+
       - name: Test external consumer
         shell: bash
         run: |
