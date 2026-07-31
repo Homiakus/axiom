@@ -105,5 +105,5 @@ func (e *Engine) Replay(ctx context.Context, executionID string) (*Execution, er
 	if err != nil {
 		return nil, err
 	}
-	return ReplayFromHistory(e.module, history)
+	return ReplayFromHistoryContext(ctx, e.module, history)
 }
