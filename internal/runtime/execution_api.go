@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // EventNamer overrides the signal name derived from a Go event type.
@@ -75,7 +74,7 @@ func (r *Run) Dispatch(ctx context.Context, event any) error {
 	if err := r.engine.Signal(ctx, r.id, name, payload); err != nil {
 		return err
 	}
-	return r.engine.RunUntilIdle(ctx, r.id)
+	return r.engine.runUntilIdleWithPolicies(ctx, r.id)
 }
 
 // Signal dispatches an explicitly named signal and drains inline work.
@@ -96,7 +95,7 @@ func (r *Run) Signal(ctx context.Context, name string, payload map[string]any) e
 	if err := r.engine.Signal(ctx, r.id, name, payload); err != nil {
 		return err
 	}
-	return r.engine.RunUntilIdle(ctx, r.id)
+	return r.engine.runUntilIdleWithPolicies(ctx, r.id)
 }
 
 // Patch applies field changes to the execution context and drains inline work.
@@ -117,7 +116,7 @@ func (r *Run) Patch(ctx context.Context, patch map[string]any) error {
 	if err := r.engine.Patch(ctx, r.id, patch); err != nil {
 		return err
 	}
-	return r.engine.RunUntilIdle(ctx, r.id)
+	return r.engine.runUntilIdleWithPolicies(ctx, r.id)
 }
 
 // State decodes the execution context into target. If the plan contains
@@ -233,7 +232,7 @@ func (r *Run) Cancel(ctx context.Context) error {
 			return err
 		}
 		execution.Status = StatusCanceled
-		execution.UpdatedAt = time.Now().UTC()
+		execution.UpdatedAt = working.now()
 		if err := working.store.AppendHistory(ctx, r.id, "ExecutionCanceled", nil); err != nil {
 			return err
 		}
