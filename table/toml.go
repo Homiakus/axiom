@@ -2,6 +2,7 @@
 package table
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -87,7 +88,8 @@ type document struct {
 
 func (s Source) CompilePlan() (*axiom.Plan, error) {
 	var document document
-	if err := toml.Unmarshal(s.Data, &document); err != nil {
+	decoder := toml.NewDecoder(bytes.NewReader(s.Data)).DisallowUnknownFields()
+	if err := decoder.Decode(&document); err != nil {
 		return nil, fmt.Errorf("table: parse TOML: %w", err)
 	}
 	source, err := render(document)

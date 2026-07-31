@@ -66,6 +66,14 @@ func (e Errors) Error() string {
 	return strings.Join(parts, "\n")
 }
 
+func (e Errors) Unwrap() []error {
+	out := make([]error, 0, len(e))
+	for i := range e {
+		out = append(out, e[i])
+	}
+	return out
+}
+
 func (e Errors) As(target any) bool {
 	if len(e) == 0 {
 		return false

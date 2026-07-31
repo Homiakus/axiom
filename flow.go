@@ -93,9 +93,21 @@ type FlowHistoryEntry struct {
 	CreatedAt time.Time
 }
 
+// FlowStore is the compatibility storage contract for typed Go flows.
+// Stores that also implement IncrementalFlowStore avoid loading and rewriting
+// the complete history on every dispatch.
 type FlowStore interface {
 	Load(ctx context.Context, flow, id string) (state []byte, history []FlowHistoryEntry, found bool, err error)
 	Save(ctx context.Context, flow, id string, state []byte, history []FlowHistoryEntry) error
+}
+
+// IncrementalFlowStore is an optional capability for append-only history.
+// It preserves FlowStore compatibility while reducing a long-lived execution
+// from quadratic history copying to constant work per newly appended entry.
+type IncrementalFlowStore interface {
+	LoadState(ctx context.Context, flow, id string) (state []byte, historyLength int, found bool, err error)
+	SaveStateAndAppend(ctx context.Context, flow, id string, state []byte, entries []FlowHistoryEntry) error
+	LoadHistory(ctx context.Context, flow, id string) ([]FlowHistoryEntry, error)
 }
 
 type memoryFlowRecord struct {
@@ -134,6 +146,34 @@ func (s *MemoryFlowStore) Save(_ context.Context, flow, id string, state []byte,
 	return nil
 }
 
+func (s *MemoryFlowStore) LoadState(_ context.Context, flow, id string) ([]byte, int, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value, ok := s.records[s.key(flow, id)]
+	if !ok {
+		return nil, 0, false, nil
+	}
+	return append([]byte(nil), value.state...), len(value.history), true, nil
+}
+
+func (s *MemoryFlowStore) SaveStateAndAppend(_ context.Context, flow, id string, state []byte, entries []FlowHistoryEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := s.key(flow, id)
+	value := s.records[key]
+	value.state = append(value.state[:0], state...)
+	value.history = append(value.history, entries...)
+	s.records[key] = value
+	return nil
+}
+
+func (s *MemoryFlowStore) LoadHistory(_ context.Context, flow, id string) ([]FlowHistoryEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value := s.records[s.key(flow, id)]
+	return append([]FlowHistoryEntry(nil), value.history...), nil
+}
+
 type flowConfig struct{ store FlowStore }
 type FlowOption func(*flowConfig) error
 
@@ -163,7 +203,24 @@ func OpenFlow[S any](flow *Flow[S], opts ...FlowOption) (*FlowEngine[S], error) 
 			return nil, err
 		}
 	}
-	return &FlowEngine[S]{flow: flow, store: config.store, locks: syncx.NewKeyedLocker()}, nil
+	return &FlowEngine[S]{flow: freezeFlow(flow), store: config.store, locks: syncx.NewKeyedLocker()}, nil
+}
+
+func freezeFlow[S any](flow *Flow[S]) *Flow[S] {
+	frozen := &Flow[S]{
+		name:     flow.name,
+		initial:  flow.initial,
+		handlers: make(map[reflect.Type]flowHandler[S], len(flow.handlers)),
+		effects:  make(map[reflect.Type]flowEffectHandler, len(flow.effects)),
+		claims:   append([]func(S) error(nil), flow.claims...),
+	}
+	for typ, handler := range flow.handlers {
+		frozen.handlers[typ] = handler
+	}
+	for typ, handler := range flow.effects {
+		frozen.effects[typ] = handler
+	}
+	return frozen
 }
 
 type FlowExecution[S any] struct {
@@ -181,11 +238,12 @@ func (e *FlowExecution[S]) Dispatch(ctx context.Context, event any) error {
 	}
 	unlock := e.engine.locks.Lock(e.id)
 	defer unlock()
+
 	handler, normalized, err := e.engine.flow.handlerFor(event)
 	if err != nil {
 		return err
 	}
-	state, history, err := e.load(ctx)
+	state, history, historyLength, err := e.loadForDispatch(ctx)
 	if err != nil {
 		return err
 	}
@@ -198,7 +256,15 @@ func (e *FlowExecution[S]) Dispatch(ctx context.Context, event any) error {
 			return fmt.Errorf("axiom: claim failed: %w", err)
 		}
 	}
-	history = append(history, FlowHistoryEntry{Sequence: len(history) + 1, Type: "EventHandled", Name: typeName(normalized), Data: normalized, CreatedAt: time.Now().UTC()})
+
+	entries := make([]FlowHistoryEntry, 0, 1+len(result.Effects))
+	entries = append(entries, FlowHistoryEntry{
+		Sequence:  historyLength + 1,
+		Type:      "EventHandled",
+		Name:      typeName(normalized),
+		Data:      normalized,
+		CreatedAt: time.Now().UTC(),
+	})
 	for _, effect := range result.Effects {
 		effectHandler, command, err := e.engine.flow.effectFor(effect.Command)
 		if err != nil {
@@ -207,45 +273,108 @@ func (e *FlowExecution[S]) Dispatch(ctx context.Context, event any) error {
 		if err := effectHandler(ctx, command); err != nil {
 			return err
 		}
-		history = append(history, FlowHistoryEntry{Sequence: len(history) + 1, Type: "EffectCompleted", Name: typeName(command), Data: command, CreatedAt: time.Now().UTC()})
+		entries = append(entries, FlowHistoryEntry{
+			Sequence:  historyLength + len(entries) + 1,
+			Type:      "EffectCompleted",
+			Name:      typeName(command),
+			Data:      command,
+			CreatedAt: time.Now().UTC(),
+		})
 	}
+
 	data, err := json.Marshal(result.State)
 	if err != nil {
 		return err
 	}
+	if store, ok := e.engine.store.(IncrementalFlowStore); ok {
+		return store.SaveStateAndAppend(ctx, e.engine.flow.name, e.id, data, entries)
+	}
+	history = append(history, entries...)
 	return e.engine.store.Save(ctx, e.engine.flow.name, e.id, data, history)
 }
 
 func (e *FlowExecution[S]) State(ctx context.Context) (S, error) {
 	unlock := e.engine.locks.Lock(e.id)
 	defer unlock()
-	state, _, err := e.load(ctx)
+	state, err := e.loadState(ctx)
 	return state, err
 }
 
 func (e *FlowExecution[S]) History(ctx context.Context) ([]FlowHistoryEntry, error) {
 	unlock := e.engine.locks.Lock(e.id)
 	defer unlock()
+	if store, ok := e.engine.store.(IncrementalFlowStore); ok {
+		return store.LoadHistory(ctx, e.engine.flow.name, e.id)
+	}
 	_, history, _, err := e.engine.store.Load(ctx, e.engine.flow.name, e.id)
 	return history, err
 }
 
-func (e *FlowExecution[S]) load(ctx context.Context) (S, []FlowHistoryEntry, error) {
+func (e *FlowExecution[S]) loadForDispatch(ctx context.Context) (S, []FlowHistoryEntry, int, error) {
 	var state S
+	if store, ok := e.engine.store.(IncrementalFlowStore); ok {
+		data, historyLength, found, err := store.LoadState(ctx, e.engine.flow.name, e.id)
+		if err != nil {
+			return state, nil, 0, err
+		}
+		if !found {
+			data, err = json.Marshal(e.engine.flow.initial)
+			if err != nil {
+				return state, nil, 0, err
+			}
+		}
+		if err := json.Unmarshal(data, &state); err != nil {
+			return state, nil, 0, err
+		}
+		return state, nil, historyLength, nil
+	}
+
 	data, history, found, err := e.engine.store.Load(ctx, e.engine.flow.name, e.id)
 	if err != nil {
-		return state, nil, err
+		return state, nil, 0, err
 	}
 	if !found {
 		data, err = json.Marshal(e.engine.flow.initial)
 		if err != nil {
-			return state, nil, err
+			return state, nil, 0, err
 		}
 	}
 	if err := json.Unmarshal(data, &state); err != nil {
-		return state, nil, err
+		return state, nil, 0, err
 	}
-	return state, history, nil
+	return state, history, len(history), nil
+}
+
+func (e *FlowExecution[S]) loadState(ctx context.Context) (S, error) {
+	var state S
+	if e == nil || e.engine == nil || e.id == "" {
+		return state, fmt.Errorf("axiom: valid flow execution is required")
+	}
+	if store, ok := e.engine.store.(IncrementalFlowStore); ok {
+		data, _, found, err := store.LoadState(ctx, e.engine.flow.name, e.id)
+		if err != nil {
+			return state, err
+		}
+		if !found {
+			return e.engine.flow.initial, nil
+		}
+		if err := json.Unmarshal(data, &state); err != nil {
+			return state, err
+		}
+		return state, nil
+	}
+
+	data, _, found, err := e.engine.store.Load(ctx, e.engine.flow.name, e.id)
+	if err != nil {
+		return state, err
+	}
+	if !found {
+		return e.engine.flow.initial, nil
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return state, err
+	}
+	return state, nil
 }
 
 func (f *Flow[S]) handlerFor(event any) (flowHandler[S], any, error) {
