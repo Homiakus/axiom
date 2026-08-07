@@ -3,6 +3,7 @@ package axiom
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -28,7 +29,7 @@ context State:
   target: String = ""
 
 policy payment:
-  retry: ` + string(rune('0'+retry)) + `
+  retry: ` + strconv.Itoa(retry) + `
   backoff: 1ms
   timeout: 1s
   concurrency: parallel
@@ -231,8 +232,8 @@ rule caught:
 
 type customCodedFailure struct{}
 
-func (customCodedFailure) Error() string              { return "custom decline" }
-func (customCodedFailure) ActivityErrorCode() string  { return "PaymentDeclined" }
+func (customCodedFailure) Error() string             { return "custom decline" }
+func (customCodedFailure) ActivityErrorCode() string { return "PaymentDeclined" }
 
 func TestPolicyCatchAcceptsCustomActivityErrorCoder(t *testing.T) {
 	module, err := Compile(exactCatchSource(0))
@@ -271,7 +272,7 @@ claim stayUncaught:
   always:
     not State.caught
 
-policy work:
+policy failurePolicy:
   retry: 0
   timeout: 1s
   concurrency: parallel
@@ -283,7 +284,7 @@ activity Work:
   output:
     ok: Bool
   effect: local
-  policy: work
+  policy: failurePolicy
 
 rule work:
   on Start
