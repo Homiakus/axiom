@@ -59,27 +59,22 @@ func itoa(value int) string {
 	return string(digits[index:])
 }
 
-func TestActivityPolicyRetriesHandler(t *testing.T) {
+func TestActivityPolicyWrapperRunsOneHandlerAttemptPerLease(t *testing.T) {
 	module := compilePolicyModule(t, 2, "1s", "parallel")
 	var attempts atomic.Int32
 	engine := NewEngine(module, nil, ActivityRegistry{
 		"Work": func(context.Context, map[string]any) (map[string]any, error) {
-			if attempts.Add(1) < 3 {
-				return nil, errors.New("temporary")
-			}
-			return map[string]any{"ok": true}, nil
+			attempts.Add(1)
+			return nil, errors.New("temporary")
 		},
 	})
 
-	result, err := engine.activities["Work"](context.Background(), nil)
-	if err != nil {
-		t.Fatalf("activity returned error: %v", err)
+	_, err := engine.activities["Work"](context.Background(), nil)
+	if err == nil || err.Error() != "temporary" {
+		t.Fatalf("activity error = %v, want temporary", err)
 	}
-	if attempts.Load() != 3 {
-		t.Fatalf("attempts = %d, want 3", attempts.Load())
-	}
-	if result["ok"] != true {
-		t.Fatalf("result = %#v, want ok=true", result)
+	if attempts.Load() != 1 {
+		t.Fatalf("attempts = %d, want exactly one handler attempt per task lease", attempts.Load())
 	}
 }
 
@@ -141,7 +136,7 @@ func TestActivityPolicyOnceSerializesCalls(t *testing.T) {
 	}
 }
 
-func TestActivityPolicyStopsRetryingWhenParentContextIsCanceled(t *testing.T) {
+func TestActivityPolicyReturnsParentCancellationWithoutRetryLoop(t *testing.T) {
 	module := compilePolicyModule(t, 5, "1s", "parallel")
 	var attempts atomic.Int32
 	ctx, cancel := context.WithCancel(context.Background())
