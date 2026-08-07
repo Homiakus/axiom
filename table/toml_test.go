@@ -3,6 +3,8 @@ package table
 import (
 	"strings"
 	"testing"
+
+	"github.com/Homiakus/axiom"
 )
 
 func TestRenderPolicyUsesCanonicalAXMSyntax(t *testing.T) {
@@ -34,13 +36,7 @@ func TestRenderPolicyUsesCanonicalAXMSyntax(t *testing.T) {
 		t.Fatalf("rendered policy uses non-canonical assignment syntax:\n%s", source)
 	}
 
-	if _, err := CompilePlanFromRenderedForTest(source); err != nil {
+	if _, err := axiom.CompilePlan([]byte(source), axiom.WithSourceName("rendered-table.axm")); err != nil {
 		t.Fatalf("canonical policy source should compile: %v\n%s", err, source)
 	}
-}
-
-// CompilePlanFromRenderedForTest keeps the regression at the public compiler
-// boundary without exposing render as public API.
-func CompilePlanFromRenderedForTest(source string) (any, error) {
-	return Parse([]byte("[workflow]\nname = \"Empty\"\n"))
 }
