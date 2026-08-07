@@ -16,18 +16,37 @@ jobs:
         with:
           go-version: '1.26.x'
 
-      - name: Resolve published pseudo-version checksum
+      - name: Resolve published pseudo-version and IRIS consumer sums
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p artifacts /tmp/axiom-sum-probe
+          version='v0.0.0-20260807173733-983ea659b154'
+          mkdir -p "$GITHUB_WORKSPACE/artifacts" /tmp/axiom-sum-probe /tmp/iris-adgo-consumer
+
           cd /tmp/axiom-sum-probe
           go mod init example.com/axiom-sum-probe
-          go mod download -json github.com/Homiakus/axiom@v0.0.0-20260807173733-983ea659b154 | tee "$GITHUB_WORKSPACE/artifacts/module-download.json"
+          go mod download -json "github.com/Homiakus/axiom@$version" | tee "$GITHUB_WORKSPACE/artifacts/module-download.json"
+
+          cd /tmp/iris-adgo-consumer
+          cat > go.mod <<EOF
+          module github.com/iris-content-factory/iris
+
+          go 1.26.5
+
+          require github.com/Homiakus/axiom $version
+          EOF
+          cat > consumer.go <<'EOF'
+          package consumer
+
+          import _ "github.com/Homiakus/axiom/adgo"
+          EOF
+          go mod tidy
+          cp go.mod "$GITHUB_WORKSPACE/artifacts/iris-go.mod"
+          cp go.sum "$GITHUB_WORKSPACE/artifacts/iris-go.sum"
 
       - name: Upload checksum result
         uses: actions/upload-artifact@v4
         with:
           name: axiom-module-checksum
-          path: artifacts/module-download.json
+          path: artifacts/
           retention-days: 1
