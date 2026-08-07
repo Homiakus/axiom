@@ -1,476 +1,1009 @@
 # ADGO — Adaptive Durable Graph Orchestration
 
-ADGO is a reference implementation of a durable, adaptive graph orchestrator for Axiom.
-It is intended for complex workflows such as IRIS where deterministic control must coexist
-with probabilistic workers (LLMs, search, extraction, agents and other external tools).
+ADGO is Axiom's production durable orchestration engine for long-running graphs, agents, LLM/tool workflows, human approvals and recoverable business processes.
 
-> **Deterministic control plane + adaptive execution plane.**
+> **Deterministic control plane. Adaptive execution plane. Durable state is the source of truth.**
 
-The runtime does not let an LLM mutate execution state or control flow directly. Activities
-return facts and artifacts; compiled rules, gates, policies and validated child plans decide
-what may happen next.
+Activities may be probabilistic. Control flow is not. Workers return facts, artifacts, quality and resource usage; immutable plans, deterministic gates, bounded repair and explicit operator decisions decide what happens next.
+
+ADGO is intentionally **at-least-once** for external effects. It does not claim magical exactly-once network behavior. The engine instead gives every activity a stable idempotency key, durable task state, leases, heartbeats, fencing and reconciliation primitives.
+
+---
+
+## Which API should I use?
+
+| Layer | Use when | Executes activities | Durable workers | Multiple plan versions |
+|---|---|---:|---:|---:|
+| `Runtime` | embedded tests / compact single-process orchestration | inline | no | no |
+| `Engine` | production workflow service for one immutable plan | workers | yes | one plan digest |
+| `Host` | one service hosts many plan versions / child workflows | workers | yes | yes |
+| `OpenProduction` | batteries-included deployment | workers | yes | one plan per returned `Production` |
+
+For new production services, start with `OpenProduction` or `Host`.
+
+`Runtime` remains supported because a deterministic embedded kernel is useful, but production code should normally separate coordinator state transitions from worker execution through `Engine`.
+
+---
 
 ## What is implemented
 
-- immutable, digest-pinned `Plan` compiled from a declarative `Definition`;
-- graph execution instead of a stage cursor;
-- typed node primitives: activity, decision, gate, fork, join, wait, human, subflow and compensation;
-- static validation for missing references/data, unreachable nodes, unsafe external effects,
-  conflicting writers, unbounded cycles, invalid joins and permission errors;
-- dependency-derived ready sets and parallel super-steps;
-- global, per-activity and per-capability concurrency limits plus resource-key exclusion;
-- capability-based provider selection using quality/cost/latency/privacy/risk constraints;
-- durable execution snapshots and a durable event inbox;
-- cross-process compare-and-swap commits for the filesystem store;
-- persisted activity leases and expired-lease recovery;
-- bounded retries with exponential backoff and deterministic jitter;
-- durable provider throttling after rate-limit failures;
-- explicit failure classification: transient, rate-limit, invalid-input, quality,
-  permanent and ambiguous-side-effect;
-- risk-based human approval and persisted human/wait interrupts;
-- durable timers and external events;
-- budget enforcement for cost, tokens, duration, LLM calls, searches and browser fetches;
-- quality vectors and hard quality gates;
-- dependency-directed targeted repair rather than blind pipeline restart;
-- bounded repair loops, gate-to-gate convergence detection and oscillation detection;
-- compensation stack executed in reverse order on failure/cancellation;
-- content-addressed artifact storage using SHA-256;
-- validated adaptive `PlanProposal` -> immutable child `Plan` flow;
-- bounded dynamic child execution/fan-out with `ALL`, `ANY`, `N_OF_M` and `QUORUM` joins;
-- execution explanations (`Explain`) and built-in metrics;
-- immutable snapshot audit replay (`VerifyReplay`).
+### Plan and compiler
 
-## Package layout
+- immutable SHA-256 digest-pinned `Plan`;
+- typed nodes: activity, decision, gate, fork, join, wait, human, subflow, compensation;
+- graph reachability and dependency analysis;
+- Tarjan SCC cycle detection;
+- bounded-cycle enforcement;
+- missing data/reference validation;
+- conflicting parallel writer detection;
+- permission checks;
+- external-effect timeout/idempotency/retry validation;
+- high-risk compensation requirements;
+- deterministic plan identity.
 
-```text
-adgo/
-├── artifact.go          content-addressed artifact storage
-├── compiler.go          plan compiler + static graph validation
-├── explain.go           explainability API
-├── metrics.go           execution observability
-├── registry.go          activities, capabilities, decisions, gates, compensations
-├── repair.go            targeted repair + convergence + adaptive plan validation
-├── replay.go            audit replay of committed snapshots
-├── runtime.go           durable super-step runtime
-├── scheduler.go         safe utility scheduler + concurrency/resource limits
-├── store.go             Store interface, memory store and durable file store
-├── subflow.go           bounded dynamic child executions / fan-out
-├── types.go             public contracts and typed primitives
-├── *_test.go            failure, recovery, repair and concurrency tests
-└── examples/iris/       runnable IRIS-like workflow
-```
+### Durable production execution
 
-## Core model
+- coordinator/worker split;
+- durable `TaskPending -> TaskRunning -> commit` protocol;
+- worker claim leases;
+- automatic and explicit heartbeats;
+- stale-worker fencing;
+- expired-lease recovery;
+- recovery quarantine after repeated worker loss;
+- optimistic CAS execution commits;
+- durable inbox and event deduplication;
+- durable timers and waits;
+- execution-level idempotency through `StartOrLoad`;
+- graceful worker drain for rolling deployments;
+- resilient compensation recovery after coordinator crash.
 
-ADGO separates two kinds of state.
+### Scheduling and resource control
 
-### Domain state
+- utility scheduling;
+- global concurrency;
+- per-activity concurrency;
+- per-capability concurrency;
+- resource-key mutual exclusion;
+- active-task reservations;
+- cumulative batch cost admission;
+- duration/deadline pressure;
+- cross-process concurrency admission;
+- token-bucket rate limiting;
+- crash-expiring admission permits.
 
-Large domain objects belong outside the orchestration runtime:
+### Adaptive execution
 
-```text
-Artifact
-Sources
-Evidence
-Claims
-Facts
-Outline
-Draft
-Reviews
-Exports
-```
+- capability-based provider selection;
+- hard privacy/risk/permission/cost/latency constraints;
+- provider fallback;
+- EWMA latency/quality/cost feedback;
+- reliability scoring;
+- exploration bonus;
+- provider circuit breaking;
+- durable shared provider-health store;
+- rate-limit `Retry-After` handling;
+- opt-in hedged execution for pure activities;
+- opt-in ensemble execution with deterministic best-result selection;
+- conservative aggregate budget accounting for speculative work.
 
-### Execution state
+### Reliability and recovery
 
-The orchestrator owns compact control state:
+- bounded exponential retry + deterministic jitter;
+- failure classes: transient, rate-limit, invalid-input, quality, permanent, ambiguous-side-effect;
+- targeted dependency repair;
+- independent repair anchors and revision epochs;
+- iteration/cost/duration/epsilon bounds;
+- convergence and oscillation detection;
+- reverse compensation stack;
+- bounded compensation retry/timeout wrapper;
+- ambiguous side-effect reconciliation;
+- pause/resume/cancel;
+- operator rewind of affected subgraphs;
+- continue-as-new for bounded history growth.
 
-```text
-ExecutionID
-PlanID / PlanVersion / PlanDigest
-Node runtime states
-Active task leases
-Attempts / revision counters
-Quality vector
-Budgets
-Waiting events
-Compensation stack
-History
-Artifact references
-```
+### Human and external interaction
 
-The runtime stores `ArtifactRef` values, not entire PDFs, source corpora or drafts.
+- risk-based approval interrupts;
+- generic `NodeHuman` decisions;
+- approve/edit/reject/retry/confirm/abort;
+- durable operator patches and payloads;
+- targeted/broadcast-safe signals;
+- deterministic signal routing;
+- callback/awaitable tokens bound to plan + revision;
+- stale callback rejection;
+- durable payload-before-event ordering.
 
-## Execution lifecycle
+### Long-lived systems
 
-Each call to `Step` is a durable super-step:
+- durable fixed-interval schedules;
+- catch-up policy;
+- deterministic schedule execution IDs;
+- immutable historical snapshots;
+- time-travel inspection;
+- execution forks from historical versions;
+- conservative compatible plan migration;
+- multi-plan `Host`;
+- durable child workflow handles;
+- deterministic fan-out child IDs;
+- child joins;
+- retention and terminal execution GC;
+- immutable-version pruning;
+- optional archive hook before deletion.
 
-```text
-RECOVER
-   ↓
-INGEST DURABLE EVENTS
-   ↓
-RECOVER EXPIRED LEASES
-   ↓
-CHECK BUDGET / CANCELLATION
-   ↓
-RUN DETERMINISTIC INTERNAL NODES
-   ↓
-DERIVE READY SET
-   ↓
-FILTER BY PERMISSION / RISK / RESOURCE / BUDGET / THROTTLE
-   ↓
-SCHEDULE SAFE PARALLEL WORK
-   ↓
-PERSIST TASK LEASES
-   ↓
-EXECUTE ACTIVITIES IN PARALLEL
-   ↓
-CLASSIFY RESULTS
-   ↓
-ATOMIC COMMIT
-   ↓
-QUALITY GATE / TARGETED REPAIR / WAIT / HUMAN / COMPENSATE / COMPLETE
-```
+### Observability
 
-The call stack is not the source of truth. The committed execution is.
+- durable ordered history;
+- resumable `Watch` stream;
+- `Explain` API;
+- execution metrics;
+- diagnostics with ready/waiting/active tasks;
+- lease health;
+- provider health;
+- invariant audit;
+- fleet audit;
+- execution querying;
+- content-addressed artifact references.
 
-## Minimal example
+---
+
+## Production quick start
 
 ```go
-plan, err := adgo.Compile(adgo.Definition{
-    ID:      "example",
-    Version: "1",
-    Nodes: []adgo.Node{
-        {
-            ID:       "draft",
-            Kind:     adgo.NodeActivity,
-            Activity: "Draft",
-            Produces: []string{"draft"},
-            Loop: &adgo.LoopBound{
-                MaxIterations: 3,
-                MaxCost:       5,
-                MaxDuration:   10 * time.Minute,
-                Epsilon:       0.001,
+package main
+
+import (
+    "context"
+    "log"
+    "time"
+
+    "github.com/Homiakus/axiom/adgo"
+)
+
+func main() {
+    plan, err := adgo.Compile(adgo.Definition{
+        ID:      "article",
+        Version: "1",
+        Nodes: []adgo.Node{
+            {
+                ID:       "draft",
+                Kind:     adgo.NodeActivity,
+                Activity: "Draft",
+                Produces: []string{"draft"},
+                Next:     []adgo.Transition{{To: "publish"}},
             },
-            Next: []adgo.Transition{{To: "gate"}},
-        },
-        {
-            ID:        "gate",
-            Kind:      adgo.NodeGate,
-            DependsOn: []string{"draft"},
-            Gate: &adgo.QualityGateSpec{
-                HardFloors: map[string]float64{"factuality": .95},
-                RepairFrom: []string{"draft"},
+            {
+                ID:             "publish",
+                Kind:           adgo.NodeActivity,
+                Activity:       "Publish",
+                DependsOn:      []string{"draft"},
+                ExternalEffect: true,
+                Risk:           adgo.RiskHigh,
+                Timeout:        30 * time.Second,
+                IdempotencyKey: "{execution}:{node}",
+                Retry: &adgo.RetryPolicy{
+                    MaxAttempts:      3,
+                    MaxRetryDuration: 5 * time.Minute,
+                },
+                Compensation: "Unpublish",
             },
         },
-    },
-})
-if err != nil {
-    log.Fatal(err)
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    registry := adgo.NewRegistry()
+    registry.Activity("Draft", draftHandler)
+    registry.Activity("Publish", publishHandler)
+    registry.Compensation("Unpublish", unpublishHandler)
+
+    production, err := adgo.OpenProduction(
+        plan,
+        registry,
+        adgo.DefaultProductionConfig("./var/adgo"),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer production.Close()
+
+    ctx := context.Background()
+    _, err = production.Engine.StartOrLoad(
+        ctx,
+        "article-42",
+        map[string]any{"topic": "Durable orchestration"},
+        adgo.BudgetLimit{MaxCost: 10},
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Usually coordinator and workers are service goroutines/processes.
+    go production.Engine.RunResilientCoordinator(ctx)
+    go production.Engine.RunWorker(ctx, adgo.WorkerSpec{
+        ID:          "worker-a",
+        Concurrency: 8,
+    })
+
+    final, err := production.Engine.Await(ctx, "article-42", adgo.AwaitOptions{
+        AcceptHuman: true,
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    _ = final
 }
-
-registry := adgo.NewRegistry()
-registry.Activity("Draft", func(ctx context.Context, req adgo.ActivityRequest) (adgo.ActivityResult, error) {
-    return adgo.ActivityResult{
-        Facts:   map[string]any{"draft": "artifact://draft/sha256:..."},
-        Quality: adgo.QualityVector{"factuality": .97},
-    }, nil
-})
-
-store, _ := adgo.NewFileStore("./var/adgo")
-runtime, _ := adgo.NewRuntime(plan, store, registry)
-_, _ = runtime.Start(context.Background(), "article-1", nil, adgo.BudgetLimit{MaxCost: 5})
-execution, err := runtime.Run(context.Background(), "article-1")
 ```
 
-## Activities report facts; policies decide control flow
+A runnable no-network example lives at:
 
-An activity should not return an arbitrary next-stage name. It returns observations:
+```bash
+go run ./adgo/examples/production
+```
+
+---
+
+## Production topology
+
+### Single process
+
+```text
+                 +-----------------------+
+                 |     immutable Plan    |
+                 +-----------+-----------+
+                             |
+                   +---------v---------+
+                   | resilient          |
+                   | coordinator        |
+                   +---------+---------+
+                             |
+                    durable task queue
+                             |
+             +---------------+---------------+
+             |               |               |
+        +----v----+      +----v----+      +---v-----+
+        | worker 1|      | worker 2| ...  | worker N|
+        +----+----+      +----+----+      +---+-----+
+             |               |               |
+             +---------------+---------------+
+                             |
+                  +----------v----------+
+                  | Store / inbox /     |
+                  | immutable versions  |
+                  +---------------------+
+```
+
+Use:
 
 ```go
-adgo.ActivityResult{
-    Facts: map[string]any{
-        "criticalErrors": 2,
-    },
-    Quality: adgo.QualityVector{
-        "factuality":       .87,
-        "evidenceCoverage": .92,
-    },
-}
+production.Serve(ctx, workers...)
 ```
 
-A deterministic gate then chooses `PASS`, `REPAIR`, `FAIL` or `HUMAN`.
-This keeps probabilistic output out of the control plane.
+or run coordinator and worker services separately when you need independent lifecycle control.
 
-## Durable side effects and idempotency
+### Multiple processes on a shared filesystem
 
-ADGO intentionally does **not** claim exactly-once external effects.
+`FileStore` uses cross-process lock files + optimistic versions. Multiple coordinator/worker processes may share the same durable filesystem.
 
-Before an external activity is called, its task, attempt, lease and idempotency key are
-committed. A crash may therefore cause an activity to be called again. The handler must:
+```text
+coordinator A ----+
+coordinator B ----+---- shared FileStore
+worker A ---------+
+worker B ---------+
+```
 
-1. use `ActivityRequest.IdempotencyKey` with the external provider when possible;
-2. detect a previously completed side effect; or
-3. return `FailureAmbiguousSideEffect` and reconcile before retrying.
+Late workers are still fenced by task identity + worker ID + attempt + lease expiry.
 
-External-effect nodes must declare a timeout, idempotency key and bounded retry policy;
-the compiler rejects unsafe definitions.
+### High-throughput local deployment
 
-## Failure classification
+Use `BackendPebble` (the default in `DefaultProductionConfig`).
 
-Wrap known failures with `adgo.Fail` or `adgo.FailAfter`:
+Pebble stores in one atomic KV database:
+
+- latest execution state;
+- immutable versions;
+- inbox events;
+- execution catalog.
+
+Pebble's DB lock means one process owns that database path. Scale worker goroutines inside the process, or provide another shared-database `Store` implementation when you need multi-host state storage.
+
+---
+
+## The durable worker protocol
+
+The production engine deliberately separates **scheduling** from **execution**.
+
+```text
+coordinator
+  |
+  | 1. derive ready set
+  | 2. hard admission
+  | 3. persist TaskPending
+  v
+Store
+  ^
+  | 4. worker Poll + CAS claim
+  | 5. TaskRunning + WorkerID + LeaseUntil
+  |
+worker
+  |
+  | 6. handler executes
+  | 7. heartbeat extends lease
+  | 8. Complete / Fail validates fencing token
+  v
+Store
+```
+
+A worker result is accepted only when all of these still match:
+
+- execution ID;
+- task ID;
+- worker ID;
+- attempt;
+- unexpired lease.
+
+If a lease expires, the coordinator recovers the node to `pending`. A new worker gets a new attempt. The old worker becomes stale and receives `ErrStaleTask` if it tries to commit.
+
+This prevents zombie workers from overwriting a newer result.
+
+---
+
+## Heartbeats
+
+Automatic worker services heartbeat every `LeaseTTL/3`.
+
+Long-running handlers can also publish explicit progress:
+
+```go
+registry.Activity("Render", func(ctx context.Context, req adgo.ActivityRequest) (adgo.ActivityResult, error) {
+    if err := adgo.ActivityHeartbeat(ctx, map[string]any{
+        "page": 42,
+    }); err != nil {
+        return adgo.ActivityResult{}, err
+    }
+    // ...
+})
+```
+
+Heartbeat does not mutate domain facts. It only extends the current fenced lease and optionally writes audit history.
+
+---
+
+## Graceful worker drain
+
+For rolling deployments:
+
+```go
+service, _ := adgo.NewWorkerService(engine, adgo.WorkerSpec{
+    ID:          "worker-7",
+    Concurrency: 16,
+})
+
+go service.Run(ctx)
+
+// Synchronous barrier: after return, this service cannot claim new work.
+service.BeginDrain()
+
+shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+_ = service.Drain(shutdownCtx)
+```
+
+Do not cancel the handler context merely to deploy a new binary unless you explicitly want the activity classified as a failure/retry.
+
+---
+
+## Failure semantics
+
+| Failure | Default behavior |
+|---|---|
+| `transient` | bounded retry + backoff |
+| `rate_limit` | bounded retry + `RetryAfter` + durable throttle |
+| `invalid_input` | targeted repair or human escalation |
+| `quality` | targeted repair |
+| `permanent` | fail + compensation |
+| `ambiguous_side_effect` | durable reconciliation interrupt |
+| worker disappeared | lease recovery + new attempt |
+| repeated worker loss | operator recovery quarantine |
+| coordinator died during compensation | resilient coordinator resumes compensation |
+
+Classify known errors:
 
 ```go
 return adgo.ActivityResult{}, adgo.Fail(adgo.FailureTransient, err)
-return adgo.ActivityResult{}, adgo.FailAfter(adgo.FailureRateLimit, err, 20*time.Second)
+return adgo.ActivityResult{}, adgo.RateLimited(30*time.Second, err)
 return adgo.ActivityResult{}, adgo.Fail(adgo.FailureQuality, err)
-return adgo.ActivityResult{}, adgo.Fail(adgo.FailureInvalidInput, err)
-return adgo.ActivityResult{}, adgo.Fail(adgo.FailurePermanent, err)
 return adgo.ActivityResult{}, adgo.Fail(adgo.FailureAmbiguousSideEffect, err)
 ```
 
-Transient and rate-limit failures may retry inside their declared bounds. Invalid input
-and quality failures go to repair. Ambiguous external effects wait for reconciliation.
-Permanent failures fail and trigger compensation when applicable.
+---
+
+## External effects and idempotency
+
+ADGO does not claim exactly-once I/O.
+
+Before external work starts, its task and idempotency key are durable. A process crash can therefore cause redelivery.
+
+External handlers should do at least one of:
+
+1. pass `ActivityRequest.IdempotencyKey` to the provider;
+2. persist a provider transaction ID and detect prior completion;
+3. reconcile an ambiguous effect before retry.
+
+Compiler requirements for external-effect nodes include timeout, idempotency and bounded retry. High-risk reversible effects may also require compensation.
+
+---
+
+## Adaptive provider routing
+
+Register capability providers:
+
+```go
+registry.Provider("llm", adgo.Provider{
+    Name:       "primary",
+    Activity:   "OpenAIPrimary",
+    Quality:    .95,
+    Cost:       .8,
+    Latency:    2 * time.Second,
+    Privacy:    .9,
+    Risk:       adgo.RiskLow,
+    Permissions: []string{"network:llm"},
+})
+```
+
+`AdaptiveRouter` filters hard constraints first. Only valid providers are scored.
+
+Online feedback updates:
+
+- reliability;
+- latency EWMA;
+- quality EWMA;
+- cost EWMA;
+- consecutive failures;
+- circuit-open deadline.
+
+`OpenProduction` uses durable provider health, so a restarted coordinator does not immediately forget that a provider is failing.
+
+When a selected provider fails transiently, the failure is reported. The next durable retry re-resolves the capability and can select a healthy fallback.
+
+---
+
+## Global admission and rate limiting
+
+Local scheduler limits protect one plan execution. `AdmissionController` protects a provider or resource **across executions/processes**.
+
+```go
+limited := adgo.WithAdmission(
+    production.Admission,
+    "provider:openai",
+    adgo.AdmissionPolicy{
+        MaxConcurrent: 20,
+        Rate:          100,
+        Period:        time.Minute,
+        Burst:         20,
+    },
+    30*time.Second,
+    handler,
+)
+```
+
+A denied permit becomes `FailureRateLimit`, so normal durable retry/backoff handles it.
+
+Permits expire after crashes.
+
+---
+
+## Shared activity-result cache
+
+For pure deterministic work:
+
+```go
+cached := adgo.WithResultCache(
+    production.Cache,
+    "ExtractStructuredFacts",
+    adgo.CachePolicy{
+        Namespace: "extractor-v3",
+        TTL:       24 * time.Hour,
+    },
+    handler,
+)
+```
+
+The cache key is content-addressed from namespace + activity + sorted input facts + artifact refs.
+
+It supports a single-flight lease: when another execution is already computing the same key, the second activity receives a durable rate-limit retry instead of paying for duplicate work.
+
+**Do not wrap irreversible external side effects in result cache unless replaying the cached result is explicitly part of your idempotency contract.**
+
+---
+
+## Hedged and ensemble execution
+
+For pure LLM/tool calls with tail-latency or quality variance:
+
+```go
+activity, err := adgo.NewEnsembleActivity(
+    []adgo.ActivityVariant{
+        {Name: "fast", Handler: fastModel},
+        {Name: "strong", Handler: strongModel},
+    },
+    adgo.SpeculationPolicy{
+        Pure:        true,
+        MaxParallel: 2,
+        MinQuality:  .85,
+    },
+)
+```
+
+`NewHedgedActivity` starts alternatives progressively after `HedgeDelay`.
+
+`NewEnsembleActivity` runs variants and picks the maximum `QualityUtility` result with deterministic tie-breaking.
+
+Budget usage is the sum of **all launched variants**, not merely the winner.
+
+Speculation refuses to initialize unless `Pure=true`.
+
+---
 
 ## Targeted repair
 
-A quality gate can name deterministic repair roots:
+A failed quality gate does not restart the entire workflow.
 
-```go
-Gate: &adgo.QualityGateSpec{
-    HardFloors: map[string]float64{
-        "factuality":       .95,
-        "evidenceCoverage": .90,
-    },
-    MaxCriticalErrors: 0,
-    RepairFrom:        []string{"draft"},
-}
+```text
+failed gate
+    |
+    v
+repair roots
+    |
+    v
+dependency intersection
+    |
+    v
+minimal affected subgraph
+    |
+    +--> invalidate affected facts/artifacts
+    +--> preserve unrelated completed work
+    +--> increment durable revision epoch
+    +--> rerun
 ```
 
-`DependencyRepairPlanner` computes the smallest affected subgraph from the repair root to
-the failed gate. Completed nodes outside that subgraph stay completed. Outputs produced by
-the affected nodes are invalidated, while unrelated artifacts are preserved.
-
-Every repair root must declare a complete `LoopBound`:
+Every repair cycle must be bounded by:
 
 ```go
 &adgo.LoopBound{
     MaxIterations: 4,
     MaxCost:       3,
-    MaxDuration:   15 * time.Minute,
+    MaxDuration:   10 * time.Minute,
     Epsilon:       .001,
 }
 ```
 
-Convergence is evaluated gate-to-gate, not between unrelated workflow snapshots.
-Repeated semantic signatures are also detected as oscillation and the responsible strategy
-is banned for the execution.
+ADGO additionally detects gate-to-gate stagnation and short-period strategy oscillation.
 
-## Capability-based routing
+When multiple gates repair the same downstream work, use independent repair anchors so each gate owns its own durable budget and revision identity.
 
-Graphs can depend on capabilities instead of concrete providers:
-
-```go
-Node{
-    ID:         "search",
-    Kind:       adgo.NodeActivity,
-    Capability: "FindEvidence",
-}
-```
-
-Providers are registered independently:
-
-```go
-registry.Provider("FindEvidence", adgo.Provider{
-    Name:        "web",
-    Activity:    "SearchWeb",
-    Quality:     .95,
-    Cost:        .08,
-    Latency:     500 * time.Millisecond,
-    Privacy:     .80,
-    Risk:        adgo.RiskLow,
-    Permissions: []string{"network"},
-})
-```
-
-`Registry.Resolve` filters hard requirements first and then selects among valid providers.
-An unsafe provider can never win merely because it has a higher utility score.
+---
 
 ## Human-in-the-loop
 
-`NodeHuman` is a first-class durable interrupt. External effect activities at or above the
-runtime approval threshold also require approval automatically.
+High-risk activities can pause before execution. Generic `NodeHuman` can pause anywhere in a graph.
+
+Resolve with:
 
 ```go
-_ = runtime.Signal(ctx, executionID, adgo.Event{
-    ID:         "approval-17",
-    Type:       "Approved",
-    TargetNode: "publish",
+_, err := engine.ResolveHuman(ctx, executionID, nodeID, adgo.HumanResolution{
+    Decision: adgo.HumanEdit,
+    Actor:    "reviewer@example",
+    Reason:   "corrected recipient",
+    Patch: map[string]any{
+        "recipient": "new@example.com",
+    },
 })
 ```
 
-The event is written to a durable inbox first and acknowledged only after its state change
-has been committed. Duplicate delivery is deduplicated by event ID.
+Supported decisions:
 
-## Compensation
+- approve;
+- edit;
+- reject;
+- retry;
+- confirm;
+- abort.
 
-A reversible side-effect node declares its compensation handler:
+Operator patch/payload is committed before execution resumes.
 
-```go
-Node{
-    ID:             "publish",
-    Kind:           adgo.NodeActivity,
-    Activity:       "Publish",
-    ExternalEffect: true,
-    Compensation:   "Unpublish",
-    // timeout, retry and idempotency omitted here for brevity
-}
-```
+---
 
-Successful side effects push compensation records. Failure or cancellation executes the
-stack in reverse order.
+## Durable signals and callback tokens
 
-## Dynamic plans without giving an LLM control of the runtime
+Prefer `SignalDeterministic` for external webhooks.
 
-An LLM or planner may produce an inert `PlanProposal`. The proposal becomes executable only
-after deterministic validation:
+If more than one node waits for the same untargeted event type, ADGO rejects ambiguity unless broadcast is explicitly enabled.
 
-```text
-PlanProposal
-    ↓
-ValidatePlanDelta(policy)
-    ↓
-ValidatedPlanDelta
-    ↓
-CompileValidatedPlanDelta
-    ↓
-immutable child Plan
-```
-
-The parent plan remains digest-pinned and unchanged. This prevents information-plane text
-from editing the active control graph, permissions, budgets or gates.
-
-## Dynamic fan-out
-
-`RunFanout` creates deterministic child execution IDs and resumes already-completed children
-rather than duplicating them. Fan-out is bounded by `MaxFanout` and a concurrency limit.
-Supported aggregation modes are `ALL`, `ANY`, `N_OF_M` and `QUORUM`.
-
-## Storage
-
-### MemoryStore
-
-For tests and ephemeral runs.
-
-### FileStore
-
-A dependency-free durable reference store. Every commit is an immutable full execution
-snapshot:
-
-```text
-root/
-├── executions/<execution>/commits/00000000000000000001.json
-├── executions/<execution>/commits/00000000000000000002.json
-├── executions/<execution>/inbox/<event>.json
-└── locks/<execution>.lock
-```
-
-Commits use temporary files, fsync and atomic rename. A lock file protects optimistic
-compare-and-swap commits across processes that share the same filesystem.
-
-For a multi-host deployment on storage without shared filesystem locking, implement the
-`Store` interface on a transactional database with a native version/CAS primitive.
-
-## Artifact storage
-
-`ContentAddressedStore` stores content by SHA-256 and returns a compact `ArtifactRef`.
-The same bytes are automatically deduplicated.
+For provider callbacks:
 
 ```go
-store, _ := adgo.NewContentAddressedStore("./var/artifacts")
-ref, _ := store.Put("draft.md", "text/markdown", reader)
+awaitable, err := engine.Awaitable(ctx, executionID, "remote_job")
+// send awaitable.ID to the external system
+
+err = engine.ResolveAwaitable(ctx, awaitable, callbackPayload)
 ```
 
-## Explainability
+The token is bound to:
+
+- execution;
+- node;
+- expected event;
+- revision;
+- plan digest.
+
+A late callback from an obsolete repair iteration is rejected as stale.
+
+---
+
+## Child workflows and fan-out
+
+`Host` serves multiple immutable plan versions.
 
 ```go
-explanation := adgo.Explain(plan, execution, "quality_gate")
+host, _ := adgo.NewHost(store)
+host.Register(parentPlan, parentRegistry)
+host.Register(childPlan, childRegistry)
+
+handle, child, err := host.StartChild(
+    ctx,
+    "parent-42",
+    "research",
+    "source-7",
+    adgo.PlanRef{Digest: childPlan.Digest},
+    adgo.ChildOptions{Initial: map[string]any{"url": url}},
+)
 ```
 
-It reports status, blockers, attempts, iterations, retry time, expected event, committed
-outcome, plan digest and other evidence relevant to the node.
+Child ID is deterministic from parent execution + parent node + item ID. Parent activity redelivery cannot create a duplicate child.
 
-## Replay model
+`StartChildren` supports bounded production fan-out; `InspectChildren` applies `ALL`, `ANY`, `N_OF_M` or `QUORUM` joins.
 
-`VerifyReplay` audits immutable committed snapshots. It verifies plan pinning, version
-continuity, history monotonicity, node identities and monotonic budget usage.
+---
 
-It deliberately does not re-run LLMs or other non-deterministic activities. Their committed
-facts and artifact digests form the replay boundary.
+## Time travel and forks
 
-## Safety model
+Every durable file/Pebble commit can be retained as an immutable version.
 
-ADGO separates the control plane from the information plane.
+```go
+snapshot, err := adgo.InspectVersion(ctx, store, "execution-1", 17)
 
-Control plane:
+fork, info, err := adgo.ForkExecution(
+    ctx,
+    store,
+    plan,
+    "execution-1",
+    17,
+    "execution-1-alternative",
+    adgo.ForkOptions{
+        DataPatch: map[string]any{"strategy": "alternative"},
+    },
+)
+```
+
+The fork clears active worker leases/events, preserves committed facts and completed work, and starts under a new execution ID.
+
+No probabilistic activity is re-run merely to reconstruct history.
+
+---
+
+## Plan migration
+
+Long-lived workflows can outlive a deployment version.
+
+`MigrateExecution` supports conservative migration at a quiescent point:
+
+- no active tasks;
+- source plan pin must match;
+- old-to-new node mapping must be unique;
+- completed node semantics cannot silently change by default;
+- newly added nodes are initialized;
+- selected reset roots invalidate target-plan descendants;
+- migration is recorded in durable history.
+
+Use `AllowSemanticChange` only when you intentionally accept reinterpretation of completed work.
+
+---
+
+## Continue-as-new
+
+For executions that logically continue forever:
+
+```go
+fresh, err := engine.ContinueAsNew(
+    ctx,
+    "monitor-2026-08",
+    "monitor-2026-09",
+    adgo.ContinueOptions{
+        CarryData: []string{"model", "baseline"},
+        Reason:    "monthly history compaction",
+    },
+)
+```
+
+The old execution closes; the new one receives fresh control state and selected durable facts/artifacts.
+
+---
+
+## Durable schedules
+
+```go
+schedule, err := production.ScheduleRunner.Register(ctx, adgo.Schedule{
+    ID:         "hourly-analysis",
+    Every:      time.Hour,
+    StartAt:    time.Now().UTC(),
+    CatchUp:    true,
+    MaxCatchUp: 24,
+    Initial:    map[string]any{"mode": "scheduled"},
+})
+```
+
+A firing uses a deterministic execution ID derived from schedule ID + fire time. If the scheduler crashes after starting the execution but before advancing its schedule cursor, retry resumes the same execution instead of duplicating it.
+
+---
+
+## Pause, rewind and operator recovery
+
+```go
+_, _ = engine.Pause(ctx, id, "maintenance")
+_, _ = engine.Resume(ctx, id, "operator")
+
+_, err := engine.RewindFrom(
+    ctx,
+    id,
+    "factcheck",
+    "source corrected",
+    "operator",
+)
+```
+
+`RewindFrom` requires a quiescent execution and invalidates only the selected node plus its descendants. Every affected node gets a new revision epoch, preventing stale idempotency-cache reuse.
+
+---
+
+## Compensation and crash recovery
+
+Compensations execute in reverse order.
+
+For flaky compensators:
+
+```go
+registry.Compensation("Refund", adgo.WithCompensationPolicy(
+    adgo.DefaultCompensationPolicy(),
+    refund,
+))
+```
+
+Use `RunResilientCoordinator` / `ServeResilient` in production. If a process dies while the execution is `compensating`, the next coordinator resumes the remaining stack.
+
+Compensation is also at-least-once; compensation handlers need idempotency.
+
+---
+
+## Storage matrix
+
+| Backend | Durable | Immutable versions | Catalog | Cross-process | Best use |
+|---|---:|---:|---:|---:|---|
+| `MemoryStore` | no | no | yes | no | tests / ephemeral |
+| `FileStore` | yes | yes | yes | shared filesystem | simple multi-process |
+| `PebbleStore` | yes | yes | yes | one DB owner | high-throughput local |
+| custom `Store` | depends | optional | optional | depends | SQL/KV/cloud adapter |
+
+Production polling requires `ExecutionCatalog`.
+
+Time-travel inspection requires `VersionedStore`.
+
+Retention deletion requires `ExecutionDeletionStore`.
+
+Version pruning requires `VersionPruner`.
+
+These are intentionally capability interfaces rather than one monolithic storage contract.
+
+---
+
+## Diagnostics and audit
+
+```go
+report, err := engine.Diagnostics(ctx, executionID)
+```
+
+Diagnostics include:
+
+- ready nodes;
+- durable waits;
+- active tasks;
+- worker IDs;
+- lease deadlines;
+- budget usage;
+- quality;
+- provider health;
+- invariant violations.
+
+`AuditExecution` detects states such as:
+
+- plan pin mismatch;
+- orphan task/node;
+- running task without worker/lease;
+- expired lease;
+- node running without task;
+- waiting node without reason;
+- completed node with active task;
+- broken history sequence;
+- negative budget;
+- terminal execution with active work.
+
+`AuditFleet` checks all cataloged executions against loaded plans.
+
+---
+
+## Watch and query
+
+Durable history can be streamed with resume-by-sequence:
+
+```go
+events, errs := engine.Watch(ctx, executionID, adgo.WatchOptions{
+    FromSeq:        lastSeen,
+    StopOnTerminal: true,
+})
+```
+
+`QueryExecutions` filters the catalog by plan, digest, status and update window.
+
+These are projections of committed state, not volatile callbacks.
+
+---
+
+## Retention and archival
+
+Nothing is deleted automatically.
+
+Explicit policy:
+
+```go
+result, err := adgo.CollectExecutions(ctx, store, adgo.RetentionPolicy{
+    TerminalFor: 30 * 24 * time.Hour,
+    Archive: adgo.JSONArchive(uploadToObjectStore),
+})
+```
+
+The archive hook must succeed before deletion.
+
+Immutable versions can be compacted separately with `VersionPruner.PruneVersions`.
+
+---
+
+## Security model
+
+ADGO treats durable execution storage as sensitive application state.
+
+Recommended rules:
+
+- keep credentials in worker environment / secret manager, not `Execution.Data`;
+- persist secret references, not raw tokens;
+- use `RequiredPermissions` and provider permissions as hard constraints;
+- use risk thresholds and human approval for dangerous effects;
+- use resource keys for exclusive external resources;
+- never derive external side-effect idempotency from random process state;
+- validate adaptive plan proposals before compiling them;
+- never let an LLM directly edit a live parent plan or execution state;
+- protect FileStore/Pebble directories with OS-level access controls;
+- archive before retention deletion when audit requirements demand it.
+
+`PatchData` and human patches reject reserved `__adgo:` keys.
+
+---
+
+## Production checklist
+
+Before deploying a workflow:
+
+1. `Compile` succeeds with no structural violations.
+2. Every external effect has timeout + idempotency + bounded retry.
+3. Reversible high-risk effects have compensation.
+4. All repair loops have iteration/cost/duration/epsilon bounds.
+5. Global + capability/activity/resource limits are declared.
+6. Shared provider limits use `WithAdmission` where necessary.
+7. Pure expensive work uses cache only when semantics permit reuse.
+8. Workers use finite leases and heartbeat long calls.
+9. Deployments use graceful drain.
+10. Production coordinator is compensation-aware (`RunResilientCoordinator`).
+11. Human/callback paths use durable signals or awaitables.
+12. Long-lived executions have continue-as-new / retention policy.
+13. Secrets remain outside durable facts.
+14. Operator tooling exposes diagnostics/history.
+15. Failure/recovery tests cover worker death, retries, repair and side-effect ambiguity.
+
+---
+
+## Package map
 
 ```text
-Plan / gates / permissions / budgets / policies / registered capabilities
+adgo/
+├── compiler.go                immutable plan compiler
+├── types.go                   public contracts
+├── runtime.go                 embedded deterministic kernel
+├── engine.go                  production coordinator/worker engine
+├── host.go                    multi-plan host
+├── production.go              batteries-included setup
+├── service.go                 resilient serve + graceful worker drain
+├── store.go                   memory/file stores
+├── pebble_store.go            high-throughput durable store
+├── catalog.go                 execution catalog
+├── scheduler.go               utility + hard admission scheduler
+├── admission.go               cross-process concurrency/rate limits
+├── registry.go                activity/gate/provider registry
+├── router.go                  adaptive provider routing
+├── router_store.go            durable provider-health state
+├── repair.go                  targeted repair / convergence
+├── compensation_recovery.go   resilient saga recovery
+├── control.go                 operator + HITL control plane
+├── signal_safe.go             deterministic durable signals
+├── awaitable.go               external callback tokens
+├── child_workflow.go          production child workflows
+├── subflow.go                 embedded fan-out
+├── time_travel.go             historical inspection/forks
+├── migration.go               compatible live migration
+├── lifecycle.go               continue-as-new
+├── schedule.go                durable schedules
+├── cache.go                   shared activity result cache
+├── speculation.go             hedged/ensemble pure execution
+├── operations.go              query/await/rewind
+├── diagnostics.go             execution/fleet invariant audit
+├── watch.go                   resumable history stream
+├── retention.go               GC/archive/version pruning
+├── artifact.go                content-addressed artifact store
+├── replay.go                  immutable snapshot replay audit
+├── explain.go                 explainability
+├── metrics.go                 execution metrics
+└── examples/
+    ├── iris/
+    └── production/
 ```
 
-Information plane:
-
-```text
-web pages / PDFs / source text / user documents / LLM responses
-```
-
-Information-plane content cannot directly create an activity, grant a permission, increase
-a budget, replace the pinned plan or disable a gate.
-
-## Guarantees and deliberate limits
-
-ADGO provides a concrete reference implementation of durable local orchestration, but the
-following boundaries are intentional:
-
-- external effects are at-least-once, not exactly-once;
-- `FileStore` coordinates processes sharing one filesystem, not arbitrary distributed hosts;
-- audit replay verifies committed deterministic state instead of re-executing probabilistic work;
-- adaptive planning creates validated immutable child plans instead of mutating the parent plan;
-- large artifact retention/garbage collection is a deployment policy, not hidden runtime magic;
-- provider-specific distributed rate limiting should be backed by a shared store in a cluster.
-
-These limits keep failure semantics explicit and testable.
-
-## IRIS reference workflow
-
-Run the complete example:
-
-```bash
-go run ./adgo/examples/iris
-```
-
-The example demonstrates:
-
-- capability-based research;
-- evidence extraction and drafting;
-- parallel fact-check/editorial work;
-- a failed first quality gate;
-- targeted draft/fact-check repair while unrelated editorial work is preserved;
-- content-addressed draft artifacts;
-- a high-risk publication activity stopped by a durable approval interrupt;
-- approval event and resume;
-- idempotent publication key;
-- final explanation and metrics.
+---
 
 ## Validation
 
+Repository CI runs:
+
 ```bash
-go test ./adgo/...
-go vet ./adgo/...
-go run ./adgo/examples/iris
+go mod tidy
+go test ./...
+go test -race ./...
+go vet ./...
 ```
 
-The tests include plan validation, parallelism, retry, rate-limit throttling, durable timers,
-human interrupts, targeted repair, convergence regression, expired lease recovery,
-compensation order, artifact deduplication, child fan-out/resume and snapshot replay.
+plus dependency scanning, fuzz smoke tests, external-consumer compilation and performance benchmarks.
+
+For ADGO-specific development:
+
+```bash
+go test ./adgo/... -count=1
+go test -race ./adgo -count=1
+go vet ./adgo/...
+go run ./adgo/examples/production
+```
+
+The test suite contains explicit regressions for worker fencing, heartbeat recovery, durable routing, repair anchors, plan migration, historical forks, callback awaitables, schedules, Pebble reopen, compensation recovery, activity caching, deterministic signal routing, operator rewind, speculation, graceful drain, retention and multi-plan hosting.
+
+---
+
+## Non-goals and boundaries
+
+ADGO is an orchestration engine, not a message broker or secret manager.
+
+A production deployment still chooses:
+
+- network transport for remote workers if workers are not linked into the process;
+- authentication/authorization around your control API;
+- a custom shared database Store when shared-filesystem storage is insufficient;
+- object storage for large artifacts;
+- metrics/log export backend;
+- application-specific provider clients.
+
+The engine deliberately exposes narrow interfaces for these boundaries instead of hard-coding one infrastructure stack.
