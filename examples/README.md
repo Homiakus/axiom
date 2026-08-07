@@ -1,18 +1,25 @@
-# Примеры
+# Примеры Axiom
+
+Примеры сгруппированы по способу описания процесса. Для нового Go-проекта рекомендуется начать с `model/`, затем переходить к AXM/TOML только если модель должна храниться отдельно от Go-кода или редактироваться внешними инструментами.
+
+## Рекомендуемый старт
+
+- `model/` — основной декларативный Go API: типизированные структуры состояния и событий, rules, claims, policies и activities.
+- `go-first/` — минимальный typed reducer API (`Flow`) для простой логики, которой не нужен статический анализ модели.
+
+## AXM и сериализованные модели
 
 - `axiom-files/` — чистые `.axm` примеры для компилятора и runtime:
-  - `welcome.axm` — минимальный welcome-flow: signal UserRegistered, rule captureRegistration + sendWelcomeEmail, activity SendWelcomeEmail
-  - `checkout.axm` — полноценный checkout-flow: CheckInventory, CalculateRisk, ChargeCard с фактами CanCheckout/CanPayByCard и claims paymentHasId/noDoublePayment
-  - `claims.axm` — пример claim/invariant проверки: always-условия, защита от нарушения инвариантов
-  - `reminder.axm` — пример сценария с таймером: напоминание через 24h после создания заказа
+  - `welcome.axm` — минимальный welcome-flow: `UserRegistered`, правило регистрации и activity отправки письма;
+  - `checkout.axm` — checkout-flow с activities, facts и claims;
+  - `claims.axm` — проверка инвариантов;
+  - `reminder.axm` — сценарий с timer trigger.
+- `table/` — пример TOML decision table.
+- `triz/` — примеры TRIZ normalization.
 
-- `control-panel/` — отдельная интерактивная TUI-программа (Bubble Tea) для
-  управления Axiom execution: запуск, отправка сигналов, просмотр состояния и
-  истории. Держит собственный `go.mod` с UI-зависимостями, чтобы корневой модуль
-  Axiom оставался чистой библиотекой.
+## Более полные сценарии
 
-- `hydropilot/` — сгенерированная axiomgen'ом типизированная обвязка для
-  hydropilot.axm. Содержит `hydro_pilot_axiom.gen.go` (DO NOT EDIT) и
-  `hydro_pilot_activities.go` (реализации activity).
+- `coffee-machine/` — проверяемый end-to-end пример с расчётами, runtime и диаграммами; запускается в CI.
+- `order/` — пример жизненного цикла заказа.
 
-Примеры не являются частью публичного API библиотеки.
+Примеры не являются частью стабильного публичного API библиотеки, но CI проверяет ключевые сценарии и внешний consumer module, чтобы примеры не расходились с фактическим API.
