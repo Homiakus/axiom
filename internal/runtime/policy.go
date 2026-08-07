@@ -12,7 +12,6 @@ import (
 )
 
 type activityRuntimePolicy struct {
-	retries     int
 	timeout     time.Duration
 	concurrency string
 }
@@ -43,11 +42,6 @@ func activityPolicy(module *compiler.Module, activityName string) activityRuntim
 	}
 
 	var result activityRuntimePolicy
-	if expr := policy.Entries["retry"]; expr != nil && expr.Kind == lang.ExprLiteral {
-		if value, ok := expr.Value.(int); ok && value > 0 {
-			result.retries = value
-		}
-	}
 	if expr := policy.Entries["timeout"]; expr != nil && expr.Kind == lang.ExprLiteral {
 		switch value := expr.Value.(type) {
 		case lang.DurationLiteral:
@@ -70,34 +64,28 @@ func activityPolicy(module *compiler.Module, activityName string) activityRuntim
 
 func wrapActivityWithPolicy(fn Activity, policy activityRuntimePolicy) Activity {
 	invoke := func(ctx context.Context, input map[string]any) (map[string]any, error) {
-		attempts := policy.retries + 1
-		var lastErr error
-		for attempt := 1; attempt <= attempts; attempt++ {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-
-			attemptCtx := ctx
-			cancel := func() {}
-			if policy.timeout > 0 {
-				attemptCtx, cancel = context.WithTimeout(ctx, policy.timeout)
-			}
-			result, err := fn(attemptCtx, input)
-			attemptErr := attemptCtx.Err()
-			cancel()
-			if err == nil {
-				return result, nil
-			}
-
-			lastErr = err
-			if errors.Is(attemptErr, context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
-				lastErr = fmt.Errorf("activity timed out after %s: %w", policy.timeout, context.DeadlineExceeded)
-			}
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		return nil, lastErr
+
+		attemptCtx := ctx
+		cancel := func() {}
+		if policy.timeout > 0 {
+			attemptCtx, cancel = context.WithTimeout(ctx, policy.timeout)
+		}
+		result, err := fn(attemptCtx, input)
+		attemptErr := attemptCtx.Err()
+		cancel()
+		if err == nil {
+			return result, nil
+		}
+		if parentErr := ctx.Err(); parentErr != nil {
+			return nil, parentErr
+		}
+		if errors.Is(attemptErr, context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("activity timed out after %s: %w", policy.timeout, context.DeadlineExceeded)
+		}
+		return nil, err
 	}
 
 	switch policy.concurrency {
