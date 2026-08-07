@@ -36,6 +36,10 @@ Axiom follows the pre-v1 Semantic Versioning policy described in [`docs/versioni
 - the Russian and English READMEs now lead with one `Definition -> Plan -> Engine -> Run` mental model, make `model` the explicit default frontend, and separate small-model string helpers from reusable typed field keys;
 - the examples index is now a runnable learning path, and CI executes every documented public example so onboarding commands cannot silently drift.
 
+### Fixed
+
+- the TOML decision-table renderer now emits canonical AXM policy entries with `:` instead of invalid `=` assignment syntax; policy-bearing TOML definitions such as `examples/table/welcome.toml` now compile and run through `table.Load`.
+
 ### Planned
 
 - runtime dispatch for policy `catch:` mappings;
