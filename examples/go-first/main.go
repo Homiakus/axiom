@@ -27,7 +27,7 @@ func main() {
 		return axiom.Next(state, axiom.Call(LogCount{Count: state.Count})), nil
 	})
 	axiom.EffectHandler(flow, func(_ context.Context, command LogCount) error {
-		fmt.Println(command.Count)
+		fmt.Printf("effect count=%d\n", command.Count)
 		return nil
 	})
 
@@ -36,7 +36,18 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if err := engine.Execution("counter-1").Dispatch(ctx, Increment{By: 2}); err != nil {
+	run := engine.Execution("counter-1")
+	if err := run.Dispatch(ctx, Increment{By: 2}); err != nil {
 		log.Fatal(err)
 	}
+
+	state, err := run.State(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	history, err := run.History(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("state count=%d history=%d\n", state.Count, len(history))
 }
