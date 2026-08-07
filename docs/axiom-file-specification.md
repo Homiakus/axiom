@@ -225,12 +225,16 @@ policy externalCall:
   idempotency: required
 ```
 
-Policy entries are parsed as expressions. Current enforcement is partial:
+Implemented semantics:
 
-- `retry` sets task `MaxAttempts`, but failed handlers are not automatically requeued;
-- `timeout` is parsed but does not wrap the handler in a timeout context;
-- `concurrency` is parsed but does not control worker scheduling;
+- `retry: N` invokes the registered activity handler at most `N + 1` times. Retries are currently immediate and occur inside one leased task/process; durable backoff/requeue through `NextAttemptAt` is a separate future layer;
+- `timeout` creates a fresh `context.WithTimeout` for each handler attempt. Handlers must observe `ctx` cancellation; arbitrary Go code that ignores its context cannot be forcibly stopped safely;
+- `concurrency: once` serializes calls of that activity inside one `Engine`;
+- `concurrency: parallel` adds no runtime serialization;
+- `concurrency: latest` and `concurrency: first` are parsed for forward compatibility but are rejected by `WithProductionMode()` with `AX508` until durable task-supersession semantics are implemented;
 - `idempotency: required` is enforced for `effect: external` activities together with an `idempotencyKey`.
+
+`ActivityTask.Attempt` represents task lease attempts; it does not currently increment for every in-process handler retry. Internal retry attempts also do not yet produce a separate history entry.
 
 A `catch:` block is parsed and target signal names are validated, but verified runtime dispatch of catch mappings is not implemented.
 
@@ -358,7 +362,7 @@ These are compiled-artifact identifiers, not semantic-version release tags.
 
 - Imports have parser/AST support but no verified public resolver/linker.
 - Timer triggers are indexed, but a complete wall-clock scheduler contract is not documented as implemented.
-- Policy retry, timeout, concurrency, and catch semantics are incomplete.
+- Retry is currently in-process rather than durable task-level backoff/requeue; `latest/first` concurrency and policy catch dispatch remain incomplete.
 - `runtime.*` query projections currently resolve to `nil` in the verified evaluator.
 - Multiplication, division, and modulo are not accepted by the AXM lexer.
 - Unknown type identifiers are not rejected consistently.
