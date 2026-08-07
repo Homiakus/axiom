@@ -77,7 +77,17 @@ order.String("Status").Equal("submitted")
 
 That lets the Go compiler reject accidental literal type mismatches before Axiom compiles the model.
 
-For field-to-field comparisons of the same type, use `EqualField` / `NotEqualField`.
+For field-to-field operations, prefer the typed `*Field` helpers. They require both operands to use the same Go type:
+
+```go
+order.Int("Total").GreaterOrEqualField(limit.Int("Minimum"))
+order.Int("Subtotal").PlusField(order.Int("Tax"))
+order.String("Status").EqualField(previous.String("Status"))
+```
+
+Available field-to-field helpers cover equality, ordering and arithmetic: `EqualField`, `NotEqualField`, `GreaterThanField`, `GreaterOrEqualField`, `LessThanField`, `LessOrEqualField`, `PlusField`, `MinusField`, `TimesField`, `DividedByField` and `ModuloField`.
+
+The legacy `any`-based operators remain useful for dynamic expressions and compatibility, but they should not be the default in new application code.
 
 ## Activities
 
@@ -104,6 +114,8 @@ engine, err := axiom.Open(
 
 Use `axiom.Act` and `axiom.Input`/`axiom.Output` mainly at dynamic integration boundaries where maps are already the natural representation.
 
+`ActTyped` validates its input/output shapes during Engine construction. Supported shapes are structs, pointers to structs and maps with string keys; unsupported scalar shapes fail fast instead of silently producing an empty output.
+
 ## Runtime API
 
 Prefer a `Run` handle over repeatedly passing the execution ID to lower-level engine methods:
@@ -127,20 +139,28 @@ Useful methods include `Dispatch`, `Signal`, `Patch`, `State`, `Status`, `Histor
 
 ## Production semantics
 
-`WithProductionMode()` requires a transactional store and strict fast runtime. It does **not** turn every declared policy field into an implemented runtime guarantee.
+`WithProductionMode()` requires a transactional store and strict fast runtime. It is the recommended mode when activity policy guarantees are part of application correctness.
 
-At the current runtime level:
+Current runtime guarantees include:
 
-- external activities should be idempotent;
-- idempotency metadata is meaningful and required for external effects where specified by the compiler;
-- `policy.retry`, `policy.timeout` and `policy.concurrency` must not be treated as complete automatic runtime guarantees yet;
-- execution serialization is local to one `Engine`; cross-process ownership must be provided by the application.
+- **retry** — activity attempts are durable; `Attempt`, `MaxAttempts` and `NextAttemptAt` are persisted so a new `Engine` can continue retry after restart when the store is durable;
+- **backoff** — fixed durations and `exponential(...)` are supported; an omitted backoff uses deterministic exponential delay;
+- **timeout** — applied per activity attempt through the activity context;
+- **concurrency: parallel** — no additional serialization;
+- **concurrency: once** — serialized per activity inside one `Engine`;
+- **concurrency: first** — the first active pending task wins its execution/activity lane and later pending tasks are superseded;
+- **concurrency: latest** — the newest pending task supersedes older pending tasks in the same lane; an already-running Go handler is not forcibly cancelled;
+- **idempotency** — explicit idempotency keys deduplicate the same external intent in the configured store and take precedence over first/latest supersession.
 
-Do not build correctness assumptions around retry/timeout/concurrency declarations until the runtime semantics documentation marks them as enforced.
+Important boundaries remain: execution locking and `once` are not distributed locks; exactly-once delivery to an external system is not guaranteed; and guarantees that depend on transactional task supersession require a `TransactionalStore` such as Pebble in production mode.
+
+See `docs/runtime-semantics.md` for the detailed contract and failure boundaries.
 
 ## Error handling
 
-Examples intentionally handle every returned error. Production code should do the same. `Must*` helpers are intended for tests, fixtures and initialization paths where a panic is explicitly acceptable.
+Examples intentionally handle returned errors. Production code should do the same. `Must*` helpers are intended for tests, fixtures and initialization paths where a panic is explicitly acceptable.
+
+The declarative model builder accumulates user-facing diagnostics for invalid state/event shapes and unknown fields and reports them from `Compile` instead of using panic as the normal validation path. Literal encoding failures are also retained and reported as model diagnostics; use `TryLit` when immediate handling is preferable.
 
 ## Advanced APIs
 

@@ -68,3 +68,48 @@ func (f TypedField[T]) EqualField(other TypedField[T]) Expr {
 func (f TypedField[T]) NotEqualField(other TypedField[T]) Expr {
 	return Ne(f.expr, other.expr)
 }
+
+// GreaterThanField compares two typed fields with the same Go type.
+func (f TypedField[T]) GreaterThanField(other TypedField[T]) Expr {
+	return GT(f.expr, other.expr)
+}
+
+// GreaterOrEqualField compares two typed fields with the same Go type.
+func (f TypedField[T]) GreaterOrEqualField(other TypedField[T]) Expr {
+	return GTE(f.expr, other.expr)
+}
+
+// LessThanField compares two typed fields with the same Go type.
+func (f TypedField[T]) LessThanField(other TypedField[T]) Expr {
+	return LT(f.expr, other.expr)
+}
+
+// LessOrEqualField compares two typed fields with the same Go type.
+func (f TypedField[T]) LessOrEqualField(other TypedField[T]) Expr {
+	return LTE(f.expr, other.expr)
+}
+
+// PlusField adds another typed field with the same Go type.
+func (f TypedField[T]) PlusField(other TypedField[T]) Expr {
+	return Add(f.expr, other.expr)
+}
+
+// MinusField subtracts another typed field with the same Go type.
+func (f TypedField[T]) MinusField(other TypedField[T]) Expr {
+	return Sub(f.expr, other.expr)
+}
+
+// TimesField multiplies by another typed field with the same Go type.
+func (f TypedField[T]) TimesField(other TypedField[T]) Expr {
+	return Mul(f.expr, other.expr)
+}
+
+// DividedByField divides by another typed field with the same Go type.
+func (f TypedField[T]) DividedByField(other TypedField[T]) Expr {
+	return Div(f.expr, other.expr)
+}
+
+// ModuloField applies modulo with another typed field with the same Go type.
+func (f TypedField[T]) ModuloField(other TypedField[T]) Expr {
+	return Mod(f.expr, other.expr)
+}

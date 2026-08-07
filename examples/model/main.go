@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"time"
 
 	"github.com/Homiakus/axiom"
 	"github.com/Homiakus/axiom/model"
@@ -33,10 +34,13 @@ func main() {
 	user := model.Bind[User](definition, "User").Default("WelcomeSent", false)
 	registered := model.EventOf[UserRegistered](definition)
 
-	// External effects require an idempotency policy. Retry/timeout/concurrency
-	// are intentionally not shown here because the current inline runtime does
-	// not yet enforce them as complete runtime guarantees.
-	definition.Policy("emailPolicy").Idempotency("required")
+	// External effects require idempotency. Retry and timeout are durable
+	// runtime guarantees; concurrency "once" is serialized within one Engine.
+	definition.Policy("emailPolicy").
+		Retry(3).
+		Timeout(5 * time.Second).
+		Concurrency("once").
+		Idempotency("required")
 
 	definition.Activity("SendWelcomeEmail").
 		Input("userId", user.String("ID")).
