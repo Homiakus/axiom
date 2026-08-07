@@ -29,28 +29,85 @@
 | External activity требует idempotency policy и key | Подтверждено compiler validation |
 | `ActTyped` отклоняет scalar input/output и nil handler при создании Engine | Подтверждено кодом и test (`AX507`) |
 | `ActTyped` принимает structs, pointers to structs и maps со string keys | Подтверждено кодом |
-| Tasks хранят input, status, attempts, lease, result/error | Подтверждено кодом |
+| Tasks хранят input, status, durable attempt budget, lease, retry deadline, result/error | Подтверждено кодом |
 | Completed task не выполняется повторно при replay/recovery | Подтверждено test |
-| Handler повторяется по `retry` | Подтверждено: до `retry + 1` вызовов |
+| `retry: N` даёт максимум `N + 1` durable handler attempts | Подтверждено кодом и test |
 | `timeout` отменяет контекст одной handler-попытки | Подтверждено кодом и test |
 | `concurrency: once` сериализует вызовы одной activity | Подтверждено внутри одного Engine |
 | `concurrency: parallel` не добавляет сериализацию | Подтверждено |
 | `concurrency: latest/first` выполняет supersession | Не реализовано; production отклоняет |
 | Expired running lease может быть возвращён в pending | Подтверждено кодом |
 
-## Retry
+## Durable retry
 
-`retry: N` означает **до N повторов после исходного вызова**, то есть максимум `N + 1` вызовов зарегистрированного handler.
+`retry: N` означает **до N повторов после исходной попытки**, то есть максимум `N + 1` persisted task attempts.
 
-Текущая реализация выполняет эти повторы внутри одного leased task и одного процесса:
+Одна lease соответствует одной попытке handler:
 
 ```text
-lease task -> handler attempt 1 -> ... -> handler attempt N+1 -> complete/fail task
+lease attempt 1
+  -> handler failure
+  -> persist pending + Attempt=1 + NextAttemptAt
+  -> process may exit
+
+lease attempt 2
+  -> handler success
+  -> complete task
 ```
 
-Повторы сейчас немедленные. Backoff, `NextAttemptAt` между handler-попытками и отдельные durable history entries для каждой попытки ещё не реализованы.
+`ActivityTask.Attempt` теперь отражает фактическое число выданных handler attempts. `MaxAttempts` сохраняет полный budget (`retry + 1`). При retry runtime очищает текущий lease, возвращает task в `pending`, сохраняет последнюю ошибку и выставляет `NextAttemptAt`.
 
-Это важная граница: поле `ActivityTask.Attempt` отражает попытки выдачи task/lease, а не каждую внутреннюю попытку handler. Поэтому текущий retry защищает от кратковременной ошибки handler во время живого процесса, но не является полноценной durable retry queue после падения процесса между попытками.
+Retry checkpoint переживает создание нового `Engine` с тем же store. Для Pebble он также переживает закрытие и повторное открытие store. Это делает retry durable относительно падения процесса **между** попытками.
+
+### Backoff
+
+Policy может задавать задержку явно:
+
+```axiom
+policy externalCall:
+  retry: 3
+  backoff: 250ms
+```
+
+Duration без wrapper означает fixed delay. Эквивалентная явная форма:
+
+```axiom
+backoff: fixed(250ms)
+```
+
+Для exponential delay:
+
+```axiom
+backoff: exponential(100ms)
+```
+
+В Go-model используются:
+
+```go
+policy := definition.Policy("externalCall")
+policy.Retry(3).Backoff(250 * time.Millisecond)
+policy.Retry(3).ExponentialBackoff(100 * time.Millisecond)
+```
+
+Если `retry` задан, а `backoff` отсутствует, runtime использует deterministic exponential backoff с базой `100ms`. Задержка ограничена сверху `30s`, чтобы повреждённая или слишком большая policy не создавала практически бесконечный wait.
+
+### Ошибки и retryability
+
+Автоматически повторяются ошибки зарегистрированного handler, включая per-attempt timeout. Детерминированные ошибки runtime contract после handler, например несовместимый activity output, не превращаются в retry loop.
+
+Отмена родительского `context.Context` прекращает ожидание и дальнейшие попытки. Уже сохранённый pending task остаётся в store и может быть продолжен другим worker/Engine позднее, если execution не был отдельно отменён.
+
+### High-level и low-level API
+
+`Run.Dispatch`, `Run.Signal` и `Run.Patch` сохраняют синхронную эргономику: если retry checkpoint создан, они ждут `NextAttemptAt` и продолжают drain, пока activity не завершится успешно, не исчерпает budget или caller context не завершится.
+
+Низкоуровневый `Engine.RunUntilIdle` не спит до будущего retry. После сохранённого checkpoint он возвращает `RetryScheduledError`, который можно распознать через:
+
+```go
+errors.Is(err, axiom.ErrRetryScheduled)
+```
+
+Это позволяет внешнему worker/scheduler сразу освободить goroutine. Если pending tasks существуют, но ни одна ещё не достигла `NextAttemptAt`, `RunUntilIdle` возвращает `nil` как временно idle.
 
 ## Timeout
 
@@ -58,7 +115,7 @@ lease task -> handler attempt 1 -> ... -> handler attempt N+1 -> complete/fail t
 
 Handler обязан соблюдать переданный `context.Context`. Библиотека не может безопасно принудительно остановить произвольный Go-код, который игнорирует отмену контекста.
 
-Если попытка завершается по deadline, она считается ошибочной и может быть повторена в пределах `retry`. Отмена родительского context прекращает дальнейшие повторы.
+Если попытка завершается по deadline, она считается retryable handler failure. Отмена родительского context прекращает текущий synchronous drain.
 
 ## Concurrency
 
@@ -76,10 +133,9 @@ Handler обязан соблюдать переданный `context.Context`. 
 
 1. требует `TransactionalStore`;
 2. включает strict fast runtime;
-3. разрешает `retry`, `timeout`, `concurrency: once` и `concurrency: parallel`;
-4. отклоняет `concurrency: latest/first` через `AX508` до появления корректной durable task supersession semantics.
-
-Таким образом production mode больше не блокирует те policy-поля, которые runtime действительно выполняет, но не обещает semantics, которых ещё нет.
+3. разрешает durable `retry`, per-attempt `timeout`, `concurrency: once` и `concurrency: parallel`;
+4. сохраняет retry checkpoint и соответствующую history атомарно внутри store transaction;
+5. отклоняет `concurrency: latest/first` через `AX508` до появления корректной durable task supersession semantics.
 
 ## Idempotency
 
@@ -87,7 +143,7 @@ Task deduplication ищет task по execution, rule, activity и idempotency k
 
 Это локальная гарантия store/runtime, а не exactly-once гарантия для сети, платёжной системы или оборудования. Activity handler должен передавать тот же key внешней системе или реализовать собственный deduplication record.
 
-Retry делает идемпотентность ещё важнее: handler может быть вызван несколько раз при одном task.
+Durable retry делает идемпотентность особенно важной: внешний effect мог успеть произойти до сетевой ошибки или падения процесса, поэтому одна task может законно вызвать handler несколько раз.
 
 ## Claims и writes
 
@@ -106,13 +162,21 @@ Transactional store определяет атомарность persisted execut
 - `RulesEvaluated` при aggregate trace;
 - `ActivityScheduled`;
 - `ActivityDeduplicated`;
+- `ActivityRetryScheduled` — attempt завершился retryable ошибкой и task durably возвращена в pending;
+- `ActivityRetryExhausted` — текущая ошибка исчерпала `MaxAttempts`;
 - `ActivityCompleted`;
-- `ActivityFailed`;
+- `ActivityFailed` — terminal failure;
 - `WriteApplied`;
 - `ExecutionReachedFixpoint`;
 - `ExecutionCanceled`.
 
-Внутренние handler-retry пока не создают отдельные history entries. `ActivityFailed` фиксируется только после исчерпания доступных retry или terminal cancellation.
+`ActivityRetryScheduled` содержит task ID, activity/rule, текущий attempt, `maxAttempts`, delay, `nextAttemptAt` и ошибку. `ActivityFailed` не пишется для промежуточной retry-попытки.
+
+## Lease recovery
+
+Если процесс исчез после получения task, но до complete/fail checkpoint, lease может быть восстановлена через `RecoverExpiredLeases`: task возвращается из `running` в `pending` и может быть выдана снова.
+
+Такой новый lease увеличивает `Attempt`, поскольку внешний effect предыдущей попытки мог успеть начаться. Поэтому idempotency contract остаётся обязательной частью безопасной работы с external activities.
 
 ## Replay
 
@@ -137,8 +201,8 @@ load -> reducer -> claims -> effects -> save
 
 ## Следующий reliability-слой
 
-1. Durable task-level retry с backoff и `NextAttemptAt`.
-2. History entries для каждой retry-попытки и исчерпания retry budget.
-3. `latest/first` через атомарную task supersession semantics.
-4. Явное distributed ownership/coordination contract для нескольких Engine/processes.
-5. Operational runbook для stuck leases, failed executions и manual recovery.
+1. `latest/first` через атомарную task supersession semantics.
+2. Явный distributed ownership/coordination contract для нескольких Engine/processes.
+3. Runtime dispatch для policy `catch:`.
+4. Operational runbook для stuck leases, failed executions и manual recovery.
+5. Wall-clock scheduler для timer triggers.

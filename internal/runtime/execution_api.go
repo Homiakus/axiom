@@ -53,7 +53,7 @@ func (r *Run) lock() (func(), error) {
 }
 
 // Dispatch creates the execution when needed, sends an event and drains
-// inline activities until the execution is idle.
+// inline activities, including durable retries, until the execution is idle.
 func (r *Run) Dispatch(ctx context.Context, event any) error {
 	unlock, err := r.lock()
 	if err != nil {
@@ -75,10 +75,11 @@ func (r *Run) Dispatch(ctx context.Context, event any) error {
 	if err := r.engine.Signal(ctx, r.id, name, payload); err != nil {
 		return err
 	}
-	return r.engine.RunUntilIdle(ctx, r.id)
+	return drainUntilIdle(ctx, r.engine, r.id)
 }
 
-// Signal dispatches an explicitly named signal and drains inline work.
+// Signal dispatches an explicitly named signal and drains inline work,
+// including any durable retries due before the caller's context ends.
 func (r *Run) Signal(ctx context.Context, name string, payload map[string]any) error {
 	unlock, err := r.lock()
 	if err != nil {
@@ -96,10 +97,11 @@ func (r *Run) Signal(ctx context.Context, name string, payload map[string]any) e
 	if err := r.engine.Signal(ctx, r.id, name, payload); err != nil {
 		return err
 	}
-	return r.engine.RunUntilIdle(ctx, r.id)
+	return drainUntilIdle(ctx, r.engine, r.id)
 }
 
-// Patch applies field changes to the execution context and drains inline work.
+// Patch applies field changes to the execution context and drains inline work,
+// including durable retries.
 func (r *Run) Patch(ctx context.Context, patch map[string]any) error {
 	unlock, err := r.lock()
 	if err != nil {
@@ -117,7 +119,7 @@ func (r *Run) Patch(ctx context.Context, patch map[string]any) error {
 	if err := r.engine.Patch(ctx, r.id, patch); err != nil {
 		return err
 	}
-	return r.engine.RunUntilIdle(ctx, r.id)
+	return drainUntilIdle(ctx, r.engine, r.id)
 }
 
 // State decodes the execution context into target. If the plan contains

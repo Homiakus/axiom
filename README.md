@@ -133,7 +133,7 @@ engine, err := axiom.Open(
 
 Режим `axiom.WithProductionMode()` дополнительно требует хранилище, реализующее `TransactionalStore`, и включает строгий fast runtime. Модель, не поддерживаемая строгим runtime, будет отклонена при создании `Engine`.
 
-`retry` и `timeout` теперь исполняются runtime вокруг activity handler. `concurrency: once` сериализует вызовы одной activity внутри конкретного `Engine`, а `parallel` не добавляет сериализацию. `concurrency: latest/first` пока отклоняются production mode с `AX508`, поскольку для них требуется корректная durable task-supersession semantics.
+`retry` выполняется на уровне durable task: каждая попытка получает отдельный lease, `Attempt`/`MaxAttempts` и `NextAttemptAt` сохраняются в store, а retry может быть продолжен новым `Engine` после перезапуска процесса. `backoff` поддерживает fixed duration и `exponential(...)`; без явного backoff используется deterministic exponential delay с базой 100 ms и cap 30 s. `timeout` применяется к каждой попытке отдельно. `concurrency: once` сериализует вызовы одной activity внутри конкретного `Engine`, а `parallel` не добавляет сериализацию. `concurrency: latest/first` пока отклоняются production mode с `AX508`, поскольку для них требуется корректная durable task-supersession semantics.
 
 ## Activity
 
@@ -183,7 +183,9 @@ history, err := run.History(ctx)
 explanation, err := run.Explain(ctx)
 ```
 
-`Run` также предоставляет `Signal`, `Patch`, `PendingActivities` и `Cancel`. Низкоуровневые методы `Engine`, требующие повторной передачи execution ID, в основном полезны для integration/tooling слоёв.
+`Run` также предоставляет `Signal`, `Patch`, `PendingActivities` и `Cancel`. `Dispatch`/`Signal`/`Patch` автоматически ждут due retry и продолжают drain в пределах caller context. Низкоуровневый `Engine.RunUntilIdle` не блокирует goroutine до будущей попытки: после durable checkpoint он возвращает `axiom.ErrRetryScheduled`, а worker может освободить выполнение до `NextAttemptAt`.
+
+Низкоуровневые методы `Engine`, требующие повторной передачи execution ID, в основном полезны для integration/tooling слоёв.
 
 ## Основные команды
 
@@ -240,11 +242,11 @@ go run ./cmd/axiombench \
 
 ## Важные текущие ограничения
 
-1. `retry` выполняется как немедленный in-process повтор handler и пока не является durable task-level retry с backoff/`NextAttemptAt` и отдельной history-записью на каждую попытку.
-2. `concurrency: once` действует внутри одного `Engine`; `latest/first` пока не имеют безопасной supersession semantics и отклоняются production mode.
-3. Блокировка одного `execution ID` действует внутри одного `Engine`, а не между процессами.
+1. `concurrency: once` действует внутри одного `Engine`; `latest/first` пока не имеют безопасной supersession semantics и отклоняются production mode.
+2. Блокировка одного `execution ID` действует внутри одного `Engine`, а не между процессами.
+3. Durable retry гарантирует сохранение checkpoint между попытками, но не exactly-once внешний эффект: activity handler всё равно должен быть идемпотентным.
 4. Typed Go Flow выполняет effects перед вызовом `FlowStore.Save`. Обработчики effects должны быть идемпотентными, а пользовательский store — учитывать возможную ошибку сохранения после внешнего эффекта.
-5. In-memory store предназначен для разработки и тестов; он не обеспечивает восстановление после перезапуска процесса.
+5. In-memory store предназначен для разработки и тестов; durable retry в нём переживает замену `Engine`, но не перезапуск самого процесса. Для process restart используется Pebble или другой durable store.
 
 Подробности и границы гарантий: [`ARCHITECTURE.md`](ARCHITECTURE.md) и [`docs/runtime-semantics.md`](docs/runtime-semantics.md).
 
