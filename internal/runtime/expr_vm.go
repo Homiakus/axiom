@@ -512,5 +512,6 @@ func containsTyped(collection any, needle any) bool {
 				return true
 			}
 		}
+	}
 	return false
 }
