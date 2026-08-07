@@ -171,7 +171,7 @@ func lexExpr(src string) ([]exprToken, error) {
 			}
 		}
 		switch src[i] {
-		case '(', ')', '[', ']', '{', '}', ',', ':', '+', '-', '>', '<':
+		case '(', ')', '[', ']', '{', '}', ',', ':', '+', '-', '*', '/', '%', '>', '<':
 			tokens = append(tokens, exprToken{kind: string(src[i]), value: string(src[i])})
 			i++
 		default:
@@ -271,11 +271,27 @@ func (p *exprParser) parseCompare() (*Expr, error) {
 }
 
 func (p *exprParser) parseAdd() (*Expr, error) {
-	left, err := p.parsePrimary()
+	left, err := p.parseMul()
 	if err != nil {
 		return nil, err
 	}
 	for p.matchValue("+") || p.matchValue("-") {
+		op := p.previous().value
+		right, err := p.parseMul()
+		if err != nil {
+			return nil, err
+		}
+		left = &Expr{Kind: ExprBinary, Op: op, Left: left, Right: right}
+	}
+	return left, nil
+}
+
+func (p *exprParser) parseMul() (*Expr, error) {
+	left, err := p.parsePrimary()
+	if err != nil {
+		return nil, err
+	}
+	for p.matchValue("*") || p.matchValue("/") || p.matchValue("%") {
 		op := p.previous().value
 		right, err := p.parsePrimary()
 		if err != nil {
