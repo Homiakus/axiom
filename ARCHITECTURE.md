@@ -1,88 +1,93 @@
 # Архитектура Axiom
 
-## Назначение документа
+## Назначение
 
-Документ описывает подтверждённую кодом архитектуру библиотеки Axiom: frontends, канонический `Plan`, compiler/runtime, хранилища, activity boundary, историю и replay.
+Документ описывает фактическую архитектуру текущего `main`: public frontends, канонический `Plan`, compiler/runtime, task orchestration, retry, supersession, policy catch, хранилища, history и replay.
 
-Он не является обещанием ещё не реализованного поведения. Текущие ограничения вынесены в отдельные разделы.
+Парсерная возможность сама по себе не считается runtime-гарантией. Актуальные поведенческие границы дополнительно зафиксированы в [`docs/runtime-semantics.md`](docs/runtime-semantics.md).
 
 ## Общая схема
 
 ```mermaid
 flowchart LR
-    Flow[Typed Go Flow] --> FlowRuntime[Flow runtime]
-    FlowRuntime --> FlowStore[FlowStore]
-    FlowRuntime --> Effects[Go effect handlers]
-
     GoModel[Declarative Go model] --> Plan[axiom.Plan]
-    AXM[AXM source] --> Compiler[Parser + compiler]
-    TOML[TOML table] --> AXMRender[TOML to AXM rendering]
-    TRIZ[TRIZ source] --> Normalize[TRIZ normalization]
-    AXMRender --> Compiler
-    Normalize --> Compiler
+    AXM[AXM] --> Compiler[Parser + compiler]
+    TOML[TOML decision table] --> Compiler
+    TRIZ[TRIZ normalization] --> Compiler
     Compiler --> Plan
 
     Plan --> Engine[Compiled Engine]
-    Engine --> RetryStore[Retry-aware Store wrapper]
-    RetryStore --> Store[Store]
-    Store --> Memory[Memory store]
-    Store --> Pebble[Pebble transactional store]
-    Engine --> Tasks[Activity tasks]
-    Tasks --> Worker[Inline worker / StartWorker]
-    Worker --> Policy[Timeout + concurrency wrapper]
-    Policy --> Activities[Registered Go activities]
-    Engine --> History[Execution history]
+    Engine --> Orchestration[Retry / supersession store wrapper]
+    Orchestration --> Store[Store]
+    Store --> Memory[Memory]
+    Store --> Pebble[Pebble TransactionalStore]
+
+    Engine --> Tasks[ActivityTask]
+    Tasks --> Attempt[Per-attempt timeout / once]
+    Attempt --> Handler[Go activity handler]
+    Handler --> Retry[Durable retry checkpoint]
+    Handler --> Catch[Terminal policy catch]
+    Catch --> Signal[Catch signal + rules]
+
+    Engine --> History[History]
     History --> Replay[ReplayFromHistory]
+
+    Flow[Typed Go Flow] --> FlowRuntime[Separate reducer runtime]
 ```
 
-## Компоненты
+## Публичные уровни
 
-| Компонент | Ответственность | Основные файлы |
-|---|---|---|
-| Public API | Загрузка, компиляция, options, activity registration, replay | `axiom.go`, `plan.go`, `runtime_aliases.go`, `retry_aliases.go` |
-| Typed Go Flow | File-free reducer API с отдельным store и effects | `flow.go` |
-| Declarative Go model | Генерация AXM из типизированных Go declarations | `model/model.go`, `model/typed.go`, `model/strict.go`, `model/policy_backoff.go` |
-| AXM frontend | Загрузка и компиляция `.axm` в `Plan` | `axm/axm.go`, `internal/lang/*`, `internal/compiler/*` |
-| TOML frontend | Разбор таблицы решений и рендеринг в AXM | `table/toml.go` |
-| TRIZ normalization | Преобразование пользовательского TRIZ-синтаксиса в AXM v0 | `internal/triz/*`, exported API в `axiom.go` |
-| Canonical Plan | Общая форма для декларативных frontends | `plan.go` |
-| Compiled runtime | Execution lifecycle, rules, claims, tasks, queries | `internal/runtime/*` |
-| Activity attempt policy | Per-attempt timeout и process-local concurrency | `internal/runtime/policy.go` |
-| Durable retry orchestration | Retry budget, `NextAttemptAt`, retry history, store wrapping | `internal/runtime/retry_store.go`, `retry_store_dedup.go` |
-| Stores | Memory и Pebble implementations | `internal/store/memory/*`, `internal/store/pebble/*`, `store/pebble/pebble.go` |
-| Code generation | Типизированные activity boundaries | `cmd/axiomgen/*` |
-| Diagrams | Mermaid и PlantUML из module/history | `diagram/diagram.go` |
-| Compatibility analysis | Bundle diff и impact report | `bundle.go` |
-| Benchmarks | Нагрузочные сценарии и percentile reports | `cmd/axiombench/main.go`, `benchmarks/latest.md` |
+### Frontends
 
-## Канонический Plan
+| Frontend | Пакет | Analysis | Когда использовать |
+|---|---|---:|---|
+| Declarative Go | `model` | static | основной путь для нового Go-кода |
+| AXM | `axm` / root compile API | static | модель вне Go, tooling |
+| TOML table | `table` | static | decision tables |
+| Typed Go Flow | root `Flow[S]` | opaque | компактный reducer без статического графа |
 
-`axiom.Plan` содержит имя, версию, digest, формат, уровень анализа и закрытую ссылку на скомпилированный module.
+Декларативные frontends сходятся в `axiom.Plan`. Typed Go Flow использует отдельный runtime.
 
-Декларативная Go-модель, AXM и TOML реализуют или используют `PlanSource` и сходятся в одном runtime. Typed Go Flow остаётся отдельным frontend, потому что произвольные Go handlers нельзя полностью статически проанализировать.
+### Канонический путь
 
-Текущие версии compiled artifacts задаются в compiler:
+```text
+Definition / AXM / TOML
+          ↓
+        Plan
+          ↓
+        Engine
+          ↓
+         Run
+```
 
-- DSL: `axm/v1`;
-- compiler: `axiom-compiler/v2`;
-- fast plan: `fast-plan/v2`.
+`Plan` содержит имя, версию, digest, frontend format, analysis level и закрытую ссылку на скомпилированный module.
 
-## Компиляция
+## Compiler
 
 ```mermaid
 flowchart TD
-    Source[AXM source] --> Parse[internal/lang.Parse]
-    Parse --> AST[lang.Module AST]
-    AST --> Symbols[Collect symbols]
-    Symbols --> Validate[Validate expressions, activities, rules, policies, cycles]
-    Validate --> Indexes[Build dependency indexes]
-    Indexes --> IDs[Build stable ID tables]
-    IDs --> Hash[Compute compiled hash]
+    Source --> Parse[Parse AST]
+    Parse --> Symbols[Collect symbols]
+    Symbols --> Validate[Validate references / rules / policies]
+    Validate --> Cycles[Computed + fact cycle checks]
+    Cycles --> Indexes[Dependency indexes]
+    Indexes --> IDs[Stable ID tables]
+    IDs --> Hash[Compiled hash]
     Hash --> Module[compiler.Module]
-    Module --> Plan[axiom.Plan]
+    Module --> Plan
 ```
 
-Компилятор обнаруживает синтаксические ошибки, неразрешённые ссылки, дубликаты, циклы, неверные activity/policy связи и ряд требований к external activity до запуска runtime.
+Compiler проверяет:
+
+- синтаксис и дубликаты declarations;
+- ссылки на context/signal/output/policy entities;
+- write targets;
+- activity/policy/idempotency requirements;
+- policy catch target signal names;
+- computed/fact cycles;
+- часть strict-fast ограничений.
+
+Canonical `Plan`/`Open`/`New` paths дополнительно ограничивают `runtime.*` query namespace стабильным набором execution metadata и возвращают `AX001` для неизвестных projection names.
 
 ## Execution lifecycle
 
@@ -90,206 +95,243 @@ flowchart TD
 stateDiagram-v2
     [*] --> Started
     Started --> Running: signal / patch / dispatch
-    Running --> Waiting: fixpoint reached / retry pending
-    Waiting --> Running: next input or due activity attempt
-    Running --> Failed: runtime, claim or exhausted activity error
-    Waiting --> Canceled: cancel
+    Running --> Waiting: fixpoint / caught failure / pending future retry
+    Waiting --> Running: next input / due activity
+    Running --> Failed: terminal uncaught runtime/activity error
     Running --> Canceled: cancel
-    Failed --> [*]
-    Canceled --> [*]
+    Waiting --> Canceled: cancel
 ```
 
-`StatusCompleted` объявлен в runtime types и поддерживается replay representation, но автоматический переход execution в `Completed` в проверенном execution path не найден. Документация не должна обещать completion rule до появления явной реализации и tests.
+`StatusCompleted` существует в types/replay representation, но автоматический completion rule не является текущей public runtime guarantee.
 
-`Run.Dispatch`:
+Операции одного execution ID сериализуются keyed lock внутри конкретного `Engine`. Межпроцессное ownership приложение организует отдельно.
 
-1. проверяет execution handle и event;
-2. создаёт execution, если он отсутствует;
-3. отправляет signal;
-4. запускает drain;
-5. если activity attempt сохранил retry checkpoint, ждёт `NextAttemptAt` в пределах caller context и продолжает;
-6. возвращается после исчерпания доступных inline tasks, успешного completion activity, terminal error или завершения caller context.
+## ActivityTask
 
-Низкоуровневый `Engine.RunUntilIdle` принципиально не ждёт будущий retry: после durable checkpoint он возвращает `ErrRetryScheduled`. Это позволяет внешнему worker/scheduler освободить goroutine.
+Task хранит:
 
-Операции одного execution сериализуются keyed lock по ID внутри одного `Engine`.
+- execution/rule/activity IDs;
+- input и idempotency key;
+- status;
+- `Attempt` / `MaxAttempts`;
+- worker lease;
+- `NextAttemptAt`;
+- result/error;
+- timestamps.
 
-## Обработка signal, task и retry
+Terminal scheduling statuses:
+
+- `completed`;
+- `failed`;
+- `superseded`.
+
+`pending` и `running` считаются active work.
+
+## Task scheduling и deduplication
+
+Перед enqueue runtime проверяет exact task key через `TaskDedupStore`, если backend поддерживает индексированный путь.
+
+Явный непустой idempotency key дедуплицирует тот же intent до concurrency supersession. Для `first/latest` пустая строка не трактуется как глобальный idempotency key — иначе все unkeyed вызовы схлопывались бы ещё до policy logic.
+
+Retry-aware store wrapper сохраняет индексные `FindTask`/`NextTaskSeq` paths memory/Pebble и не переводит обычный runtime на линейный task scan.
+
+## Durable retry
+
+`retry: N` означает максимум `N + 1` persisted handler attempts.
 
 ```mermaid
 sequenceDiagram
-    participant C as Caller
-    participant E as Engine
+    participant W as Worker
     participant S as Store
-    participant A as Activity
+    participant H as Handler
 
-    C->>E: Dispatch / Signal
-    E->>S: Get/Create execution
-    E->>S: Append SignalReceived
-    E->>E: Recompute + evaluate rules/claims
-    E->>S: Enqueue ActivityTask
-    S-->>E: Lease task, Attempt++
-    E->>A: handler(ctx with per-attempt timeout)
-    alt handler succeeds
-        A-->>E: output
-        E->>S: CompleteTask + ActivityCompleted
-        E->>E: apply writes/claims
-    else retryable handler failure and budget remains
-        A-->>E: error
-        E->>S: UpdateTask(pending, NextAttemptAt, clear lease)
-        E->>S: ActivityRetryScheduled
-        S-->>E: durable checkpoint
-    else budget exhausted / terminal failure
-        A-->>E: error
-        E->>S: ActivityRetryExhausted when applicable
-        E->>S: FailTask + ActivityFailed
+    W->>S: lease task (Attempt++)
+    W->>H: call handler
+    alt retryable failure, budget remains
+        H-->>W: error
+        W->>S: pending + clear lease + NextAttemptAt
+        W->>S: ActivityRetryScheduled
+    else terminal failure
+        H-->>W: error
+        W->>S: failed
+        W->>S: ActivityRetryExhausted when applicable
+    else success
+        H-->>W: output
+        W->>S: completed
+        W->>S: ActivityCompleted
     end
 ```
 
-`timeout` и `concurrency` применяются к одной попытке handler. Retry orchestration находится уровнем выше handler wrapper и использует persisted task state.
+Backoff forms:
 
-## History
+- duration / `fixed(duration)`;
+- `exponential(duration)`;
+- default exponential base `100ms`, cap `30s`.
 
-Основные entry types:
+Memory store сохраняет checkpoint между Engine instances, пока жив сам store object. Pebble сохраняет checkpoint между close/reopen.
 
-- `ExecutionStarted`, `ContextPatched`, `SignalReceived`;
-- `ActivityScheduled`, `ActivityDeduplicated`;
-- `ActivityRetryScheduled`;
-- `ActivityRetryExhausted`;
-- `ActivityCompleted`, `ActivityFailed`;
-- `WriteApplied`, `ExecutionReachedFixpoint`, `ExecutionCanceled`;
-- `TraceFull`: `RuleScheduled`, `RuleSkipped`;
-- `TraceAggregate`: `RulesEvaluated`.
+`Run.Dispatch/Signal/Patch` ждут due retries в caller context. Низкоуровневый `RunUntilIdle` после persisted checkpoint возвращает `ErrRetryScheduled`, чтобы scheduler не держал goroutine до будущего deadline.
 
-`ActivityRetryScheduled` означает, что ошибка попытки уже отражена в store и task снова имеет `pending` status с будущим `NextAttemptAt`. Это не terminal failure. `ActivityFailed` появляется только после terminal error или исчерпания retry budget.
+## Timeout и activity attempt wrapper
 
-## Хранилища и транзакции
+`timeout` применяется к одной handler attempt через `context.WithTimeout`.
 
-### Retry-aware wrapper
+`concurrency: once` реализован process-local mutex вокруг handler activity. Он не является distributed lock.
 
-`NewEngine` оборачивает любой `Store` retry-aware слоем. Он:
+Retry orchestration не находится внутри handler wrapper: одна lease = одна handler attempt. Это сохраняет согласованность `Attempt` с фактически выданными попытками.
 
-- не меняет persisted schema `ActivityTask`;
-- сохраняет быстрый `TaskDedupStore` path (`FindTask`, `NextTaskSeq`), если backend его предоставляет;
-- перед polling проверяет наличие due pending task, поэтому memory queue не вращается бесконечно, когда все tasks отложены;
-- отслеживает текущий leased task только как process-local вспомогательное состояние для завершения попытки;
-- переносит retry checkpoint в сам backend через `UpdateTask` + history.
+## `first` / `latest` supersession
 
-Если backend реализует `TransactionalStore`, wrapper тоже реализует `TransactionalStore` и создаёт retry-aware transaction wrapper. Retry checkpoint и history коммитятся атомарно. Ошибка commit не маскируется как успешно запланированный retry.
+Lane определяется как:
 
-### Memory store
+```text
+execution ID + activity name
+```
 
-Используется по умолчанию. Durable retry переживает замену `Engine` при использовании того же in-memory store object, но содержимое store теряется при завершении процесса.
+### first
+
+Если lane уже имеет `pending` или `running` task, новый task сохраняется как `TaskSuperseded`. Первый active task остаётся authoritative.
+
+### latest
+
+При enqueue нового task старые `pending` tasks в lane переводятся в `TaskSuperseded`. Уже `running` handler не force-cancelled. Поэтому гарантия называется **latest pending wins**.
+
+Каждое решение отражается `ActivitySuperseded` history entry.
+
+В production `WithProductionMode` требует `TransactionalStore`, поэтому `ListTasks -> supersede/keep -> enqueue -> history` выполняется в store transaction. Pebble сериализует transactions внутри store instance. Custom store обязан обеспечить достаточную isolation semantics.
+
+## Policy catch
+
+Catch предназначен для доменной маршрутизации **terminal handler failures** после retry exhaustion.
+
+```axiom
+catch:
+  PaymentDeclined -> PaymentDeclinedSignal
+  * -> GenericFailureSignal
+```
+
+Application handler возвращает стабильный code:
+
+```go
+return nil, axiom.FailActivity("PaymentDeclined", err)
+```
+
+или собственную ошибку с `ActivityErrorCode() string`.
+
+Runtime не сопоставляет arbitrary error text с catch key.
+
+Порядок:
+
+1. handler attempt завершается ошибкой;
+2. retry store либо сохраняет следующий retry checkpoint и прекращает processing;
+3. если failure terminal, task переводится в `failed`;
+4. exact catch code ищется первым, затем `*` fallback;
+5. runtime создаёт catch signal payload;
+6. target signal rules выполняются в той же store transaction;
+7. при успехе execution возвращается в `Waiting`;
+8. при ошибке catch target transaction откатывается и caller получает `AX511`.
+
+Catch payload содержит:
+
+- `activity`;
+- `rule`;
+- `taskId`;
+- `errorCode`;
+- `error`;
+- `attempt`;
+- `maxAttempts`.
+
+Успешный catch оставляет task terminal failed для аудита и пишет `ActivityFailed{caught:true}` + `ActivityCaught`.
+
+`AX503`/`AX504` output-contract errors не считаются domain failures и catch-router их не обрабатывает.
+
+### Catch rollback boundary
+
+Task lease происходит до complete transaction. Если catch target сам нарушает claim/contract и transaction откатывается, частичные catch history/context changes не сохраняются, но исходный task может остаться `running` до lease recovery. Поэтому external handler обязан быть идемпотентным.
+
+## Stores
+
+### Memory
+
+Используется по умолчанию. Подходит для tests/dev и одного процесса.
 
 ### Pebble
 
-Pebble store реализует durable и transactional storage. `NextAttemptAt` входит в ordering pending tasks, поэтому future retry не выдаётся раньше срока. Retry checkpoint переживает закрытие/reopen Pebble store.
+Durable transactional backend. Поддерживает task indexes, lease records, `NextAttemptAt`, history и transaction isolation для встроенных orchestration операций.
 
-Публичные варианты:
+Публичные options включают sync/no-sync/sync interval и JSON/Gob codecs.
 
-- sync по умолчанию;
-- `PebbleNoSync` / `WithNoSync`;
-- `PebbleSyncEvery` / `WithSyncEvery`;
-- JSON или Gob codec.
+### Transaction boundary
 
-`WithProductionMode` проверяет, что store реализует `TransactionalStore`.
-
-### Граница транзакции
-
-Execution/history/task updates выполняются через store transaction там, где runtime вызывает `withStoreTransaction`. Внешняя activity находится за границей локальной транзакции: её side effect нельзя откатить после сетевой ошибки или падения процесса.
-
-Поэтому external handler обязан быть идемпотентным по business/idempotency key. Durable retry усиливает, а не отменяет это требование.
-
-## Activity tasks
-
-Activity task содержит execution ID, rule, activity, input, idempotency key, status, `Attempt`, `MaxAttempts`, lease, `NextAttemptAt` и result/error.
-
-Runtime умеет:
-
-- ставить task в очередь;
-- выдавать due task с lease и увеличивать `Attempt`;
-- восстанавливать просроченный lease;
-- дедуплицировать незавершённую или завершённую task по rule/activity/key;
-- после retryable failure возвращать task в pending с future `NextAttemptAt`;
-- продолжать pending retry через новый `Engine`/worker;
-- фиксировать completed или terminal failed result.
-
-### Policy semantics
-
-| Поле policy | Реализованная гарантия | Текущая граница |
-|---|---|---|
-| `retry` | До `retry + 1` persisted task attempts | Не является exactly-once внешнего эффекта |
-| `backoff: 250ms` / `fixed(250ms)` | Fixed delay между attempts | Delay capped runtime-ом 30s |
-| `backoff: exponential(100ms)` | Deterministic exponential delay | Cap 30s; jitter пока не является public contract |
-| `timeout` | Отдельный `context.WithTimeout` на одну handler attempt | Handler должен соблюдать context cancellation |
-| `concurrency: once` | Одна activity сериализуется внутри одного `Engine` | Не distributed lock между process/Engine |
-| `concurrency: parallel` | Дополнительная сериализация не вводится | Общие execution/store ограничения остаются |
-| `concurrency: latest/first` | Парсится для forward compatibility | Production mode отклоняет `AX508`; supersession ещё не реализован |
-| `idempotency` | Для external activity компилятор требует `required` и key; store выполняет task deduplication | Это не exactly-once guarantee внешнего API или оборудования |
-
-Без явного `backoff` retry использует deterministic exponential base `100ms`, capped at `30s`.
-
-## Lease recovery
-
-Если process/worker исчез после lease, но до complete/fail checkpoint, `RecoverExpiredLeases` возвращает task в pending. Следующая lease увеличивает `Attempt`, потому что runtime не может доказать, успел ли предыдущий внешний effect произойти.
-
-Это intentional at-least-once execution behavior для activity attempts и ещё одна причина обязательной идемпотентности external effects.
+Store transaction может атомарно фиксировать execution/history/task state. Внешний effect activity находится за границей локальной БД и не может быть rollback-нут после успешного сетевого/аппаратного вызова.
 
 ## Production mode
 
 `WithProductionMode()`:
 
-- требует transactional store;
+- требует `TransactionalStore`;
 - включает strict fast runtime;
-- разрешает durable `retry`, `backoff`, per-attempt `timeout`, `once` и `parallel`;
-- отклоняет `latest/first` через `AX508`, пока отсутствует корректная durable supersession semantics.
+- поддерживает durable retry/backoff;
+- применяет per-attempt timeout;
+- поддерживает `parallel`, `once`, `first`, `latest`;
+- сохраняет supersession/retry/catch decisions transactionally;
+- отклоняет неизвестные concurrency modes (`AX508`).
 
-## Typed Go Flow
+## History
 
-Typed Go Flow — отдельный простой reducer runtime:
+Основные records:
 
-```text
-load state -> reducer -> claims -> execute effects -> save state and history
-```
+- `ExecutionStarted`;
+- `SignalReceived`;
+- `ContextPatched`;
+- `RulesEvaluated` / `RuleScheduled` / `RuleSkipped`;
+- `ActivityScheduled`;
+- `ActivityDeduplicated`;
+- `ActivitySuperseded`;
+- `ActivityRetryScheduled`;
+- `ActivityRetryExhausted`;
+- `ActivityCompleted`;
+- `ActivityFailed`;
+- `ActivityCaught`;
+- `WriteApplied`;
+- `ExecutionReachedFixpoint`;
+- `ExecutionCanceled`.
 
-Критическая граница: effects выполняются до `FlowStore.Save`. Если внешний эффект завершился, а сохранение затем вернуло ошибку, библиотека не может автоматически откатить внешний мир. Поэтому:
-
-- effects должны быть идемпотентны;
-- custom `FlowStore` должен иметь понятную модель отказов;
-- для durable orchestration с task records предпочтителен compiled runtime.
+History — часть audit/replay contract, но не distributed event bus.
 
 ## Replay
 
-`ReplayFromHistory` восстанавливает execution из history и проверяет module hash. History, созданная другой моделью, отклоняется.
+`ReplayFromHistory`:
 
-Завершённые activity не запускаются повторно во время replay: используются записанные результаты и writes.
+- проверяет module hash;
+- восстанавливает execution context/runtime state;
+- использует записанные activity results/writes;
+- не запускает completed external effects повторно.
+
+## Typed Go Flow
+
+Flow использует отдельную модель:
+
+```text
+load -> reducer -> claims -> effects -> save
+```
+
+Effects выполняются до `FlowStore.Save`. Если effect уже произошёл, а save затем упал, локальный runtime не может откатить внешний мир. Flow effects должны быть идемпотентны.
 
 ## Границы доверия
 
-1. **Входные events и patches.** Runtime проверяет объявленные signals и типы значений, но бизнес-авторизация остаётся приложению.
-2. **Activity handlers.** Это доверенный пользовательский Go-код с доступом к сети, оборудованию и секретам приложения.
-3. **Store.** Custom store должен соблюдать контракты атомарности, task leasing, `NextAttemptAt` и history ordering.
-4. **Execution ID.** Приложение отвечает за уникальность, маршрутизацию и распределённое владение.
-5. **Generated code.** `*_axiom.gen.go` перегенерируется; пользовательская реализация activity хранится отдельно.
+1. **Events/patches** — runtime проверяет model contract, но не бизнес-авторизацию.
+2. **Activity handlers** — доверенный пользовательский Go-код с внешними side effects.
+3. **Custom Store** — обязан соблюдать atomicity, leasing, ordering и isolation contracts.
+4. **Execution ID ownership** — распределённая маршрутизация остаётся приложению.
+5. **Generated code** — generated boundaries перегенерируются; application implementation хранится отдельно.
 
-## Точки расширения
+## Оставшиеся крупные ограничения
 
-- `Store` и `TransactionalStore`;
-- `FlowStore`;
-- `Activity` / `ActTyped`;
-- `PlanSource`;
-- отдельные frontends поверх канонического Plan;
-- tooling через `ModuleBundle`, dependency indexes и package `diagram`.
-
-## Известные ограничения
-
-- нет распределённого lock/owner router;
-- `concurrency: latest/first` не имеют task-supersession semantics;
-- durable retry обеспечивает at-least-once attempts, но не exactly-once внешний effect;
-- автоматический переход в `Completed` не подтверждён execution path;
-- runtime dispatch policy `catch:` не реализован;
-- wall-clock scheduler для timer triggers не определён как public guarantee;
-- Typed Go Flow не имеет статического dependency graph;
-- imports разбираются parser, но полноценная загрузка/линковка нескольких AXM modules не подтверждена в проверенном runtime path;
-- exported TRIZ API присутствует, но его уровень стабильности должен быть явно определён владельцем проекта;
-- отдельного HTTP API, миграций БД и env-based configuration в проекте не обнаружено.
+- нет distributed owner/lock protocol между процессами;
+- wall-clock scheduler для timer triggers ещё не является public guarantee;
+- AXM imports парсятся, но multi-file resolver/linker публичного compiler path не реализован;
+- failed catch transaction может потребовать lease recovery;
+- автоматический переход execution в `Completed` не определён;
+- Typed Go Flow остаётся analysis-opaque и имеет отдельную effect/save boundary;
+- root public API требует дополнительной классификации/cleanup до `v1.0.0`.
