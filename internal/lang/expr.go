@@ -405,6 +405,9 @@ func (p *exprParser) parsePrimary() (*Expr, error) {
 	case "{":
 		var values []*Expr
 		for !p.checkValue("}") {
+			if p.atEnd() {
+				return nil, fmt.Errorf("expected }")
+			}
 			key := p.advance()
 			if key.kind != "ident" {
 				return nil, fmt.Errorf("expected map key")
