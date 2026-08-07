@@ -3,6 +3,13 @@ package runtime
 import "context"
 
 func (s *retryStore) FindTask(ctx context.Context, executionID string, ruleName string, activityName string, idempotencyKey string) (*ActivityTask, error) {
+	mode := activityPolicy(s.module, activityName).concurrency
+	if idempotencyKey == "" && (mode == "first" || mode == "latest") {
+		// Supersession policies need to observe each newly scheduled unkeyed
+		// task. Treating the empty string as an idempotency key would collapse
+		// every invocation before first/latest can make its scheduling decision.
+		return nil, nil
+	}
 	if indexed, ok := s.Store.(TaskDedupStore); ok {
 		task, err := indexed.FindTask(ctx, executionID, ruleName, activityName, idempotencyKey)
 		if err != nil {
