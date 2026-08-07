@@ -75,7 +75,7 @@ Compiler scope rules:
 - `runtime.*` is valid only in query scope;
 - writes may target only declared context fields.
 
-Stable runtime query projections in the v0.1.0 baseline are:
+Stable runtime query projections are:
 
 ```text
 runtime.id
@@ -89,7 +89,7 @@ runtime.compilerVersion
 runtime.planVersion
 ```
 
-Unknown runtime projection names are not part of the public contract. The evaluator currently returns `nil` for an unknown runtime field; compiler-side rejection is planned as additional hardening.
+Canonical `CompilePlan`, `NewPlan`, `Plan.New`, `Open`, and `New` paths reject unsupported runtime projection names with `AX001`. The lower-level raw `Compile` API still returns a compiled `Module` before this canonical Plan/runtime namespace validation step.
 
 ## Types
 
@@ -256,7 +256,7 @@ policy externalCall:
   retry: 2
   backoff: exponential(100ms)
   timeout: 5s
-  concurrency: once
+  concurrency: latest
   idempotency: required
 ```
 
@@ -268,12 +268,18 @@ Implemented semantics:
 - `backoff: exponential(100ms)` configures deterministic exponential delay from the supplied base duration;
 - when retry is configured without `backoff`, runtime uses deterministic exponential delay starting at `100ms`; retry delay is capped at `30s`;
 - retry checkpoints produce `ActivityRetryScheduled` history entries, and exhausted budgets produce `ActivityRetryExhausted` before terminal `ActivityFailed`;
-- a persisted retry checkpoint can be continued by another `Engine` using the same store; with Pebble it survives closing and reopening the process-local store handle;
-- `timeout` creates a fresh `context.WithTimeout` for each handler attempt. Handlers must observe `ctx` cancellation; arbitrary Go code that ignores its context cannot be forcibly stopped safely;
+- a persisted retry checkpoint can be continued by another `Engine` using the same store; with Pebble it survives closing and reopening the store;
+- `timeout` creates a fresh `context.WithTimeout` for each handler attempt. Handlers must observe `ctx` cancellation;
+- `concurrency: parallel` adds no activity-level serialization;
 - `concurrency: once` serializes calls of that activity inside one `Engine`;
-- `concurrency: parallel` adds no runtime serialization;
-- `concurrency: latest` and `concurrency: first` are parsed for forward compatibility but are rejected by `WithProductionMode()` with `AX508` until durable task-supersession semantics are implemented;
+- `concurrency: first` keeps the earliest `pending` or `running` task in the same `execution ID + activity` lane and records later tasks as `TaskSuperseded`;
+- `concurrency: latest` supersedes older **pending** tasks in the same lane and keeps only the newest pending task;
+- `latest` never forcibly cancels an already `running` Go handler. A new latest task waits behind the current running lease, while later pending arrivals may replace that waiting pending task;
+- supersession emits `ActivitySuperseded` history records;
+- explicit non-empty `idempotencyKey` deduplication occurs before first/latest supersession, so the same external intent remains deduplicated;
 - `idempotency: required` is enforced for `effect: external` activities together with an `idempotencyKey`.
+
+`WithProductionMode()` accepts `parallel`, `once`, `first`, and `latest`, but requires a `TransactionalStore`. Pending-task supersession is executed inside the store transaction. The built-in Pebble store serializes its transactions on the store instance; custom transactional stores must provide sufficient transaction isolation for correct scheduling decisions.
 
 Low-level `Engine.RunUntilIdle` returns `axiom.ErrRetryScheduled` after a retry checkpoint instead of sleeping until a future `NextAttemptAt`. The high-level `Run.Dispatch`, `Run.Signal`, and `Run.Patch` APIs wait for due retries within the caller context and continue draining automatically.
 
@@ -361,6 +367,8 @@ query CheckoutStatus:
 
 Queries are read-only projections evaluated against an existing execution. Runtime projections expose stable execution metadata but do not expose task locks, worker state, or other internal scheduling details.
 
+For Go-model definitions, prefer `model.Runtime.ID()`, `model.Runtime.Status()`, and the other `model.Runtime.*` helpers over manually spelling `model.Ref("runtime.*")`.
+
 ## Runtime entry points
 
 Compile AXM bytes:
@@ -405,7 +413,8 @@ These are compiled-artifact identifiers, not semantic-version release tags.
 
 - Imports have parser/AST support but no verified public resolver/linker.
 - Timer triggers are indexed, but a complete wall-clock scheduler contract is not documented as implemented.
-- `concurrency: latest/first` and policy catch dispatch remain incomplete.
-- Durable retry does not make external effects exactly once; handlers for external systems must remain idempotent.
-- Unknown `runtime.*` projection names are not yet rejected by the compiler.
+- Policy `catch:` targets are parsed/validated but runtime catch dispatch remains incomplete.
+- `concurrency: latest` is a **latest pending wins** guarantee; it does not forcibly stop a running handler.
+- Durable retry and supersession do not make external effects exactly once; handlers for external systems must remain idempotent.
+- The raw low-level `Compile` API does not itself reject unknown `runtime.*` projection names; canonical Plan/Open/New paths do.
 - Unknown AXM type identifiers are not rejected consistently.

@@ -371,10 +371,10 @@ func WithStrictFastRuntime() Option {
 // WithProductionMode enables production safeguards:
 //   - Strict fast runtime (no slow-path fallback)
 //   - Transactional store required (Pebble or custom durable store)
-//   - retry and timeout policies are enforced around activity handlers
+//   - durable retry/backoff and per-attempt timeout
 //   - concurrency: once is serialized per activity within an Engine
 //   - concurrency: parallel remains unrestricted
-//   - concurrency: latest/first are rejected until task supersession semantics exist
+//   - concurrency: first/latest use transactional pending-task supersession
 func WithProductionMode() Option {
 	return func(c *engineConfig) error {
 		c.production = true
@@ -552,6 +552,9 @@ func New(module *Module, opts ...Option) (*Engine, error) {
 	if module == nil {
 		return nil, Errors{{Code: "AX500", Kind: "config", Message: "module is required", Hint: "Pass the module returned by Load or Compile."}}
 	}
+	if err := ValidateRuntimeQueryProjections(module); err != nil {
+		return nil, err
+	}
 
 	cfg := engineConfig{
 		store:      memory.NewStore(),
@@ -566,9 +569,8 @@ func New(module *Module, opts ...Option) (*Engine, error) {
 		}
 	}
 
-	// Production mode requires a transactional store. retry/timeout and the
-	// supported concurrency modes are enforced by the runtime activity wrapper;
-	// modes that still require task supersession are rejected below.
+	// Production mode requires transactional storage so retry checkpoints and
+	// pending-task supersession decisions are committed atomically.
 	if cfg.production {
 		if _, ok := cfg.store.(runtimepkg.TransactionalStore); !ok {
 			return nil, Errors{{Code: "AX506", Kind: "config", Message: "production mode requires a transactional store", Hint: "Use OpenPebble or provide a Store that implements TransactionalStore."}}
@@ -726,17 +728,8 @@ func validateProductionPolicyConfig(module *Module) error {
 		}
 		value := fmt.Sprint(expr.Value)
 		switch value {
-		case "", "parallel", "once":
+		case "", "parallel", "once", "latest", "first":
 			continue
-		case "latest", "first":
-			errs = append(errs, Error{
-				Code:    "AX508",
-				Kind:    "config",
-				Entity:  name + ".concurrency",
-				Line:    policy.Line,
-				Message: fmt.Sprintf("concurrency mode %q requires task supersession semantics that are not yet production-safe", value),
-				Hint:    "Use concurrency: once or concurrency: parallel in production until supersession semantics are implemented.",
-			})
 		default:
 			errs = append(errs, Error{
 				Code:    "AX508",
@@ -744,7 +737,7 @@ func validateProductionPolicyConfig(module *Module) error {
 				Entity:  name + ".concurrency",
 				Line:    policy.Line,
 				Message: fmt.Sprintf("unsupported concurrency mode %q", value),
-				Hint:    "Use concurrency: once or concurrency: parallel.",
+				Hint:    "Use concurrency: parallel, once, latest, or first.",
 			})
 		}
 	}

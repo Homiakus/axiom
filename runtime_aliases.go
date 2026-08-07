@@ -19,8 +19,9 @@ const (
 	StatusFailed    = runtimepkg.StatusFailed
 	StatusCanceled  = runtimepkg.StatusCanceled
 
-	TaskPending   = runtimepkg.TaskPending
-	TaskRunning   = runtimepkg.TaskRunning
-	TaskCompleted = runtimepkg.TaskCompleted
-	TaskFailed    = runtimepkg.TaskFailed
+	TaskPending    = runtimepkg.TaskPending
+	TaskRunning    = runtimepkg.TaskRunning
+	TaskCompleted  = runtimepkg.TaskCompleted
+	TaskFailed     = runtimepkg.TaskFailed
+	TaskSuperseded = runtimepkg.TaskSuperseded
 )

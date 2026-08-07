@@ -133,7 +133,9 @@ engine, err := axiom.Open(
 
 Режим `axiom.WithProductionMode()` дополнительно требует хранилище, реализующее `TransactionalStore`, и включает строгий fast runtime. Модель, не поддерживаемая строгим runtime, будет отклонена при создании `Engine`.
 
-`retry` выполняется на уровне durable task: каждая попытка получает отдельный lease, `Attempt`/`MaxAttempts` и `NextAttemptAt` сохраняются в store, а retry может быть продолжен новым `Engine` после перезапуска процесса. `backoff` поддерживает fixed duration и `exponential(...)`; без явного backoff используется deterministic exponential delay с базой 100 ms и cap 30 s. `timeout` применяется к каждой попытке отдельно. `concurrency: once` сериализует вызовы одной activity внутри конкретного `Engine`, а `parallel` не добавляет сериализацию. `concurrency: latest/first` пока отклоняются production mode с `AX508`, поскольку для них требуется корректная durable task-supersession semantics.
+`retry` выполняется на уровне durable task: каждая попытка получает отдельный lease, `Attempt`/`MaxAttempts` и `NextAttemptAt` сохраняются в store, а retry может быть продолжен новым `Engine` после перезапуска процесса. `backoff` поддерживает fixed duration и `exponential(...)`; без явного backoff используется deterministic exponential delay с базой 100 ms и cap 30 s. `timeout` применяется к каждой попытке отдельно.
+
+Режимы concurrency имеют разные гарантии: `parallel` не добавляет сериализацию, `once` сериализует одну activity внутри конкретного `Engine`, `first` сохраняет первый active task в lane `execution + activity` и помечает последующие как `TaskSuperseded`, а `latest` заменяет старые **pending** tasks самым новым pending task. Уже `running` Go handler `latest` насильно не отменяет — новый task ждёт за текущим lease. В production все четыре режима требуют транзакционного store через `WithProductionMode()`; для Pebble supersession decision выполняется атомарно внутри store transaction.
 
 ## Activity
 
@@ -156,7 +158,7 @@ engine, err := axiom.Open(
 
 `axiom.Act` с `axiom.Input` / `axiom.Output` остаётся удобным для динамических integration boundaries, где payload уже представлен как `map[string]any`.
 
-Для activity с `effect: external` компилятор требует policy с `idempotency: required` и `idempotencyKey`. Это обеспечивает дедупликацию заданий в используемом store, но не является гарантией exactly-once во внешней системе.
+Для activity с `effect: external` компилятор требует policy с `idempotency: required` и `idempotencyKey`. Это обеспечивает дедупликацию заданий в используемом store, но не является гарантией exactly-once во внешней системе. Явный непустой idempotency key имеет приоритет над `first/latest`: повтор того же external intent дедуплицируется до supersession.
 
 ## Поддерживаемые способы описания процесса
 
@@ -242,11 +244,12 @@ go run ./cmd/axiombench \
 
 ## Важные текущие ограничения
 
-1. `concurrency: once` действует внутри одного `Engine`; `latest/first` пока не имеют безопасной supersession semantics и отклоняются production mode.
-2. Блокировка одного `execution ID` действует внутри одного `Engine`, а не между процессами.
-3. Durable retry гарантирует сохранение checkpoint между попытками, но не exactly-once внешний эффект: activity handler всё равно должен быть идемпотентным.
-4. Typed Go Flow выполняет effects перед вызовом `FlowStore.Save`. Обработчики effects должны быть идемпотентными, а пользовательский store — учитывать возможную ошибку сохранения после внешнего эффекта.
-5. In-memory store предназначен для разработки и тестов; durable retry в нём переживает замену `Engine`, но не перезапуск самого процесса. Для process restart используется Pebble или другой durable store.
+1. `once` действует внутри одного `Engine`; он не является distributed lock. `first/latest` атомарно управляют pending tasks только в пределах гарантий конкретного `TransactionalStore`.
+2. `latest` не отменяет уже running handler: текущая гарантия — **latest pending wins**, а не unsafe force-cancel произвольного Go-кода.
+3. Блокировка одного `execution ID` действует внутри одного `Engine`, а не между процессами.
+4. Durable retry гарантирует сохранение checkpoint между попытками, но не exactly-once внешний эффект: activity handler всё равно должен быть идемпотентным.
+5. Typed Go Flow выполняет effects перед вызовом `FlowStore.Save`. Обработчики effects должны быть идемпотентными, а пользовательский store — учитывать возможную ошибку сохранения после внешнего эффекта.
+6. In-memory store предназначен для разработки и тестов; durable retry в нём переживает замену `Engine`, но не перезапуск самого процесса. Для process restart используется Pebble или другой durable store.
 
 Подробности и границы гарантий: [`ARCHITECTURE.md`](ARCHITECTURE.md) и [`docs/runtime-semantics.md`](docs/runtime-semantics.md).
 

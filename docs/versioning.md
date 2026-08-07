@@ -85,10 +85,10 @@ The workflow refuses malformed versions, duplicate tags, missing release notes, 
 - [x] Current usability audit exists and the July report is marked superseded.
 - [x] `CHANGELOG.md` and `docs/releases/v0.1.0.md` are prepared.
 - [x] Release-readiness PR is merged into `main` with green CI.
-- [x] Release tooling supports a frozen `release/v0.1.0` candidate.
+- [x] Frozen `release/v0.1.0` branch exists at the reviewed baseline.
 - [ ] `release` workflow is executed for `v0.1.0`.
 
-Changes merged after the frozen candidate, including durable task-level retry, belong to `Unreleased` and do not retroactively change the `v0.1.0` contract.
+Changes merged after the frozen candidate, including durable retry, runtime-query validation, and task supersession, belong to `Unreleased` and do not retroactively change the `v0.1.0` contract.
 
 ## Deprecation policy
 
@@ -104,10 +104,17 @@ A field being accepted by a model or parser does not automatically make it a run
 
 ## Post-v0.1.0 reliability roadmap
 
-1. atomic task supersession for `concurrency: latest/first`;
-2. compile-time validation of `runtime.*` projection names;
-3. runtime policy `catch:` dispatch;
-4. wall-clock timer scheduler contract;
-5. AXM multi-file import resolver/linker;
-6. distributed execution ownership/coordination contract;
-7. root public API classification and cleanup before `v1.0.0`.
+Completed after the frozen v0.1.0 baseline:
+
+- durable task-level retry/backoff with persisted `NextAttemptAt` and retry history;
+- stable runtime-query namespace validation on canonical Plan/Open/New paths;
+- transactional pending-task supersession for `concurrency: first/latest`.
+
+Next priorities:
+
+1. runtime policy `catch:` dispatch;
+2. wall-clock timer scheduler contract;
+3. AXM multi-file import resolver/linker;
+4. distributed execution ownership/coordination contract;
+5. operational recovery tooling/runbook for stuck leases and failed executions;
+6. root public API classification and cleanup before `v1.0.0`.

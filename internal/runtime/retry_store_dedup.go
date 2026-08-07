@@ -3,8 +3,24 @@ package runtime
 import "context"
 
 func (s *retryStore) FindTask(ctx context.Context, executionID string, ruleName string, activityName string, idempotencyKey string) (*ActivityTask, error) {
+	mode := activityPolicy(s.module, activityName).concurrency
+	if idempotencyKey == "" && (mode == "first" || mode == "latest") {
+		// Supersession policies need to observe each newly scheduled unkeyed
+		// task. Treating the empty string as an idempotency key would collapse
+		// every invocation before first/latest can make its scheduling decision.
+		return nil, nil
+	}
 	if indexed, ok := s.Store.(TaskDedupStore); ok {
-		return indexed.FindTask(ctx, executionID, ruleName, activityName, idempotencyKey)
+		task, err := indexed.FindTask(ctx, executionID, ruleName, activityName, idempotencyKey)
+		if err != nil {
+			return nil, err
+		}
+		if task == nil || task.Status != TaskSuperseded {
+			return task, nil
+		}
+		// A superseded task is terminal for scheduling purposes and must not
+		// shadow an older completed/active task with the same idempotency key.
+		// Fall back to the full task list only for this uncommon case.
 	}
 	tasks, err := s.Store.ListTasks(ctx, executionID)
 	if err != nil {
@@ -12,7 +28,7 @@ func (s *retryStore) FindTask(ctx context.Context, executionID string, ruleName 
 	}
 	for index := len(tasks) - 1; index >= 0; index-- {
 		task := tasks[index]
-		if task == nil {
+		if task == nil || task.Status == TaskSuperseded {
 			continue
 		}
 		if task.RuleName == ruleName && task.ActivityName == activityName && task.IdempotencyKey == idempotencyKey {
