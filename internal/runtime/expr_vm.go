@@ -491,9 +491,8 @@ func typedEqual(left any, right any) bool {
 		rs, rok := right.(string)
 		return rok && ls == rs
 	}
-	if la, ok := number(left); ok {
-		rb, rok := number(right)
-		return rok && la == rb
+	if equal, ok := numbersEqual(left, right); ok {
+		return equal
 	}
 	return reflect.DeepEqual(left, right)
 }
