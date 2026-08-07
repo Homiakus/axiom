@@ -114,7 +114,7 @@ engine, err := axiom.Open(
 )
 ```
 
-`axiom.WithProductionMode()` additionally requires a `TransactionalStore`, enables the strict fast runtime, and fail-fast rejects `policy.retry`, `policy.timeout`, and `policy.concurrency` while those fields are not complete runtime guarantees.
+`axiom.WithProductionMode()` additionally requires a `TransactionalStore` and enables the strict fast runtime. `retry` and `timeout` are enforced around activity handlers. `concurrency: once` serializes calls of one activity within one Engine, while `parallel` adds no serialization. `concurrency: latest/first` are still rejected with `AX508` because they require correct durable task-supersession semantics.
 
 ## Activities
 
@@ -133,6 +133,8 @@ engine, err := axiom.Open(
 ```
 
 `ActTyped` accepts structs, pointers to structs, or maps with string keys for input and output. Unsupported shapes and nil typed handlers fail during Engine construction with `AX507` instead of becoming late runtime failures. Use `axiom.Act` for dynamic `map[string]any` integration boundaries.
+
+For `effect: external`, the compiler requires an idempotency policy and `idempotencyKey`. This deduplicates tasks in the configured store, but it is not an exactly-once guarantee for an external API, device, or payment system. A retry can invoke a handler more than once, so the external operation must remain idempotent.
 
 ## Frontends
 
@@ -187,10 +189,11 @@ The command is non-interactive and prints a JSON report. See [`docs/axiomgen.md`
 
 ## Current limitations
 
-1. `policy.retry`, `policy.timeout`, and `policy.concurrency` are model fields but are not yet complete runtime guarantees. Development/test plans may compile them for tooling and forward compatibility; `WithProductionMode()` rejects them with `AX508`.
-2. Execution locking is process-local to one `Engine`.
-3. Typed Go Flow executes effects before `FlowStore.Save`; effect handlers must be idempotent and custom stores must account for a save failure after an external effect.
-4. The in-memory store is for development and tests and does not survive process restarts.
+1. `retry` is currently an immediate in-process handler retry. It is not yet a durable task-level retry with backoff, `NextAttemptAt`, and a separate history record for every attempt.
+2. `concurrency: once` is local to one Engine. `latest/first` do not yet have safe task-supersession semantics and are rejected in production mode.
+3. Execution locking is process-local to one `Engine`.
+4. Typed Go Flow executes effects before `FlowStore.Save`; effect handlers must be idempotent and custom stores must account for a save failure after an external effect.
+5. The in-memory store is for development and tests and does not survive process restarts.
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`docs/runtime-semantics.md`](docs/runtime-semantics.md).
 
