@@ -30,10 +30,11 @@ const (
 type TaskStatus string
 
 const (
-	TaskPending   TaskStatus = "pending"
-	TaskRunning   TaskStatus = "running"
-	TaskCompleted TaskStatus = "completed"
-	TaskFailed    TaskStatus = "failed"
+	TaskPending    TaskStatus = "pending"
+	TaskRunning    TaskStatus = "running"
+	TaskCompleted  TaskStatus = "completed"
+	TaskFailed     TaskStatus = "failed"
+	TaskSuperseded TaskStatus = "superseded"
 )
 
 type FactValue struct {
