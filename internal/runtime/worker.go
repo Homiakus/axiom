@@ -20,6 +20,9 @@ func (e *Engine) StartWorker(ctx context.Context, opts WorkerOptions) error {
 	if opts.PollInterval <= 0 {
 		opts.PollInterval = 100 * time.Millisecond
 	}
+	if opts.LeaseTTL <= 0 {
+		opts.LeaseTTL = time.Minute
+	}
 
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -61,8 +64,10 @@ func (e *Engine) StartWorker(ctx context.Context, opts WorkerOptions) error {
 						}
 					}
 					if err := e.RunUntilIdle(workerCtx, opts.ExecutionID); err != nil {
-						reportError(err)
-						return
+						if _, scheduled := retryScheduled(err); !scheduled {
+							reportError(err)
+							return
+						}
 					}
 				}
 
