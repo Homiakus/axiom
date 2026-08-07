@@ -26,6 +26,9 @@ func NewPlan(module *Module, format, version string, analysis AnalysisLevel) (*P
 	if module == nil {
 		return nil, fmt.Errorf("axiom: module is required")
 	}
+	if err := ValidateRuntimeQueryProjections(module); err != nil {
+		return nil, err
+	}
 	if format == "" {
 		format = "unknown"
 	}
@@ -67,6 +70,9 @@ func (p *Plan) CompilePlan() (*Plan, error) {
 	if p == nil || p.module == nil {
 		return nil, fmt.Errorf("axiom: plan is required")
 	}
+	if err := ValidateRuntimeQueryProjections(p.module); err != nil {
+		return nil, err
+	}
 	return p, nil
 }
 
@@ -74,6 +80,9 @@ func (p *Plan) CompilePlan() (*Plan, error) {
 func (p *Plan) New(opts ...Option) (*Engine, error) {
 	if p == nil || p.module == nil {
 		return nil, fmt.Errorf("axiom: plan is required")
+	}
+	if err := ValidateRuntimeQueryProjections(p.module); err != nil {
+		return nil, err
 	}
 	return New(p.module, opts...)
 }
