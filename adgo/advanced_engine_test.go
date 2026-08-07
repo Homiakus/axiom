@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -149,7 +150,7 @@ func TestEnsembleSelectsBestAndAccountsAllBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Budget.Cost != .9 || result.Budget.LLMCalls != 2 {
+	if math.Abs(result.Budget.Cost-.9) > 1e-9 || result.Budget.LLMCalls != 2 {
 		t.Fatalf("budget=%+v", result.Budget)
 	}
 	if QualityUtility(result.Quality) != .97 {
