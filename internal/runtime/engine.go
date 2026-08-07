@@ -99,8 +99,6 @@ func (e *Engine) signal(ctx context.Context, executionID string, signalName stri
 	err = e.processRules(ctx, execution, queue, evalEnv{execution: execution, signal: payload, changed: map[string]struct{}{}})
 	if err != nil {
 		execution.Status = StatusFailed
-		// Best-effort save: execution is already in a failed state;
-		// returning the original error takes priority.
 		_ = e.store.SaveExecution(ctx, execution)
 		return err
 	}
@@ -131,8 +129,6 @@ func (e *Engine) patch(ctx context.Context, executionID string, patch map[string
 	changedAtoms, err := e.recomputeFast(execution, changedSet(changed))
 	if err != nil {
 		execution.Status = StatusFailed
-		// Best-effort save: execution is already in a failed state;
-		// returning the original error takes priority.
 		_ = e.store.SaveExecution(ctx, execution)
 		return err
 	}
@@ -140,8 +136,6 @@ func (e *Engine) patch(ctx context.Context, executionID string, patch map[string
 	err = e.processRules(ctx, execution, queue, evalEnv{execution: execution, changed: changedSet(changed)})
 	if err != nil {
 		execution.Status = StatusFailed
-		// Best-effort save: execution is already in a failed state;
-		// returning the original error takes priority.
 		_ = e.store.SaveExecution(ctx, execution)
 		return err
 	}
@@ -192,6 +186,9 @@ func (e *Engine) completeActivity(ctx context.Context, executionID string, task 
 		if err := e.store.FailTask(ctx, task.ID, activityErr.Error()); err != nil {
 			return err
 		}
+		if caught, err := e.handleActivityCatch(ctx, execution, task, activityErr, runErr); caught {
+			return err
+		}
 		if err := e.store.AppendHistory(ctx, executionID, "ActivityFailed", map[string]any{"activity": task.ActivityName, "rule": task.RuleName, "error": activityErr.Error()}); err != nil {
 			return err
 		}
@@ -212,8 +209,6 @@ func (e *Engine) completeActivity(ctx context.Context, executionID string, task 
 			return historyErr
 		}
 		execution.Status = StatusFailed
-		// Best-effort save: execution is already in a failed state;
-		// returning the original error takes priority.
 		_ = e.store.SaveExecution(ctx, execution)
 		return err
 	}
@@ -230,24 +225,18 @@ func (e *Engine) completeActivity(ctx context.Context, executionID string, task 
 	changed, err := e.applyWrites(ctx, execution, rule, evalEnv{execution: execution, output: result, changed: map[string]struct{}{}})
 	if err != nil {
 		execution.Status = StatusFailed
-		// Best-effort save: execution is already in a failed state;
-		// returning the original error takes priority.
 		_ = e.store.SaveExecution(ctx, execution)
 		return err
 	}
 	changedAtoms, err := e.recomputeFast(execution, changedSet(changed))
 	if err != nil {
 		execution.Status = StatusFailed
-		// Best-effort save: execution is already in a failed state;
-		// returning the original error takes priority.
 		_ = e.store.SaveExecution(ctx, execution)
 		return err
 	}
 	queue := e.rulesForChangedFast(changed, changedAtoms)
 	if err := e.processRules(ctx, execution, queue, evalEnv{execution: execution, changed: changedSet(changed)}); err != nil {
 		execution.Status = StatusFailed
-		// Best-effort save: execution is already in a failed state;
-		// returning the original error takes priority.
 		_ = e.store.SaveExecution(ctx, execution)
 		return err
 	}
@@ -802,7 +791,6 @@ func (e *Engine) validateActivityOutput(activityName string, output map[string]a
 				Message: fmt.Sprintf("activity %s output field %s has type %T, want %s", activityName, field.Name, value, field.Type),
 				Hint:    "Make the Go activity output match the .axm output type.",
 			}
-		}
 	}
 	return nil
 }
