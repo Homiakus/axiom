@@ -73,34 +73,38 @@ func TestStructToOutputSupportsNamedStringKeyMaps(t *testing.T) {
 	}
 }
 
-func TestProductionModeAcceptsEnforcedRetryTimeoutAndOnce(t *testing.T) {
-	module, err := Compile([]byte(`domain ProductionGuard
+func TestProductionModeAcceptsImplementedPolicyModes(t *testing.T) {
+	for _, mode := range []string{"parallel", "once", "latest", "first"} {
+		t.Run(mode, func(t *testing.T) {
+			module, err := Compile([]byte(`domain ProductionGuard
 
 policy delivery:
   retry: 3
   timeout: 2s
-  concurrency: once
+  concurrency: ` + mode + `
 `))
-	if err != nil {
-		t.Fatal(err)
-	}
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	store, err := OpenPebble(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+			store, err := OpenPebble(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
 
-	if _, err = New(module, WithStore(store), WithProductionMode()); err != nil {
-		t.Fatalf("production mode rejected enforced policy: %v", err)
+			if _, err = New(module, WithStore(store), WithProductionMode()); err != nil {
+				t.Fatalf("production mode rejected implemented policy %s: %v", mode, err)
+			}
+		})
 	}
 }
 
-func TestProductionModeRejectsConcurrencyModesWithoutSupersessionSemantics(t *testing.T) {
+func TestProductionModeRejectsUnknownConcurrencyMode(t *testing.T) {
 	module, err := Compile([]byte(`domain ProductionGuard
 
 policy delivery:
-  concurrency: latest
+  concurrency: newest
 `))
 	if err != nil {
 		t.Fatal(err)
