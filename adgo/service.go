@@ -153,9 +153,18 @@ func (s *WorkerService) slot(ctx context.Context, spec WorkerSpec) error {
 	}
 }
 
-func (s *WorkerService) Drain(ctx context.Context) error {
+// BeginDrain is non-blocking and synchronously closes the polling gate. Once it
+// returns, this WorkerService will never claim another task. Already claimed
+// work is intentionally allowed to finish under its existing lease/heartbeat.
+func (s *WorkerService) BeginDrain() {
 	s.draining.Store(true)
 	s.drainOnce.Do(func() { close(s.drain) })
+}
+
+// Drain first performs BeginDrain and then waits for all currently claimed work
+// to finish, or until the caller's deadline expires.
+func (s *WorkerService) Drain(ctx context.Context) error {
+	s.BeginDrain()
 	select {
 	case <-s.done:
 		return nil
