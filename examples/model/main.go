@@ -29,10 +29,29 @@ type SendWelcomeEmailOutput struct {
 	Sent bool `json:"sent"`
 }
 
+var (
+	userID          = model.Key[User, string]("ID")
+	userEmail       = model.Key[User, string]("Email")
+	userWelcomeSent = model.Key[User, bool]("WelcomeSent")
+
+	registeredUserID = model.Key[UserRegistered, string]("UserID")
+	registeredEmail  = model.Key[UserRegistered, string]("Email")
+)
+
 func main() {
+	ctx := context.Background()
 	definition := model.New("Welcome")
-	user := model.Bind[User](definition, "User").Default("WelcomeSent", false)
+	user := model.Bind[User](definition, "User")
 	registered := model.EventOf[UserRegistered](definition)
+
+	// Field keys keep names in one place. Their owner/value type is checked when
+	// the model uses them, while json/axiom tags still control serialized names.
+	model.StateDefault(user, userWelcomeSent, false)
+	id := model.StateField(user, userID)
+	email := model.StateField(user, userEmail)
+	welcomeSent := model.StateField(user, userWelcomeSent)
+	incomingID := model.EventField(registered, registeredUserID)
+	incomingEmail := model.EventField(registered, registeredEmail)
 
 	// External effects require idempotency. Retry and timeout are durable
 	// runtime guarantees; concurrency "once" is serialized within one Engine.
@@ -43,27 +62,27 @@ func main() {
 		Idempotency("required")
 
 	definition.Activity("SendWelcomeEmail").
-		Input("userId", user.String("ID")).
-		Input("email", user.String("Email")).
+		Input("userId", id).
+		Input("email", email).
 		Output("sent", "Bool").
 		Effect("external").
-		IdempotencyKey(user.String("ID")).
+		IdempotencyKey(id).
 		Policy("emailPolicy")
 
 	definition.Rule("captureRegistration").
 		On(registered.Trigger()).
-		Set(user.String("ID"), registered.String("UserID")).
-		Set(user.String("Email"), registered.String("Email"))
+		Set(id, incomingID).
+		Set(email, incomingEmail)
 
 	definition.Rule("sendWelcomeEmail").
-		On(user.Ref.Changed("Email")).
-		When(user.Bool("WelcomeSent").Equal(false)).
+		On(model.StateChanged(user, userEmail)).
+		When(welcomeSent.Equal(false)).
 		Run("SendWelcomeEmail").
-		Set(user.Bool("WelcomeSent"), model.OutputBool("sent"))
+		Set(welcomeSent, model.OutputBool("sent"))
 
 	definition.Claim(
 		"welcomeSentRequiresEmail",
-		model.Implies(user.Bool("WelcomeSent").Equal(true), model.Exists(user.String("Email").Expr())),
+		model.Implies(welcomeSent.Equal(true), model.Exists(email.Expr())),
 	)
 
 	engine, err := axiom.Open(
@@ -77,10 +96,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if err := engine.Execution("user-1").Dispatch(
-		context.Background(),
-		UserRegistered{UserID: "user-1", Email: "user@example.com"},
-	); err != nil {
+	run := engine.Execution("user-1")
+	if err := run.Dispatch(ctx, UserRegistered{UserID: "user-1", Email: "user@example.com"}); err != nil {
 		log.Fatal(err)
 	}
+
+	var state User
+	if err := run.State(ctx, &state); err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("welcome sent: %v", state.WelcomeSent)
 }
