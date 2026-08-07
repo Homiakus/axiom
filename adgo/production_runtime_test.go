@@ -42,8 +42,8 @@ func TestOpenProductionPebbleReopensExecution(t *testing.T) {
 
 func TestWorkerServiceDrainFinishesClaimedWithoutTakingNext(t *testing.T) {
 	plan, err := Compile(Definition{ID: "drain", Version: "1", GlobalConcurrency: 2, Nodes: []Node{
-		{ID: "a", Kind: NodeActivity, Activity: "a"},
-		{ID: "b", Kind: NodeActivity, Activity: "b"},
+		{ID: "a", Kind: NodeActivity, Activity: "a", Next: []Transition{{To: "b"}}},
+		{ID: "b", Kind: NodeActivity, Activity: "b", DependsOn: []string{"a"}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -81,6 +81,8 @@ func TestWorkerServiceDrainFinishesClaimedWithoutTakingNext(t *testing.T) {
 		t.Fatal("worker did not claim first task")
 	}
 	// BeginDrain is synchronous: after it returns no new task may be claimed.
+	// b only becomes ready after a commits, so this specifically tests the drain
+	// barrier rather than the tie-breaking order between concurrently ready tasks.
 	service.BeginDrain()
 	close(release)
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), time.Second)
@@ -96,6 +98,16 @@ func TestWorkerServiceDrainFinishesClaimedWithoutTakingNext(t *testing.T) {
 	}
 	if !service.Status().Stopped || !service.Status().Draining {
 		t.Fatalf("status=%+v", service.Status())
+	}
+	execution, err := store.Load(ctx, "drain-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execution.Nodes["a"].Status != NodeCompleted || execution.Nodes["b"].Status != NodeRunning {
+		t.Fatalf("a=%s b=%s", execution.Nodes["a"].Status, execution.Nodes["b"].Status)
+	}
+	if len(execution.ActiveTasks) != 1 {
+		t.Fatalf("active tasks=%d want one queued b task for another worker", len(execution.ActiveTasks))
 	}
 }
 
