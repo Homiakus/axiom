@@ -28,6 +28,12 @@ func DefaultScheduler() UtilityScheduler {
 	return UtilityScheduler{QualityWeight: 3, CostWeight: 1, LatencyWeight: .05, RiskWeight: .75, DeadlineWeight: 2, BlockedWeight: .25}
 }
 
+// Select performs both utility ranking and hard admission. Existing pending or
+// running tasks count against every concurrency/resource limit, so a coordinator
+// cannot oversubscribe the plan merely by scheduling another super-step while
+// workers are still busy. Estimated cost is reserved for active and newly
+// selected work, preventing one parallel batch from individually fitting but
+// collectively exceeding the execution budget.
 func (s UtilityScheduler) Select(p *Plan, e *Execution, in []Candidate) []Candidate {
 	now := time.Now().UTC()
 	out := append([]Candidate(nil), in...)
@@ -55,13 +61,41 @@ func (s UtilityScheduler) Select(p *Plan, e *Execution, in []Candidate) []Candid
 		}
 		return out[i].Score > out[j].Score
 	})
-	limit := p.GlobalConcurrency
-	if limit <= 0 || limit > len(out) {
-		limit = len(out)
-	}
-	selected := make([]Candidate, 0, limit)
+
 	activityCount := map[string]int{}
 	capCount := map[string]int{}
+	resources := map[string]struct{}{}
+	activeCount := 0
+	reservedCost := 0.0
+	for _, task := range e.ActiveTasks {
+		if task.Status != TaskPending && task.Status != TaskRunning {
+			continue
+		}
+		activeCount++
+		activityCount[task.Activity]++
+		if node, ok := p.Nodes[task.NodeID]; ok {
+			reservedCost += node.EstimatedCost
+			if node.Capability != "" {
+				capCount[node.Capability]++
+			}
+			for _, key := range node.ResourceKeys {
+				resources[key] = struct{}{}
+			}
+		}
+	}
+
+	limit := len(out)
+	if p.GlobalConcurrency > 0 {
+		limit = p.GlobalConcurrency - activeCount
+		if limit < 0 {
+			limit = 0
+		}
+		if limit > len(out) {
+			limit = len(out)
+		}
+	}
+	selected := make([]Candidate, 0, limit)
+	selectedCost := 0.0
 	for _, c := range out {
 		if len(selected) >= limit {
 			break
@@ -75,8 +109,8 @@ func (s UtilityScheduler) Select(p *Plan, e *Execution, in []Candidate) []Candid
 			}
 		}
 		conflict := false
-		for _, picked := range selected {
-			if overlap(c.Node.ResourceKeys, picked.Node.ResourceKeys) {
+		for _, key := range c.Node.ResourceKeys {
+			if _, exists := resources[key]; exists {
 				conflict = true
 				break
 			}
@@ -84,10 +118,21 @@ func (s UtilityScheduler) Select(p *Plan, e *Execution, in []Candidate) []Candid
 		if conflict {
 			continue
 		}
+		if e.BudgetLimit.MaxCost > 0 && e.BudgetUsage.Cost+reservedCost+selectedCost+c.Node.EstimatedCost > e.BudgetLimit.MaxCost {
+			continue
+		}
+		if e.BudgetLimit.MaxDuration > 0 && c.Node.EstimatedLatency > 0 && now.Sub(e.CreatedAt)+c.Node.EstimatedLatency > e.BudgetLimit.MaxDuration {
+			continue
+		}
+
 		selected = append(selected, c)
+		selectedCost += c.Node.EstimatedCost
 		activityCount[c.Activity]++
 		if c.Node.Capability != "" {
 			capCount[c.Node.Capability]++
+		}
+		for _, key := range c.Node.ResourceKeys {
+			resources[key] = struct{}{}
 		}
 	}
 	return selected
