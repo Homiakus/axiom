@@ -350,6 +350,27 @@ func signedInteger(value any) (int64, bool) {
 		return int64(v), true
 	case int64:
 		return v, true
+	case uint:
+		if uint64(v) > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(v), true
+	case uint8:
+		return int64(v), true
+	case uint16:
+		return int64(v), true
+	case uint32:
+		return int64(v), true
+	case uint64:
+		if v > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(v), true
+	case uintptr:
+		if uint64(v) > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(v), true
 	default:
 		return 0, false
 	}
