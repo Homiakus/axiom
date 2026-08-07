@@ -6,9 +6,26 @@ Axiom follows the pre-v1 Semantic Versioning policy described in [`docs/versioni
 
 ## [Unreleased]
 
+### Added
+
+- durable task-level retry checkpoints backed by `ActivityTask.Attempt`, `MaxAttempts`, and `NextAttemptAt`;
+- `ActivityRetryScheduled` and `ActivityRetryExhausted` history events;
+- public `axiom.ErrRetryScheduled` / `axiom.RetryScheduledError` for low-level schedulers;
+- retry `backoff` policy with fixed duration, `fixed(...)`, and `exponential(...)` forms;
+- `model.PolicyBuilder.Backoff` and `ExponentialBackoff` helpers;
+- memory-store Engine replacement and Pebble close/reopen regression tests for retry recovery.
+
+### Changed
+
+- `retry: N` now means up to `N + 1` persisted task leases/handler attempts instead of an in-process handler loop;
+- `timeout` remains scoped to one handler attempt;
+- `Run.Dispatch`, `Run.Signal`, and `Run.Patch` keep synchronous behavior by waiting for due durable retries within the caller context;
+- low-level `Engine.RunUntilIdle` returns `ErrRetryScheduled` after a retry checkpoint instead of sleeping until `NextAttemptAt`;
+- delayed in-memory tasks are prefiltered before polling, preventing pending-queue spin when all work is scheduled for the future;
+- retry-aware stores preserve indexed `TaskDedupStore` behavior instead of falling back to linear task scans.
+
 ### Planned
 
-- durable task-level retry with backoff and `NextAttemptAt` scheduling;
 - production-safe `concurrency: latest/first` task supersession;
 - runtime dispatch for policy `catch:` mappings;
 - stricter validation of unknown `runtime.*` query projection names;
