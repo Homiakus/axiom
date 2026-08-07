@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -39,6 +40,8 @@ func evalExpr(expr *lang.Expr, env evalEnv) (any, error) {
 			return exists(value), nil
 		case "not":
 			return !truthy(value), nil
+		case "-":
+			return negateValue(value)
 		default:
 			return nil, fmt.Errorf("unsupported unary operator %s", expr.Op)
 		}
@@ -119,15 +122,13 @@ func evalBinary(expr *lang.Expr, env evalEnv) (any, error) {
 	case "+":
 		return addValues(left, right)
 	case "-":
-		a, aok := number(left)
-		b, bok := number(right)
-		if !aok || !bok {
-			return nil, fmt.Errorf("operator - requires numbers")
-		}
-		if isIntLike(left) && isIntLike(right) {
-			return int(a - b), nil
-		}
-		return a - b, nil
+		return subtractValues(left, right)
+	case "*":
+		return multiplyValues(left, right)
+	case "/":
+		return divideValues(left, right)
+	case "%":
+		return moduloValues(left, right)
 	default:
 		return nil, fmt.Errorf("unsupported binary operator %s", expr.Op)
 	}
@@ -372,4 +373,69 @@ func addValues(left any, right any) (any, error) {
 		return fmt.Sprint(left) + s, nil
 	}
 	return nil, fmt.Errorf("operator + requires numbers or strings")
+}
+
+func negateValue(value any) (any, error) {
+	n, ok := number(value)
+	if !ok {
+		return nil, fmt.Errorf("unary - requires a number")
+	}
+	if isIntLike(value) {
+		return int(-n), nil
+	}
+	return -n, nil
+}
+
+func subtractValues(left any, right any) (any, error) {
+	a, aok := number(left)
+	b, bok := number(right)
+	if !aok || !bok {
+		return nil, fmt.Errorf("operator - requires numbers")
+	}
+	if isIntLike(left) && isIntLike(right) {
+		return int(a - b), nil
+	}
+	return a - b, nil
+}
+
+func multiplyValues(left any, right any) (any, error) {
+	a, aok := number(left)
+	b, bok := number(right)
+	if !aok || !bok {
+		return nil, fmt.Errorf("operator * requires numbers")
+	}
+	if isIntLike(left) && isIntLike(right) {
+		return int(a * b), nil
+	}
+	return a * b, nil
+}
+
+func divideValues(left any, right any) (any, error) {
+	a, aok := number(left)
+	b, bok := number(right)
+	if !aok || !bok {
+		return nil, fmt.Errorf("operator / requires numbers")
+	}
+	if b == 0 {
+		return nil, fmt.Errorf("division by zero")
+	}
+	if isIntLike(left) && isIntLike(right) {
+		return int(a) / int(b), nil
+	}
+	return a / b, nil
+}
+
+func moduloValues(left any, right any) (any, error) {
+	a, aok := number(left)
+	b, bok := number(right)
+	if !aok || !bok {
+		return nil, fmt.Errorf("operator %% requires numbers")
+	}
+	if b == 0 {
+		return nil, fmt.Errorf("modulo by zero")
+	}
+	if isIntLike(left) && isIntLike(right) {
+		return int(a) % int(b), nil
+	}
+	return math.Mod(a, b), nil
 }
