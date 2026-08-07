@@ -45,6 +45,25 @@ query Metadata:
 	}
 }
 
+func TestNewRejectsUnknownRuntimeProjectionFromCompiledModule(t *testing.T) {
+	module, err := Compile([]byte(`domain RuntimeValidation
+
+query Metadata:
+  return:
+    typo = runtime.noSuchField
+`))
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	_, err = New(module)
+	if err == nil {
+		t.Fatal("New() succeeded, want unknown runtime projection error")
+	}
+	if !strings.Contains(err.Error(), "AX001") || !strings.Contains(err.Error(), "runtime.noSuchField") {
+		t.Fatalf("New() error = %v, want AX001 for runtime.noSuchField", err)
+	}
+}
+
 func TestRuntimeQueryProjectionNamesAreStableAndSorted(t *testing.T) {
 	got := RuntimeQueryProjectionNames()
 	want := []string{
