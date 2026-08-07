@@ -46,17 +46,28 @@ type Submitted struct {
     Total int `json:"total"`
 }
 
+var (
+    orderStatus    = model.Key[Order, string]("Status")
+    orderTotal     = model.Key[Order, int]("Total")
+    submittedTotal = model.Key[Submitted, int]("Total")
+)
+
 func OpenEngine() (*axiom.Engine, error) {
     definition := model.New("Orders")
-    order := model.Bind[Order](definition, "Order").Default("Status", "draft")
+    order := model.Bind[Order](definition, "Order")
     submitted := model.EventOf[Submitted](definition)
+
+    model.StateDefault(order, orderStatus, "draft")
+    status := model.StateField(order, orderStatus)
+    total := model.StateField(order, orderTotal)
+    incomingTotal := model.EventField(submitted, submittedTotal)
 
     definition.Rule("submit").
         On(submitted.Trigger()).
-        Set(order.String("Status"), "submitted").
-        Set(order.Int("Total"), submitted.Int("Total"))
+        Set(status, "submitted").
+        Set(total, incomingTotal)
 
-    definition.Claim("totalIsNotNegative", order.Int("Total").GreaterOrEqual(0))
+    definition.Claim("totalIsNotNegative", total.GreaterOrEqual(0))
 
     return axiom.Open(definition)
 }
@@ -66,13 +77,47 @@ func Submit(ctx context.Context, engine *axiom.Engine, id string, total int) err
 }
 ```
 
+### Small models vs reusable field keys
+
+For a small definition, direct helpers remain intentionally concise:
+
+```go
+order.String("Status")
+order.Int("Total")
+submitted.Int("Total")
+```
+
+When a field is referenced in many rules, claims, activities or queries, prefer declaring its name once:
+
+```go
+var orderTotal = model.Key[Order, int]("Total")
+
+total := model.StateField(order, orderTotal)
+```
+
+`FieldKey[Owner, Value]` provides two useful checks without introducing code generation:
+
+- the `Owner` generic prevents using an `Order` key with a different state/event type;
+- the `Value` generic is validated against the selected Go field when the key is resolved. Optional pointer fields may use the pointed-to logical value type.
+
+A key may use either the Go field name or its serialized `axiom`/`json` name. Invalid names and type mismatches are returned as model diagnostics at `Compile`, not normal-path panics.
+
+Related helpers:
+
+- `model.StateField(state, key)` — resolve a reusable state field;
+- `model.EventField(event, key)` — resolve a reusable event field;
+- `model.StateChanged(state, key)` — create `changed(...)` from the same key;
+- `model.StateDefault(state, key, value)` — set a type-checked default.
+
+This localizes reflection-based names instead of pretending reflection can remove them entirely. If a project needs zero handwritten field names, use generated bindings as a separate tooling layer rather than making the core builder opaque.
+
 ### Prefer strict typed expression helpers
 
 `TypedField[T]` keeps the compatibility operators (`EQ`, `GT`, `Add`, and others), but new code should prefer helpers that constrain literal values to `T`:
 
 ```go
-order.Int("Total").GreaterOrEqual(0)
-order.String("Status").Equal("submitted")
+total.GreaterOrEqual(0)
+status.Equal("submitted")
 ```
 
 That lets the Go compiler reject accidental literal type mismatches before Axiom compiles the model.
@@ -80,9 +125,9 @@ That lets the Go compiler reject accidental literal type mismatches before Axiom
 For field-to-field operations, prefer the typed `*Field` helpers. They require both operands to use the same Go type:
 
 ```go
-order.Int("Total").GreaterOrEqualField(limit.Int("Minimum"))
-order.Int("Subtotal").PlusField(order.Int("Tax"))
-order.String("Status").EqualField(previous.String("Status"))
+total.GreaterOrEqualField(minimum)
+subtotal.PlusField(tax)
+status.EqualField(previousStatus)
 ```
 
 Available field-to-field helpers cover equality, ordering and arithmetic: `EqualField`, `NotEqualField`, `GreaterThanField`, `GreaterOrEqualField`, `LessThanField`, `LessOrEqualField`, `PlusField`, `MinusField`, `TimesField`, `DividedByField` and `ModuloField`.
@@ -160,7 +205,7 @@ See `docs/runtime-semantics.md` for the detailed contract and failure boundaries
 
 Examples intentionally handle returned errors. Production code should do the same. `Must*` helpers are intended for tests, fixtures and initialization paths where a panic is explicitly acceptable.
 
-The declarative model builder accumulates user-facing diagnostics for invalid state/event shapes and unknown fields and reports them from `Compile` instead of using panic as the normal validation path. Literal encoding failures are also retained and reported as model diagnostics; use `TryLit` when immediate handling is preferable.
+The declarative model builder accumulates user-facing diagnostics for invalid state/event shapes and unknown fields and reports them from `Compile` instead of using panic as the normal validation path. Literal encoding failures and invalid reusable field keys are likewise reported as model diagnostics; use `TryLit` when immediate literal validation is preferable.
 
 ## Advanced APIs
 

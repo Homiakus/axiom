@@ -142,16 +142,16 @@ func render(value document) (string, error) {
 	for _, policy := range value.Policies {
 		fmt.Fprintf(&out, "policy %s:\n", policy.Name)
 		if policy.Retry > 0 {
-			fmt.Fprintf(&out, "  retry = %d\n", policy.Retry)
+			fmt.Fprintf(&out, "  retry: %d\n", policy.Retry)
 		}
 		if policy.Timeout != "" {
-			fmt.Fprintf(&out, "  timeout = %s\n", policy.Timeout)
+			fmt.Fprintf(&out, "  timeout: %s\n", policy.Timeout)
 		}
 		if policy.Concurrency != "" {
-			fmt.Fprintf(&out, "  concurrency = %s\n", policy.Concurrency)
+			fmt.Fprintf(&out, "  concurrency: %s\n", policy.Concurrency)
 		}
 		if policy.Idempotency != "" {
-			fmt.Fprintf(&out, "  idempotency = %s\n", policy.Idempotency)
+			fmt.Fprintf(&out, "  idempotency: %s\n", policy.Idempotency)
 		}
 		out.WriteByte('\n')
 	}

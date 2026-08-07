@@ -16,7 +16,9 @@ Axiom follows the pre-v1 Semantic Versioning policy described in [`docs/versioni
 - memory-store Engine replacement and Pebble close/reopen regression tests for retry recovery;
 - terminal `TaskSuperseded` status and `ActivitySuperseded` history entries;
 - transactional pending-task supersession for `concurrency: first` and `concurrency: latest`;
-- stable runtime query namespace validation and `model.Runtime.*` helpers.
+- stable runtime query namespace validation and `model.Runtime.*` helpers;
+- reusable `model.FieldKey[Owner, Value]` declarations with `Key`, `StateField`, `EventField`, `StateChanged`, and `StateDefault` helpers for larger typed models;
+- runnable walkthroughs for the Go model, Flow, durable order, AXM, TOML table, and TRIZ frontends.
 
 ### Changed
 
@@ -30,7 +32,13 @@ Axiom follows the pre-v1 Semantic Versioning policy described in [`docs/versioni
 - `concurrency: latest` replaces older pending work with the newest pending task, but never pretends to forcibly cancel arbitrary running Go code;
 - explicit non-empty idempotency keys continue to deduplicate the same external intent before supersession logic is applied;
 - production mode accepts `parallel`, `once`, `first`, and `latest` when used with a transactional store;
-- unknown `runtime.*` projections are rejected on canonical Plan/Open/New paths instead of silently becoming `nil`.
+- unknown `runtime.*` projections are rejected on canonical Plan/Open/New paths instead of silently becoming `nil`;
+- the Russian and English READMEs now lead with one `Definition -> Plan -> Engine -> Run` mental model, make `model` the explicit default frontend, and separate small-model string helpers from reusable typed field keys;
+- the examples index is now a runnable learning path, and CI executes every documented public example so onboarding commands cannot silently drift.
+
+### Fixed
+
+- the TOML decision-table renderer now emits canonical AXM policy entries with `:` instead of invalid `=` assignment syntax; policy-bearing TOML definitions such as `examples/table/welcome.toml` now compile and run through `table.Load`.
 
 ### Planned
 
