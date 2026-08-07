@@ -124,7 +124,6 @@ func buildModel() *model.Definition {
 
 	definition.Rule("createOrder").
 		On(created.Trigger()).
-		When(incomingTotal.GreaterThan(0)).
 		Set(total, incomingTotal).
 		Set(status, "pending")
 
@@ -140,6 +139,7 @@ func buildModel() *model.Definition {
 		Run("SendReceipt").
 		Set(receiptSent, model.OutputBool("sent"))
 
+	definition.Claim("totalNonNegative", total.GreaterOrEqual(0))
 	definition.Claim(
 		"paidRequiresPayment",
 		model.Implies(status.Equal("paid"), model.Exists(paymentID.Expr())),
