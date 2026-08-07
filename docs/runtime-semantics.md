@@ -18,8 +18,7 @@
 | Блокировка действует между процессами | Не реализовано |
 | `Dispatch` автоматически создаёт отсутствующий execution | Подтверждено кодом |
 | Production mode требует transactional store | Подтверждено кодом и test |
-| Production mode принимает `retry`, `timeout`, `concurrency: once/parallel` | Подтверждено кодом и test |
-| Production mode отклоняет `concurrency: latest/first` | Подтверждено кодом и test (`AX508`) |
+| Production mode принимает `retry`, `timeout`, `parallel`, `once`, `first`, `latest` | Подтверждено кодом и test |
 
 ## Activity
 
@@ -35,7 +34,9 @@
 | `timeout` отменяет контекст одной handler-попытки | Подтверждено кодом и test |
 | `concurrency: once` сериализует вызовы одной activity | Подтверждено внутри одного Engine |
 | `concurrency: parallel` не добавляет сериализацию | Подтверждено |
-| `concurrency: latest/first` выполняет supersession | Не реализовано; production отклоняет |
+| `concurrency: first` сохраняет первый active task | Подтверждено кодом и test |
+| `concurrency: latest` заменяет старые pending tasks новым pending task | Подтверждено кодом и test |
+| `latest` принудительно отменяет уже running Go handler | Не реализовано намеренно |
 | Expired running lease может быть возвращён в pending | Подтверждено кодом |
 
 ## Durable retry
@@ -55,7 +56,7 @@ lease attempt 2
   -> complete task
 ```
 
-`ActivityTask.Attempt` теперь отражает фактическое число выданных handler attempts. `MaxAttempts` сохраняет полный budget (`retry + 1`). При retry runtime очищает текущий lease, возвращает task в `pending`, сохраняет последнюю ошибку и выставляет `NextAttemptAt`.
+`ActivityTask.Attempt` отражает фактическое число выданных handler attempts. `MaxAttempts` сохраняет полный budget (`retry + 1`). При retry runtime очищает текущий lease, возвращает task в `pending`, сохраняет последнюю ошибку и выставляет `NextAttemptAt`.
 
 Retry checkpoint переживает создание нового `Engine` с тем же store. Для Pebble он также переживает закрытие и повторное открытие store. Это делает retry durable относительно падения процесса **между** попытками.
 
@@ -89,7 +90,7 @@ policy.Retry(3).Backoff(250 * time.Millisecond)
 policy.Retry(3).ExponentialBackoff(100 * time.Millisecond)
 ```
 
-Если `retry` задан, а `backoff` отсутствует, runtime использует deterministic exponential backoff с базой `100ms`. Задержка ограничена сверху `30s`, чтобы повреждённая или слишком большая policy не создавала практически бесконечный wait.
+Если `retry` задан, а `backoff` отсутствует, runtime использует deterministic exponential backoff с базой `100ms`. Задержка ограничена сверху `30s`.
 
 ### Ошибки и retryability
 
@@ -107,7 +108,7 @@ policy.Retry(3).ExponentialBackoff(100 * time.Millisecond)
 errors.Is(err, axiom.ErrRetryScheduled)
 ```
 
-Это позволяет внешнему worker/scheduler сразу освободить goroutine. Если pending tasks существуют, но ни одна ещё не достигла `NextAttemptAt`, `RunUntilIdle` возвращает `nil` как временно idle.
+Если pending tasks существуют, но ни одна ещё не достигла `NextAttemptAt`, `RunUntilIdle` возвращает `nil` как временно idle.
 
 ## Timeout
 
@@ -119,13 +120,57 @@ Handler обязан соблюдать переданный `context.Context`. 
 
 ## Concurrency
 
-Поддерживаемые режимы:
+### `parallel`
 
-- `parallel` — runtime не добавляет ограничение на параллельные вызовы activity;
-- `once` — вызовы одной activity сериализуются mutex-ом внутри конкретного `Engine`;
-- `latest` и `first` — синтаксис парсится, но production mode возвращает `AX508`, потому что корректная semantics требует атомарной отмены/замещения pending tasks.
+Runtime не добавляет activity-level сериализацию. Execution/store ограничения по-прежнему действуют.
 
-`once` — **process-local guarantee**. Он не является распределённым lock между несколькими процессами или несколькими Engine. Для такого сценария приложению всё ещё нужен ownership/router или внешний coordination mechanism.
+### `once`
+
+Вызовы одной activity сериализуются mutex-ом внутри конкретного `Engine`.
+
+`once` — **process-local guarantee**. Он не является distributed lock между несколькими process/Engine.
+
+### `first`
+
+`first` создаёт одну activity lane на пару:
+
+```text
+execution ID + activity name
+```
+
+Если в lane уже есть `pending` или `running` task, новая scheduled task сохраняется со статусом `superseded`. Первая active task остаётся authoritative.
+
+Это отличается от deduplication: superseded task сохраняется для аудита и получает `ActivitySuperseded` history entry.
+
+### `latest`
+
+`latest` заменяет **только pending work** в той же lane:
+
+```text
+pending A
+schedule B -> A superseded, B pending
+schedule C -> B superseded, C pending
+```
+
+Если task уже `running`, runtime не пытается насильно остановить произвольный Go handler. Новый task остаётся pending за running attempt. Следующий newer pending task может supersede именно этот pending task.
+
+Таким образом current guarantee — **latest pending wins**, а не unsafe force-cancel running code.
+
+### Идемпотентность и supersession
+
+Явный непустой `idempotencyKey` сильнее supersession: повтор того же external intent дедуплицируется до решения `first/latest`.
+
+Для `first/latest` пустая строка не трактуется как глобальный idempotency key. Иначе все unkeyed вызовы одной activity схлопывались бы ещё до supersession layer.
+
+`TaskSuperseded` является terminal scheduling status. Такие tasks не выдаются worker-у и не считаются pending activity.
+
+### Атомарность
+
+Production mode требует `TransactionalStore`. Внутри scheduling transaction решение `ListTasks -> supersede/keep -> EnqueueTask -> history` выполняется как один store-level unit.
+
+Встроенный Pebble store сериализует transactions на своём store instance, поэтому concurrent Engines, использующие один Pebble store, получают атомарное pending-supersession решение.
+
+Custom `TransactionalStore` обязан обеспечивать transaction isolation, достаточную для согласованного task scheduling. Сам факт реализации интерфейса не превращает слабую пользовательскую транзакцию в distributed consensus.
 
 ## Production guardrail
 
@@ -133,13 +178,14 @@ Handler обязан соблюдать переданный `context.Context`. 
 
 1. требует `TransactionalStore`;
 2. включает strict fast runtime;
-3. разрешает durable `retry`, per-attempt `timeout`, `concurrency: once` и `concurrency: parallel`;
-4. сохраняет retry checkpoint и соответствующую history атомарно внутри store transaction;
-5. отклоняет `concurrency: latest/first` через `AX508` до появления корректной durable task supersession semantics.
+3. разрешает durable `retry`/`backoff` и per-attempt `timeout`;
+4. разрешает `concurrency: parallel`, `once`, `first`, `latest`;
+5. сохраняет retry checkpoints и supersession decisions внутри store transaction;
+6. отклоняет неизвестные concurrency modes через `AX508`.
 
 ## Idempotency
 
-Task deduplication ищет task по execution, rule, activity и idempotency key. Незавершённая или completed task не планируется повторно. Failed task не блокирует новое планирование.
+Task deduplication ищет task по execution, rule, activity и explicit idempotency key. Незавершённая или completed task с тем же explicit key не планируется повторно. Failed task не блокирует новое планирование.
 
 Это локальная гарантия store/runtime, а не exactly-once гарантия для сети, платёжной системы или оборудования. Activity handler должен передавать тот же key внешней системе или реализовать собственный deduplication record.
 
@@ -162,6 +208,7 @@ Transactional store определяет атомарность persisted execut
 - `RulesEvaluated` при aggregate trace;
 - `ActivityScheduled`;
 - `ActivityDeduplicated`;
+- `ActivitySuperseded` — task был отброшен или заменён policy `first/latest`;
 - `ActivityRetryScheduled` — attempt завершился retryable ошибкой и task durably возвращена в pending;
 - `ActivityRetryExhausted` — текущая ошибка исчерпала `MaxAttempts`;
 - `ActivityCompleted`;
@@ -170,6 +217,8 @@ Transactional store определяет атомарность persisted execut
 - `ExecutionReachedFixpoint`;
 - `ExecutionCanceled`.
 
+Для `first` history `ActivitySuperseded` указывает сохранённую earlier task. Для `latest` entry указывает `replacedBy` newer task ID.
+
 `ActivityRetryScheduled` содержит task ID, activity/rule, текущий attempt, `maxAttempts`, delay, `nextAttemptAt` и ошибку. `ActivityFailed` не пишется для промежуточной retry-попытки.
 
 ## Lease recovery
@@ -177,6 +226,22 @@ Transactional store определяет атомарность persisted execut
 Если процесс исчез после получения task, но до complete/fail checkpoint, lease может быть восстановлена через `RecoverExpiredLeases`: task возвращается из `running` в `pending` и может быть выдана снова.
 
 Такой новый lease увеличивает `Attempt`, поскольку внешний effect предыдущей попытки мог успеть начаться. Поэтому idempotency contract остаётся обязательной частью безопасной работы с external activities.
+
+## Runtime query namespace
+
+Стабильные `runtime.*` поля:
+
+- `runtime.id`;
+- `runtime.domain`;
+- `runtime.status`;
+- `runtime.version`;
+- `runtime.createdAt`;
+- `runtime.updatedAt`;
+- `runtime.moduleHash`;
+- `runtime.compilerVersion`;
+- `runtime.planVersion`.
+
+Canonical `Plan`/`Open`/`New` paths отклоняют неизвестные runtime projections через `AX001`. Для Go-model рекомендуется discoverable namespace `model.Runtime.*`.
 
 ## Replay
 
@@ -201,8 +266,8 @@ load -> reducer -> claims -> effects -> save
 
 ## Следующий reliability-слой
 
-1. `latest/first` через атомарную task supersession semantics.
-2. Явный distributed ownership/coordination contract для нескольких Engine/processes.
-3. Runtime dispatch для policy `catch:`.
-4. Operational runbook для stuck leases, failed executions и manual recovery.
-5. Wall-clock scheduler для timer triggers.
+1. Явный distributed ownership/coordination contract для нескольких Engine/processes.
+2. Runtime dispatch для policy `catch:`.
+3. Operational runbook для stuck leases, failed executions и manual recovery.
+4. Wall-clock scheduler для timer triggers.
+5. Multi-file AXM resolver/linker.
