@@ -16,7 +16,7 @@ jobs:
         with:
           go-version: '1.26.x'
 
-      - name: Resolve published pseudo-version and IRIS consumer sums
+      - name: Resolve published pseudo-version, consumer sums and module zip
         shell: bash
         run: |
           set -euo pipefail
@@ -26,6 +26,8 @@ jobs:
           cd /tmp/axiom-sum-probe
           go mod init example.com/axiom-sum-probe
           go mod download -json "github.com/Homiakus/axiom@$version" | tee "$GITHUB_WORKSPACE/artifacts/module-download.json"
+          zip_path="$(go env GOMODCACHE)/cache/download/github.com/!homiakus/axiom/@v/${version}.zip"
+          cp "$zip_path" "$GITHUB_WORKSPACE/artifacts/axiom-module.zip"
 
           cd /tmp/iris-adgo-consumer
           cat > go.mod <<EOF
