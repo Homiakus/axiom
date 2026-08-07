@@ -44,10 +44,37 @@ func TestTypedFieldStrictFieldHelpers(t *testing.T) {
 	left := Field[int](Ref("Counter.left"))
 	right := Field[int](Ref("Counter.right"))
 
-	if got := left.EqualField(right).String(); got != "(Counter.left == Counter.right)" {
-		t.Fatalf("EqualField: got %q", got)
+	tests := map[string]Expr{
+		"equal":            left.EqualField(right),
+		"not equal":        left.NotEqualField(right),
+		"greater":          left.GreaterThanField(right),
+		"greater or equal": left.GreaterOrEqualField(right),
+		"less":             left.LessThanField(right),
+		"less or equal":    left.LessOrEqualField(right),
+		"plus":             left.PlusField(right),
+		"minus":            left.MinusField(right),
+		"times":            left.TimesField(right),
+		"divided by":       left.DividedByField(right),
+		"modulo":           left.ModuloField(right),
 	}
-	if got := left.NotEqualField(right).String(); got != "(Counter.left != Counter.right)" {
-		t.Fatalf("NotEqualField: got %q", got)
+
+	want := map[string]string{
+		"equal":            "(Counter.left == Counter.right)",
+		"not equal":        "(Counter.left != Counter.right)",
+		"greater":          "(Counter.left > Counter.right)",
+		"greater or equal": "(Counter.left >= Counter.right)",
+		"less":             "(Counter.left < Counter.right)",
+		"less or equal":    "(Counter.left <= Counter.right)",
+		"plus":             "(Counter.left + Counter.right)",
+		"minus":            "(Counter.left - Counter.right)",
+		"times":            "(Counter.left * Counter.right)",
+		"divided by":       "(Counter.left / Counter.right)",
+		"modulo":           "(Counter.left % Counter.right)",
+	}
+
+	for name, expression := range tests {
+		if got := expression.String(); got != want[name] {
+			t.Fatalf("%s: got %q, want %q", name, got, want[name])
+		}
 	}
 }
