@@ -13,46 +13,86 @@ import (
 	"github.com/Homiakus/axiom"
 )
 
-type Expr struct{ text string }
+type Expr struct {
+	text string
+	err  error
+}
 
 func (e Expr) String() string { return e.text }
 func Raw(value string) Expr   { return Expr{text: strings.TrimSpace(value)} }
 func Ref(name string) Expr    { return Raw(name) }
-func Lit(value any) Expr {
+
+// TryLit converts a Go value into an AXM literal and returns encoding errors
+// immediately. Values must be representable by encoding/json, except
+// time.Duration which uses the native AXM duration literal form.
+func TryLit(value any) (Expr, error) {
 	if duration, ok := value.(time.Duration); ok {
-		return Raw(duration.String())
+		return Raw(duration.String()), nil
 	}
-	data, _ := json.Marshal(value)
-	return Raw(string(data))
+	data, err := json.Marshal(value)
+	if err != nil {
+		err = fmt.Errorf("encode model literal %T: %w", value, err)
+		return Expr{err: err}, err
+	}
+	return Raw(string(data)), nil
 }
 
-func Int(v int) Expr        { return Lit(v) }
-func Int64(v int64) Expr    { return Lit(v) }
-func Float(v float64) Expr  { return Lit(v) }
-func String(v string) Expr  { return Lit(v) }
-func Bool(v bool) Expr      { return Lit(v) }
+// Lit converts a Go value into an AXM literal. If encoding fails, the error is
+// retained inside the expression and returned as AX510 by Definition.Compile.
+// Use TryLit when the caller needs the error immediately.
+func Lit(value any) Expr {
+	expression, _ := TryLit(value)
+	return expression
+}
 
-func Add(a, b Expr) Expr    { return binary(a, "+", b) }
-func Sub(a, b Expr) Expr    { return binary(a, "-", b) }
-func Mul(a, b Expr) Expr    { return binary(a, "*", b) }
-func Div(a, b Expr) Expr    { return binary(a, "/", b) }
-func Mod(a, b Expr) Expr    { return binary(a, "%", b) }
+func Int(v int) Expr       { return Lit(v) }
+func Int64(v int64) Expr   { return Lit(v) }
+func Float(v float64) Expr { return Lit(v) }
+func String(v string) Expr { return Lit(v) }
+func Bool(v bool) Expr     { return Lit(v) }
 
-func Eq(a, b Expr) Expr                     { return binary(a, "==", b) }
-func Ne(a, b Expr) Expr                     { return binary(a, "!=", b) }
-func GT(a, b Expr) Expr                     { return binary(a, ">", b) }
-func GTE(a, b Expr) Expr                    { return binary(a, ">=", b) }
-func LT(a, b Expr) Expr                     { return binary(a, "<", b) }
-func LTE(a, b Expr) Expr                    { return binary(a, "<=", b) }
-func And(values ...Expr) Expr               { return join("and", values) }
-func Or(values ...Expr) Expr                { return join("or", values) }
-func Not(value Expr) Expr                   { return Raw("not (" + value.text + ")") }
-func Exists(value Expr) Expr                { return Raw(value.text + " exists") }
-func Implies(a, b Expr) Expr                { return binary(a, "implies", b) }
-func binary(a Expr, op string, b Expr) Expr { return Raw("(" + a.text + " " + op + " " + b.text + ")") }
+func Add(a, b Expr) Expr { return binary(a, "+", b) }
+func Sub(a, b Expr) Expr { return binary(a, "-", b) }
+func Mul(a, b Expr) Expr { return binary(a, "*", b) }
+func Div(a, b Expr) Expr { return binary(a, "/", b) }
+func Mod(a, b Expr) Expr { return binary(a, "%", b) }
+
+func Eq(a, b Expr) Expr      { return binary(a, "==", b) }
+func Ne(a, b Expr) Expr      { return binary(a, "!=", b) }
+func GT(a, b Expr) Expr      { return binary(a, ">", b) }
+func GTE(a, b Expr) Expr     { return binary(a, ">=", b) }
+func LT(a, b Expr) Expr      { return binary(a, "<", b) }
+func LTE(a, b Expr) Expr     { return binary(a, "<=", b) }
+func And(values ...Expr) Expr { return join("and", values) }
+func Or(values ...Expr) Expr  { return join("or", values) }
+func Not(value Expr) Expr {
+	if value.err != nil {
+		return value
+	}
+	return Raw("not (" + value.text + ")")
+}
+func Exists(value Expr) Expr {
+	if value.err != nil {
+		return value
+	}
+	return Raw(value.text + " exists")
+}
+func Implies(a, b Expr) Expr { return binary(a, "implies", b) }
+func binary(a Expr, op string, b Expr) Expr {
+	if a.err != nil {
+		return a
+	}
+	if b.err != nil {
+		return b
+	}
+	return Raw("(" + a.text + " " + op + " " + b.text + ")")
+}
 func join(op string, values []Expr) Expr {
 	parts := make([]string, 0, len(values))
 	for _, value := range values {
+		if value.err != nil {
+			return value
+		}
 		if value.text != "" {
 			parts = append(parts, "("+value.text+")")
 		}
@@ -60,10 +100,18 @@ func join(op string, values []Expr) Expr {
 	return Raw(strings.Join(parts, " "+op+" "))
 }
 
-type Trigger struct{ text string }
+type Trigger struct {
+	text string
+	err  error
+}
 
-func OnSignal(name string) Trigger      { return Trigger{text: name} }
-func OnChanged(field Expr) Trigger      { return Trigger{text: "changed(" + field.text + ")"} }
+func OnSignal(name string) Trigger { return Trigger{text: name} }
+func OnChanged(field Expr) Trigger {
+	if field.err != nil {
+		return Trigger{err: field.err}
+	}
+	return Trigger{text: "changed(" + field.text + ")"}
+}
 func OnTimer(expression string) Trigger { return Trigger{text: "timer(" + expression + ")"} }
 
 type fieldDecl struct {
@@ -339,9 +387,13 @@ func (d *Definition) Compile() (*axiom.Plan, error) {
 	if d == nil {
 		return nil, axiom.Errors{{Code: "AX509", Kind: "model", Message: "model definition is required", Hint: "Create a definition with model.New(name)."}}
 	}
-	if len(d.builderDiagnostics) > 0 {
-		diagnostics := append(axiom.Errors(nil), d.builderDiagnostics...)
+	diagnostics := append(axiom.Errors(nil), d.builderDiagnostics...)
+	diagnostics = append(diagnostics, d.expressionDiagnostics()...)
+	if len(diagnostics) > 0 {
 		sort.SliceStable(diagnostics, func(i, j int) bool {
+			if diagnostics[i].Entity == diagnostics[j].Entity {
+				return diagnostics[i].Code < diagnostics[j].Code
+			}
 			return diagnostics[i].Entity < diagnostics[j].Entity
 		})
 		return nil, diagnostics
