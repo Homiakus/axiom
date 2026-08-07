@@ -1,242 +1,326 @@
-# Axiom ADGO — выбор runtime и эксплуатационный контракт
+# Axiom ADGO — production durable orchestration engine
 
-ADGO (**Adaptive Durable Graph Orchestration**) — графовый orchestration runtime внутри Axiom для процессов, где обычной модели «событие → переход состояния» недостаточно.
+ADGO (**Adaptive Durable Graph Orchestration**) — production-движок Axiom для долгоживущих графов, LLM/tool/agent workflows, human-in-the-loop, quality gates, targeted repair, внешних эффектов и процессов, которые обязаны переживать падение worker/coordinator без потери логики выполнения.
 
-Основная реализация и полный API reference находятся в [`adgo/README.md`](adgo/README.md), архитектурные принципы — в [`adgo/ARCHITECTURE.md`](adgo/ARCHITECTURE.md).
+> **Главный принцип: durable committed state — источник истины. Go call stack, goroutine и конкретный процесс — расходный материал.**
 
-## Когда использовать обычный Axiom Engine, а когда ADGO
+Полная документация:
 
-| Задача | Рекомендуемый runtime |
+- [`adgo/README.md`](adgo/README.md) — production guide и API;
+- [`adgo/ARCHITECTURE.md`](adgo/ARCHITECTURE.md) — архитектурные инварианты;
+- [`adgo/OPERATIONS.md`](adgo/OPERATIONS.md) — эксплуатационный runbook;
+- [`adgo/examples/production`](adgo/examples/production) — runnable production topology;
+- [`adgo/examples/iris`](adgo/examples/iris) — сложный quality/repair workflow.
+
+## Когда использовать обычный Axiom, а когда ADGO
+
+| Задача | Runtime |
 |---|---|
-| Бизнес-объект с lifecycle: заказ, заявка, оборудование, платёж | `axiom.Engine` + `model` |
+| Lifecycle одного бизнес-объекта: заказ, заявка, оборудование | `axiom.Engine` + `model` |
 | Таблица решений | `table` |
 | Компактный typed reducer | `axiom.Flow` |
-| Длинный граф с параллельными ветками, quality gates и repair | `adgo` |
-| LLM/search/agent workflow с вероятностными workers | `adgo` |
-| Durable waits, human approval, fan-out/join, compensation | `adgo` |
-| Targeted rework вместо полного перезапуска pipeline | `adgo` |
+| Долгий dependency graph с параллелизмом | `adgo.Engine` |
+| LLM/search/browser/tool pipeline | `adgo.Engine` |
+| Human approval, callbacks, timers, repair | `adgo.Engine` |
+| Несколько версий workflow и child workflows | `adgo.Host` |
+| Готовая production-сборка storage/router/cache/schedules | `adgo.OpenProduction` |
 
-Ключевое различие: обычный Axiom моделирует прежде всего **состояние доменного объекта**, ADGO — **durable execution графа**.
+Обычный Axiom моделирует прежде всего **жизненный цикл доменного объекта**. ADGO моделирует **durable execution вычислительного/агентного графа**.
 
-## Базовый принцип
-
-```text
-probabilistic workers
-LLM / search / browser / tools
-          │
-          │ facts + artifacts
-          ▼
- deterministic ADGO control plane
-          │
-          ├── gates
-          ├── policies
-          ├── budgets
-          ├── retries
-          ├── repair
-          ├── human approval
-          └── compensation
-```
-
-Activity не должна произвольно выбирать следующую вершину графа. Она возвращает наблюдения. Решение о переходе принимает deterministic control plane.
-
-## Что хранит ADGO
-
-ADGO хранит компактное execution state:
-
-- `ExecutionID`;
-- `PlanID`, `PlanVersion`, `PlanDigest`;
-- status каждой вершины;
-- attempts и durable retry timers;
-- leases активных задач;
-- revision counters;
-- waiting events;
-- quality vector;
-- budgets;
-- compensation stack;
-- execution history;
-- ссылки на artifacts.
-
-Большие доменные объекты — документы, изображения, корпуса источников, черновики — должны жить вне execution state. В ADGO следует хранить их `ArtifactRef` или другие стабильные ссылки.
-
-## Immutable Plan и resume
-
-Каждое execution прикреплено к конкретному `PlanDigest`.
+## Четыре уровня API
 
 ```text
-Definition
-   ↓ compile + validation
-immutable Plan
-   ↓
-Execution(plan digest pinned)
+Runtime
+  embedded deterministic kernel
+
+Engine
+  production coordinator + durable workers
+
+Host
+  many immutable Plan versions + child workflows
+
+OpenProduction
+  Engine + durable store + provider health + admission + cache + schedules
 ```
 
-После рестарта runtime продолжает тот же execution только с тем же планом. Нельзя незаметно заменить граф или политику уже выполняющегося процесса.
+Для нового production-сервиса начинайте с `OpenProduction` или `Host`.
 
-Если прикладная система имеет собственную конфигурацию поверх ADGO, включайте behavior-affecting настройки в версию/идентичность Definition, но не помещайте credentials в durable state.
+## Production quick start
 
-## Activity delivery: at-least-once
+```go
+plan, err := adgo.Compile(definition)
+if err != nil {
+    return err
+}
 
-ADGO не обещает exactly-once внешний эффект.
+registry := adgo.NewRegistry()
+registry.Activity("Generate", generate)
+registry.Activity("Publish", publish)
+registry.Compensation("Unpublish", unpublish)
 
-Перед вызовом activity runtime сохраняет task/attempt/lease/idempotency key. Если процесс упал после внешнего эффекта, но до commit результата, activity может быть доставлена повторно.
+production, err := adgo.OpenProduction(
+    plan,
+    registry,
+    adgo.DefaultProductionConfig("./var/adgo"),
+)
+if err != nil {
+    return err
+}
+defer production.Close()
 
-Поэтому внешняя activity должна выполнять одно из трёх правил:
+_, err = production.Engine.StartOrLoad(
+    ctx,
+    "article-42", // workflow-level idempotency key
+    initialFacts,
+    adgo.BudgetLimit{MaxCost: 10},
+)
+if err != nil {
+    return err
+}
 
-1. передавать `ActivityRequest.IdempotencyKey` внешнему сервису;
-2. уметь определить, что операция уже завершена;
-3. при неоднозначном результате возвращать `FailureAmbiguousSideEffect` и переходить к reconciliation.
+go production.Engine.RunResilientCoordinator(ctx)
+go production.Engine.RunWorker(ctx, adgo.WorkerSpec{
+    ID:          "worker-a",
+    Concurrency: 8,
+})
+```
 
-Небезопасный external-effect node без timeout, idempotency и bounded retry должен быть отвергнут компилятором.
+## Что теперь умеет production Engine
 
-## Targeted repair
+### Durable coordinator/worker
 
-Repair — не `goto` и не полный рестарт pipeline.
+Coordinator только принимает deterministic control decisions и **сначала сохраняет `TaskPending`**.
+
+Worker отдельно:
+
+1. `Poll`;
+2. CAS claim;
+3. `TaskRunning + WorkerID + LeaseUntil`;
+4. activity call;
+5. heartbeat;
+6. `Complete` / `Fail`.
+
+Late/zombie worker не может перезаписать более новый результат: commit требует совпадения execution/task/worker/attempt и живого lease.
+
+### Crash recovery
+
+- worker умер → lease истёк → новая попытка;
+- старый worker вернулся → `ErrStaleTask`;
+- coordinator умер → следующий продолжает из committed state;
+- coordinator умер во время compensation → resilient coordinator продолжает оставшийся stack;
+- повторные worker losses → durable operator quarantine вместо бесконечного churn.
+
+### Human-in-the-loop
+
+Durable decisions:
+
+- approve;
+- edit;
+- reject;
+- retry;
+- confirm;
+- abort.
+
+Patch/payload/actor/reason фиксируются до продолжения execution.
+
+### External callbacks
+
+`Awaitable` выдаёт стабильный callback token, связанный с:
+
+- execution;
+- node;
+- event;
+- revision;
+- PlanDigest.
+
+Callback от устаревшей repair-итерации становится stale и не может разбудить новую.
+
+### Targeted repair
+
+Repair не делает `goto` и не рестартует весь pipeline.
 
 ```text
 failed gate
     ↓
-violations
+repair roots
     ↓
-repair root(s)
+minimal dependency subgraph
     ↓
-DependencyRepairPlanner
+invalidate only affected outputs
     ↓
-minimal affected subgraph
+new revision epoch
     ↓
-re-run only affected work
-    ↓
-re-evaluate gate
+re-run
 ```
 
-Работа вне affected subgraph сохраняется.
+Repair ограничивается iteration/cost/duration/epsilon. Есть stagnation и oscillation detection.
 
-Каждый repair root обязан иметь полный `LoopBound`:
+### Adaptive provider routing
 
-- `MaxIterations`;
-- `MaxCost`;
-- `MaxDuration`;
-- `Epsilon`.
+Provider сначала проходит hard filters:
 
-Это не позволяет вероятностному worker бесконечно «улучшать» результат.
+- permissions;
+- privacy;
+- risk;
+- cost;
+- latency;
+- availability;
+- minimum quality.
 
-## Независимые repair budgets
+Затем учитываются online-наблюдения:
 
-Если несколько gates ремонтируют общий downstream node, не используйте один общий revision counter. Применяйте отдельные repair anchors:
+- reliability;
+- EWMA latency;
+- EWMA quality;
+- EWMA cost;
+- consecutive failures;
+- circuit breaker;
+- exploration bonus.
+
+Provider health может храниться durable и быть общей для нескольких coordinator-процессов.
+
+### Global admission
+
+`AdmissionController` защищает общий upstream across executions/processes:
+
+- max concurrency;
+- token-bucket rate;
+- burst;
+- crash-expiring permits.
+
+Admission denial превращается в штатный `FailureRateLimit`, поэтому retry/backoff остаётся единым механизмом.
+
+### Pure-work acceleration
+
+Для безопасно повторяемой работы:
+
+- content-addressed result cache;
+- single-flight lease;
+- hedged execution;
+- ensemble execution;
+- quality-based deterministic winner;
+- aggregate budget accounting.
+
+Speculation требует явного `Pure=true` и не предназначена для необратимых side effects.
+
+### Time travel
+
+- immutable versions;
+- inspect historical version;
+- fork execution из прошлого snapshot;
+- replay без повторного вызова вероятностных activities.
+
+### Live plan migration
+
+`MigrateExecution` разрешает явную совместимую миграцию только в quiescent point. Completed semantics по умолчанию нельзя незаметно переопределить.
+
+### Continue-as-new
+
+Бесконечный логический процесс можно перенести в новое execution с выбранными durable facts/artifacts, сохранив старое execution как audit trail.
+
+### Multi-plan Host
+
+Один Host обслуживает несколько immutable PlanDigest одновременно. Старые и новые версии workflow могут завершаться параллельно.
+
+Child workflow может работать на другом Plan и имеет deterministic ID:
 
 ```text
-gate A -> anchor A --\
-                    +--> shared work
-gate B -> anchor B --/
+<parent>/<node>/<item>
 ```
 
-У каждого anchor собственный `LoopBound` и revision epoch. Этот паттерн покрыт regression test `adgo/repair_anchor_test.go`.
+Redelivery parent activity не создаёт duplicate child.
 
-## Durable waits и human-in-the-loop
-
-Wait/Human nodes являются частью execution state, а не блокирующим вызовом Go.
-
-Runtime может остановиться со статусом waiting/awaiting-human, процесс может завершиться, а затем новое событие через durable inbox продолжит execution.
-
-Для high-risk side effects рекомендуется approval до вызова effect activity.
-
-## Compensation
-
-Для обратимых side effects регистрируйте compensation handlers. При cancellation/permanent failure compensation stack выполняется в обратном порядке.
-
-Compensation не является магической транзакцией: handler также должен быть идемпотентным и устойчивым к повторной доставке.
-
-## Storage
+### Storage
 
 Встроены:
 
-- `MemoryStore` — tests/local ephemeral runs;
-- `FileStore` — durable reference backend.
+| Backend | Назначение |
+|---|---|
+| `MemoryStore` | tests/ephemeral |
+| `FileStore` | durable shared-filesystem multi-process |
+| `PebbleStore` | high-throughput local durable engine |
 
-`FileStore` использует immutable execution snapshots, CAS versioning, filesystem locks и durable inbox.
+`PebbleStore` атомарно хранит latest execution + immutable version, inbox и catalog.
 
-Типовая структура:
+Storage расширяется capability interfaces, а не одним огромным interface:
 
-```text
-root/
-├── executions/<execution>/commits/<version>.json
-├── executions/<execution>/inbox/<event>.json
-└── locks/<execution>.lock
-```
+- `ExecutionCatalog`;
+- `VersionedStore`;
+- `ExecutionDeletionStore`;
+- `VersionPruner`.
 
-Для production deployment с несколькими hosts используйте реализацию `Store` с подходящей транзакционной/CAS семантикой или общий filesystem с корректными гарантиями. `FileStore` — reference implementation, а не universal distributed database.
+Для cloud/multi-host без shared FS можно реализовать `Store` поверх transactional SQL/KV.
 
-## Наблюдаемость
+### Schedules
 
-Для диагностики используйте:
+Durable fixed-interval schedules имеют deterministic firing ID. Crash между workflow start и schedule cursor commit не создаёт duplicate execution благодаря `StartOrLoad`.
 
-- `Execution.Status`;
-- `Execution.History`;
-- `Execution.Metrics`;
-- `Explain(plan, execution, nodeID)`;
-- `VerifyReplay` для аудита immutable committed snapshots.
+### Operations
 
-Полезные метрики:
+- `Diagnostics`;
+- `AuditExecution`;
+- `AuditFleet`;
+- `Watch` history stream;
+- `QueryExecutions`;
+- `Pause` / `Resume` / `Cancel`;
+- `RewindFrom`;
+- graceful `BeginDrain` / `Drain`;
+- retention + archive hook;
+- immutable-version pruning.
 
-- wall time;
-- active compute time;
-- queue time;
-- retries/timeouts;
-- repair count;
-- human interventions;
-- cost/tokens;
-- quality gain per cost;
-- quality gain per repair.
+## External effects: важнейшая гарантия
 
-## Типовые причины остановки
+ADGO **не обещает exactly-once внешний I/O**.
 
-### `waiting`
+До вызова внешнего effect движок сохраняет task + idempotency key. Если процесс падает после принятого provider effect, но до локального completion commit, activity может быть доставлена повторно.
 
-Это не обязательно ошибка. Проверьте:
+Поэтому effect handler обязан:
 
-- durable timer / `NotBefore`;
-- ожидаемое external event;
-- provider throttle;
-- ambiguous side effect reconciliation.
+1. передавать `ActivityRequest.IdempotencyKey` provider'у; или
+2. уметь определить уже выполненную операцию; или
+3. вернуть `FailureAmbiguousSideEffect` и перейти в durable reconciliation.
 
-### `awaiting_human`
+Это честная и проверяемая модель вместо ложного exactly-once обещания.
 
-Требуется approval/reconciliation event. Не обходите это ручным изменением snapshot.
+## Storage и секреты
 
-### `deadlocked`
+Execution storage — чувствительные application data.
 
-Используйте `Explain`. Обычно причина — отсутствующий fact, неактивируемая dependency или логическая ошибка Definition.
+Не помещайте API keys/passwords/tokens в `Execution.Data`.
 
-### `failed`
+Храните credentials в worker environment / secret manager. В durable state сохраняйте только ссылки и безопасные факты.
 
-Проверьте failure class, retry exhaustion, budget exhaustion и compensation history.
+Operator patches не могут переписывать зарезервированные `__adgo:` keys.
 
-## Безопасное обновление workflow
+## Проверки
 
-Для уже запущенного execution не редактируйте граф «на месте».
-
-Правильная модель:
-
-1. создайте новую Definition/версию;
-2. скомпилируйте новый immutable Plan;
-3. новые executions запускайте на новой версии;
-4. старые executions завершайте на pinned Plan;
-5. если нужна адаптация — используйте validated `PlanProposal -> child Plan`, а не mutation live parent graph.
-
-## Проверки перед выпуском
+Основной CI Axiom проверяет:
 
 ```bash
-go test ./adgo/...
-go test -race ./adgo
-go vet ./adgo/...
-go run ./adgo/examples/iris
+go test ./...
+go test -race ./...
+go vet ./...
 ```
 
-Для изменения repair/recovery/idempotency обязательно добавляйте regression test, моделирующий crash/retry/re-delivery, а не только happy path.
+плюс dependency/reachable-code scan, fuzz smoke, external-consumer compilation и performance jobs.
+
+Для ADGO:
+
+```bash
+go test ./adgo/... -count=1
+go test -race ./adgo -count=1
+go vet ./adgo/...
+go run ./adgo/examples/production
+```
+
+Regression suite моделирует не только happy path, но и worker death, fencing, heartbeat, crash recovery, provider fallback, repair anchors, migration, historical fork, callbacks, schedules, Pebble reopen, compensation recovery, cache, deterministic signals, operator rewind, speculation, drain, retention и multi-plan host.
 
 ## Навигация
 
-- [`adgo/README.md`](adgo/README.md) — полный usage guide и API examples;
-- [`adgo/ARCHITECTURE.md`](adgo/ARCHITECTURE.md) — внутренние архитектурные решения;
-- [`adgo/examples/iris`](adgo/examples/iris) — runnable workflow;
+- [`adgo/README.md`](adgo/README.md) — полный production guide;
+- [`adgo/ARCHITECTURE.md`](adgo/ARCHITECTURE.md) — архитектурный контракт;
+- [`adgo/OPERATIONS.md`](adgo/OPERATIONS.md) — runbook эксплуатации;
+- [`adgo/examples/production`](adgo/examples/production) — production topology;
+- [`adgo/examples/iris`](adgo/examples/iris) — quality/repair example;
 - [`README.md`](README.md) — основной Axiom lifecycle Engine;
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — архитектура основного Axiom runtime.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — архитектура обычного Axiom runtime.
