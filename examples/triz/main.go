@@ -21,7 +21,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("domain=%s diagnostics=%d sourceMap=%d\n", result.Module.Domain.Name, len(result.Diagnostics), len(result.SourceMap))
+	fmt.Printf("domain=%s diagnostics=%d sourceMap=%d\n", result.Module.Domain, len(result.Diagnostics), len(result.SourceMap))
 	fmt.Println("--- normalized AXM ---")
 	fmt.Print(string(result.NormalizedSource))
 }
