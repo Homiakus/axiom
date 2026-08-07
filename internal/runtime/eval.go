@@ -295,7 +295,9 @@ func resolvePath(root map[string]any, path string) any {
 	return current
 }
 
-func exists(value any) bool { return value != nil }
+func exists(value any) bool {
+	return value != nil
+}
 
 func truthy(value any) bool {
 	switch v := value.(type) {
@@ -306,52 +308,230 @@ func truthy(value any) bool {
 	case string:
 		return v != ""
 	}
-	if integer, ok := signedInteger(value); ok { return integer != 0 }
-	if number, ok := floatingNumber(value); ok { return number != 0 }
+	if integer, ok := signedInteger(value); ok {
+		return integer != 0
+	}
+	if number, ok := floatingNumber(value); ok {
+		return number != 0
+	}
 	return true
 }
 
 func compareNumbers(left any, right any, cmp func(float64, float64) bool) (bool, error) {
 	if a, aok := signedInteger(left); aok {
 		if b, bok := signedInteger(right); bok {
-			switch { case a < b: return cmp(-1, 0), nil; case a > b: return cmp(1, 0), nil; default: return cmp(0, 0), nil }
+			switch {
+			case a < b:
+				return cmp(-1, 0), nil
+			case a > b:
+				return cmp(1, 0), nil
+			default:
+				return cmp(0, 0), nil
+			}
 		}
 	}
-	a, aok := number(left); b, bok := number(right)
-	if !aok || !bok { return false, fmt.Errorf("comparison requires numbers") }
+	a, aok := number(left)
+	b, bok := number(right)
+	if !aok || !bok {
+		return false, fmt.Errorf("comparison requires numbers")
+	}
 	return cmp(a, b), nil
 }
 
 func signedInteger(value any) (int64, bool) {
 	switch v := value.(type) {
-	case int: return int64(v), true
-	case int8: return int64(v), true
-	case int16: return int64(v), true
-	case int32: return int64(v), true
-	case int64: return v, true
-	default: return 0, false
+	case int:
+		return int64(v), true
+	case int8:
+		return int64(v), true
+	case int16:
+		return int64(v), true
+	case int32:
+		return int64(v), true
+	case int64:
+		return v, true
+	default:
+		return 0, false
 	}
 }
 
 func floatingNumber(value any) (float64, bool) {
-	switch v := value.(type) { case float32: return float64(v), true; case float64: return v, true; default: return 0, false }
+	switch v := value.(type) {
+	case float32:
+		return float64(v), true
+	case float64:
+		return v, true
+	default:
+		return 0, false
+	}
 }
 
-func number(value any) (float64, bool) { if v, ok := signedInteger(value); ok { return float64(v), true }; return floatingNumber(value) }
-func isIntLike(value any) bool { _, ok := signedInteger(value); return ok }
-func integerResult(value int64) any { if strconv.IntSize == 64 || (value >= -1<<31 && value <= 1<<31-1) { return int(value) }; return value }
+func number(value any) (float64, bool) {
+	if v, ok := signedInteger(value); ok {
+		return float64(v), true
+	}
+	return floatingNumber(value)
+}
 
-func safeAddInt64(a, b int64) (int64, bool) { if b > 0 && a > math.MaxInt64-b { return 0, false }; if b < 0 && a < math.MinInt64-b { return 0, false }; return a+b, true }
-func safeSubInt64(a, b int64) (int64, bool) { if b > 0 && a < math.MinInt64+b { return 0, false }; if b < 0 && a > math.MaxInt64+b { return 0, false }; return a-b, true }
-func safeMulInt64(a, b int64) (int64, bool) { if a == 0 || b == 0 { return 0, true }; if (a == math.MinInt64 && b == -1) || (b == math.MinInt64 && a == -1) { return 0, false }; result := a*b; if result/b != a { return 0, false }; return result, true }
+func isIntLike(value any) bool {
+	_, ok := signedInteger(value)
+	return ok
+}
+
+func integerResult(value int64) any {
+	if strconv.IntSize == 64 || (value >= -1<<31 && value <= 1<<31-1) {
+		return int(value)
+	}
+	return value
+}
+
+func safeAddInt64(a, b int64) (int64, bool) {
+	if b > 0 && a > math.MaxInt64-b {
+		return 0, false
+	}
+	if b < 0 && a < math.MinInt64-b {
+		return 0, false
+	}
+	return a + b, true
+}
+
+func safeSubInt64(a, b int64) (int64, bool) {
+	if b > 0 && a < math.MinInt64+b {
+		return 0, false
+	}
+	if b < 0 && a > math.MaxInt64+b {
+		return 0, false
+	}
+	return a - b, true
+}
+
+func safeMulInt64(a, b int64) (int64, bool) {
+	if a == 0 || b == 0 {
+		return 0, true
+	}
+	if (a == math.MinInt64 && b == -1) || (b == math.MinInt64 && a == -1) {
+		return 0, false
+	}
+	result := a * b
+	if result/b != a {
+		return 0, false
+	}
+	return result, true
+}
 
 func addValues(left any, right any) (any, error) {
-	if a, ok := signedInteger(left); ok { if b, ok := signedInteger(right); ok { result, ok := safeAddInt64(a,b); if !ok { return nil, fmt.Errorf("integer overflow in operator +") }; return integerResult(result), nil } }
-	a,aok := number(left); b,bok := number(right); if aok && bok { return a+b,nil }
-	if s,ok := left.(string); ok { return s+fmt.Sprint(right),nil }; if s,ok := right.(string); ok { return fmt.Sprint(left)+s,nil }; return nil,fmt.Errorf("operator + requires numbers or strings")
+	if a, aok := signedInteger(left); aok {
+		if b, bok := signedInteger(right); bok {
+			result, ok := safeAddInt64(a, b)
+			if !ok {
+				return nil, fmt.Errorf("integer overflow in operator +")
+			}
+			return integerResult(result), nil
+		}
+	}
+	a, aok := number(left)
+	b, bok := number(right)
+	if aok && bok {
+		return a + b, nil
+	}
+	if s, ok := left.(string); ok {
+		return s + fmt.Sprint(right), nil
+	}
+	if s, ok := right.(string); ok {
+		return fmt.Sprint(left) + s, nil
+	}
+	return nil, fmt.Errorf("operator + requires numbers or strings")
 }
-func negateValue(value any) (any,error) { if i,ok:=signedInteger(value);ok { if i==math.MinInt64{return nil,fmt.Errorf("integer overflow in unary -")};return integerResult(-i),nil }; n,ok:=floatingNumber(value);if !ok{return nil,fmt.Errorf("unary - requires a number")};return -n,nil }
-func subtractValues(left,right any)(any,error){ if a,ok:=signedInteger(left);ok{if b,ok:=signedInteger(right);ok{r,ok:=safeSubInt64(a,b);if !ok{return nil,fmt.Errorf("integer overflow in operator -")};return integerResult(r),nil}};a,aok:=number(left);b,bok:=number(right);if !aok||!bok{return nil,fmt.Errorf("operator - requires numbers")};return a-b,nil }
-func multiplyValues(left,right any)(any,error){ if a,ok:=signedInteger(left);ok{if b,ok:=signedInteger(right);ok{r,ok:=safeMulInt64(a,b);if !ok{return nil,fmt.Errorf("integer overflow in operator *")};return integerResult(r),nil}};a,aok:=number(left);b,bok:=number(right);if !aok||!bok{return nil,fmt.Errorf("operator * requires numbers")};return a*b,nil }
-func divideValues(left,right any)(any,error){ if a,ok:=signedInteger(left);ok{if b,ok:=signedInteger(right);ok{if b==0{return nil,fmt.Errorf("division by zero")};if a==math.MinInt64&&b==-1{return nil,fmt.Errorf("integer overflow in operator /")};return integerResult(a/b),nil}};a,aok:=number(left);b,bok:=number(right);if !aok||!bok{return nil,fmt.Errorf("operator / requires numbers")};if b==0{return nil,fmt.Errorf("division by zero")};return a/b,nil }
-func moduloValues(left,right any)(any,error){ if a,ok:=signedInteger(left);ok{if b,ok:=signedInteger(right);ok{if b==0{return nil,fmt.Errorf("modulo by zero")};return integerResult(a%b),nil}};a,aok:=number(left);b,bok:=number(right);if !aok||!bok{return nil,fmt.Errorf("operator %% requires numbers")};if b==0{return nil,fmt.Errorf("modulo by zero")};return math.Mod(a,b),nil }
+
+func negateValue(value any) (any, error) {
+	if integer, ok := signedInteger(value); ok {
+		if integer == math.MinInt64 {
+			return nil, fmt.Errorf("integer overflow in unary -")
+		}
+		return integerResult(-integer), nil
+	}
+	n, ok := floatingNumber(value)
+	if !ok {
+		return nil, fmt.Errorf("unary - requires a number")
+	}
+	return -n, nil
+}
+
+func subtractValues(left any, right any) (any, error) {
+	if a, aok := signedInteger(left); aok {
+		if b, bok := signedInteger(right); bok {
+			result, ok := safeSubInt64(a, b)
+			if !ok {
+				return nil, fmt.Errorf("integer overflow in operator -")
+			}
+			return integerResult(result), nil
+		}
+	}
+	a, aok := number(left)
+	b, bok := number(right)
+	if !aok || !bok {
+		return nil, fmt.Errorf("operator - requires numbers")
+	}
+	return a - b, nil
+}
+
+func multiplyValues(left any, right any) (any, error) {
+	if a, aok := signedInteger(left); aok {
+		if b, bok := signedInteger(right); bok {
+			result, ok := safeMulInt64(a, b)
+			if !ok {
+				return nil, fmt.Errorf("integer overflow in operator *")
+			}
+			return integerResult(result), nil
+		}
+	}
+	a, aok := number(left)
+	b, bok := number(right)
+	if !aok || !bok {
+		return nil, fmt.Errorf("operator * requires numbers")
+	}
+	return a * b, nil
+}
+
+func divideValues(left any, right any) (any, error) {
+	if a, aok := signedInteger(left); aok {
+		if b, bok := signedInteger(right); bok {
+			if b == 0 {
+				return nil, fmt.Errorf("division by zero")
+			}
+			if a == math.MinInt64 && b == -1 {
+				return nil, fmt.Errorf("integer overflow in operator /")
+			}
+			return integerResult(a / b), nil
+		}
+	}
+	a, aok := number(left)
+	b, bok := number(right)
+	if !aok || !bok {
+		return nil, fmt.Errorf("operator / requires numbers")
+	}
+	if b == 0 {
+		return nil, fmt.Errorf("division by zero")
+	}
+	return a / b, nil
+}
+
+func moduloValues(left any, right any) (any, error) {
+	if a, aok := signedInteger(left); aok {
+		if b, bok := signedInteger(right); bok {
+			if b == 0 {
+				return nil, fmt.Errorf("modulo by zero")
+			}
+			return integerResult(a % b), nil
+		}
+	}
+	a, aok := number(left)
+	b, bok := number(right)
+	if !aok || !bok {
+		return nil, fmt.Errorf("operator %% requires numbers")
+	}
+	if b == 0 {
+		return nil, fmt.Errorf("modulo by zero")
+	}
+	return math.Mod(a, b), nil
+}
