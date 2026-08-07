@@ -19,6 +19,9 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      PRERELEASE: ${{ inputs.prerelease }}
     steps:
       - name: Checkout requested revision
         uses: actions/checkout@v4
@@ -34,16 +37,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version='${{ inputs.version }}'
-          if [[ ! "$version" =~ ^v0\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Expected a pre-v1 tag such as v0.1.0; got: $version" >&2
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Releases must be dispatched from main; got: $GITHUB_REF" >&2
             exit 1
           fi
-          if git rev-parse "$version" >/dev/null 2>&1; then
-            echo "Tag already exists: $version" >&2
+          if [[ ! "$VERSION" =~ ^v0\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Expected a pre-v1 tag such as v0.1.0; got: $VERSION" >&2
             exit 1
           fi
-          notes="docs/releases/${version}.md"
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Tag already exists: $VERSION" >&2
+            exit 1
+          fi
+          notes="docs/releases/${VERSION}.md"
           if [[ ! -f "$notes" ]]; then
             echo "Missing release notes: $notes" >&2
             exit 1
@@ -61,8 +67,6 @@ jobs:
       - name: Publish GitHub Release and tag
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
-          PRERELEASE: ${{ inputs.prerelease }}
         shell: bash
         run: |
           set -euo pipefail
