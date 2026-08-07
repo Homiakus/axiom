@@ -10,14 +10,15 @@
 - [Локальная разработка](../DEVELOPMENT.md)
 - [Правила внесения изменений](../CONTRIBUTING.md)
 - [Версионирование и совместимость](versioning.md)
-- [Changelog](../CHANGELOG.md)
-- [Release notes v0.1.0](releases/v0.1.0.md)
+- [CHANGELOG](../CHANGELOG.md)
+- [Release notes](releases/)
 - [Политика безопасности](../SECURITY.md)
 
 ## Архитектура и runtime
 
 - [Архитектура](../ARCHITECTURE.md)
 - [Runtime-семантика и текущие ограничения](runtime-semantics.md)
+- [Ошибки activity, retry и policy catch](activity-failures.md)
 - [Концептуальная модель CRFG](axiom-crfg.md)
 - [Go-first architecture](go-first-architecture.md)
 
@@ -29,12 +30,14 @@
 - [Примеры TOML](../examples/table/)
 - [Примеры TRIZ normalization](../examples/triz/)
 
-## Качество и релиз
+## Аудиты и качество
 
-- [Актуальный usability audit](../reports/usability-audit-2026-08-07.md)
+- [Актуальный usability/DX audit](../reports/usability-audit-2026-08-07.md)
+- [Исторический audit 2026-07-28 — superseded](../reports/usability-audit-report.md)
+
+## Производительность
+
 - [Актуальный benchmark baseline](../benchmarks/latest.md)
-- [Pre-v1 release policy](versioning.md)
-- [Changelog](../CHANGELOG.md)
 
 ## Статус документов
 
@@ -42,11 +45,11 @@
 |---|---|
 | `README.md` | Подтверждён public API и CI commands |
 | `api-guide.md` | Рекомендуемый путь выбора frontend и runtime API |
-| `versioning.md` | Политика pre-v1 совместимости, release gate и workflow публикации |
-| `CHANGELOG.md` | Текущий публичный release history / planned changes |
-| `releases/v0.1.0.md` | Release notes первого versioned baseline |
-| `ARCHITECTURE.md` | Подтверждён текущим code path; ограничения указаны явно |
+| `versioning.md` | Политика pre-v1 совместимости и требования к релизу |
+| `ARCHITECTURE.md` | Подтверждён текущим orchestration code path |
 | `DEVELOPMENT.md` | Основан на `.github/workflows/test.yml` |
-| `axiom-file-specification.md` | Описывает реализованный parser/compiler/runtime contract v0.1.0 |
+| `runtime-semantics.md` | Durable retry, supersession, catch, lease/idempotency boundaries |
+| `activity-failures.md` | Прикладной contract `FailActivity` / catch / rollback |
+| `axiom-file-specification.md` | Описывает реализованное parser/compiler/runtime подмножество |
 | `axiomgen.md` | Описывает текущий `cmd/axiomgen` |
 | `go-first-architecture.md` | Краткий обзор; подробный выбор API вынесен в `api-guide.md` |
