@@ -172,6 +172,7 @@ func NewEngine(module *compiler.Module, store Store, activities ActivityRegistry
 	if activities == nil {
 		activities = ActivityRegistry{}
 	}
+	store = newRetryStore(module, store)
 	activities = applyActivityPolicies(module, activities)
 	fast := compileFastPlan(module, false)
 	return &Engine{
