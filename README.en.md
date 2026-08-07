@@ -10,12 +10,12 @@ Axiom is a Go library for state transitions, business processes, and decision ta
 
 It exposes several ways to define a process over one canonical executable representation, `axiom.Plan`:
 
-- typed Go reducers (`axiom.Flow`);
-- a declarative Go model (`model`);
-- the AXM file DSL (`axm`);
-- TOML decision tables (`table`).
+- the declarative Go model (`model`) — **recommended for new Go applications**;
+- typed Go reducers (`axiom.Flow`) — for compact reducers where static model analysis is not required;
+- the AXM file DSL (`axm`) — when process definitions should live outside Go code;
+- TOML decision tables (`table`) — for decision-table-shaped problems.
 
-The compiled runtime stores state, history, and activity tasks, checks claims, supports replay, and can use transactional Pebble storage.
+The compiled runtime stores state, history, and activity tasks, checks claims, supports replay, and can use transactional Pebble storage. See [`docs/api-guide.md`](docs/api-guide.md) for the frontend decision guide.
 
 ## When to use it
 
@@ -35,6 +35,8 @@ Axiom is not a replacement for plain CRUD, a message broker, a distributed sched
 go get github.com/Homiakus/axiom
 ```
 
+Before the first stable `v1`, the public API follows the pre-v1 compatibility policy in [`docs/versioning.md`](docs/versioning.md).
+
 To work on the repository:
 
 ```bash
@@ -53,6 +55,7 @@ import (
     "fmt"
     "log"
 
+    "github.com/Homiakus/axiom"
     "github.com/Homiakus/axiom/model"
 )
 
@@ -66,19 +69,16 @@ type SetValue struct {
 
 func main() {
     definition := model.New("Counter")
-    current := model.State[Counter](definition, "Current")
-    setValue := model.Event[SetValue](definition, "SetValue")
+    current := model.Bind[Counter](definition, "Current")
+    setValue := model.EventOf[SetValue](definition)
 
     definition.Rule("set").
         On(setValue.Trigger()).
-        Set(current.Field("Value"), setValue.Field("Value"))
+        Set(current.Int("Value"), setValue.Int("Value"))
 
-    plan, err := definition.Compile()
-    if err != nil {
-        log.Fatal(err)
-    }
+    definition.Claim("nonNegative", current.Int("Value").GreaterOrEqual(0))
 
-    engine, err := plan.New()
+    engine, err := axiom.Open(definition)
     if err != nil {
         log.Fatal(err)
     }
@@ -97,6 +97,8 @@ func main() {
 }
 ```
 
+For typed field/literal expressions, prefer helpers such as `Equal`, `GreaterOrEqual`, and `LessThan`. Their literal argument is constrained to the field's `T`, so the Go compiler catches more mistakes before Axiom compiles the model.
+
 ## Durable storage
 
 ```go
@@ -106,19 +108,58 @@ if err != nil {
 }
 defer store.Close()
 
-engine, err := plan.New(axiom.WithStore(store))
+engine, err := axiom.Open(
+    definition,
+    axiom.WithStore(store),
+)
 ```
 
-`axiom.WithProductionMode()` additionally requires a `TransactionalStore` and enables the strict fast runtime.
+`axiom.WithProductionMode()` additionally requires a `TransactionalStore`, enables the strict fast runtime, and fail-fast rejects `policy.retry`, `policy.timeout`, and `policy.concurrency` while those fields are not complete runtime guarantees.
+
+## Activities
+
+Prefer typed handlers in application code:
+
+```go
+engine, err := axiom.Open(
+    definition,
+    axiom.ActTyped("SendEmail", func(
+        ctx context.Context,
+        input SendEmailInput,
+    ) (SendEmailOutput, error) {
+        return SendEmailOutput{Sent: true}, nil
+    }),
+)
+```
+
+`ActTyped` accepts structs, pointers to structs, or maps with string keys for input and output. Unsupported shapes and nil typed handlers fail during Engine construction with `AX507` instead of becoming late runtime failures. Use `axiom.Act` for dynamic `map[string]any` integration boundaries.
 
 ## Frontends
 
-| Definition style | Package | Static analysis | Source |
-|---|---|---:|---|
-| Typed Go Flow | `github.com/Homiakus/axiom` | No (`opaque`) | Go |
-| Declarative Go model | `github.com/Homiakus/axiom/model` | Yes (`static`) | Go |
-| AXM | `github.com/Homiakus/axiom/axm` | Yes (`static`) | `.axm` |
-| TOML | `github.com/Homiakus/axiom/table` | Yes (`static`) | `.toml` |
+| Definition style | Package | When to choose | Static analysis | Source |
+|---|---|---|---:|---|
+| Declarative Go model | `github.com/Homiakus/axiom/model` | **Default for new Go code** | Yes (`static`) | Go |
+| Typed Go Flow | `github.com/Homiakus/axiom` | Small reducer / arbitrary Go logic | No (`opaque`) | Go |
+| AXM | `github.com/Homiakus/axiom/axm` | External model / tooling | Yes (`static`) | `.axm` |
+| TOML | `github.com/Homiakus/axiom/table` | Decision tables | Yes (`static`) | `.toml` |
+
+All declarative frontends compile into `axiom.Plan`. Typed Go Flow uses a separate reducer runtime and remains analysis-opaque.
+
+## Runtime API
+
+Prefer a `Run` handle for one execution:
+
+```go
+run := engine.Execution("order-42")
+
+err := run.Dispatch(ctx, Event{...})
+err = run.State(ctx, &state)
+status, err := run.Status(ctx)
+history, err := run.History(ctx)
+explanation, err := run.Explain(ctx)
+```
+
+`Run` also exposes `Signal`, `Patch`, `PendingActivities`, and `Cancel`.
 
 ## Verification commands
 
@@ -130,6 +171,8 @@ go test -race . ./internal/runtime/... ./internal/store/...
 go vet ./...
 go run ./examples/coffee-machine
 ```
+
+CI also builds an external consumer module so the public packages are tested from a downstream user's perspective.
 
 ## Code generation
 
@@ -144,7 +187,7 @@ The command is non-interactive and prints a JSON report. See [`docs/axiomgen.md`
 
 ## Current limitations
 
-1. `policy.retry`, `policy.timeout`, and `policy.concurrency` are model fields, but they must not yet be treated as fully enforced runtime guarantees. An inline activity error currently marks the task and execution as failed; automatic retry after handler failure and an activity-call timeout are not performed.
+1. `policy.retry`, `policy.timeout`, and `policy.concurrency` are model fields but are not yet complete runtime guarantees. Development/test plans may compile them for tooling and forward compatibility; `WithProductionMode()` rejects them with `AX508`.
 2. Execution locking is process-local to one `Engine`.
 3. Typed Go Flow executes effects before `FlowStore.Save`; effect handlers must be idempotent and custom stores must account for a save failure after an external effect.
 4. The in-memory store is for development and tests and does not survive process restarts.
@@ -154,6 +197,9 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`docs/runtime-semantics.md`](docs/
 ## Documentation
 
 - [Documentation index](docs/README.md)
+- [Public API guide](docs/api-guide.md)
+- [Versioning and compatibility](docs/versioning.md)
+- [Examples](examples/README.md)
 - [Architecture](ARCHITECTURE.md)
 - [Development](DEVELOPMENT.md)
 - [Contributing](CONTRIBUTING.md)

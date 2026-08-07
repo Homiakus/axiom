@@ -23,8 +23,10 @@
 //
 // # Activity Registration
 //
-// Use Act(name, fn) for single activities or Acts(registry) for batches.
-// The engine validates that every .axm activity with effect!=none has a Go handler.
+// Use ActTyped for application code when inputs and outputs have stable Go
+// shapes. Use Act/Acts for dynamic integration boundaries that naturally use
+// map payloads. The engine validates that every .axm activity with
+// effect!=none has a Go handler.
 package axiom
 
 import (
@@ -208,12 +210,31 @@ func Act(name string, fn Activity) Option {
 	}
 }
 
-// ActTyped registers an activity with typed Go struct inputs and outputs.
+// ActTyped registers an activity with typed Go inputs and outputs.
+// Input and output types must be structs (or pointers to structs) or maps with
+// string keys. Unsupported shapes fail during Engine construction instead of
+// producing a late decode error or a silently empty output.
 //
 //	axiom.ActTyped("SendWelcomeEmail", func(ctx context.Context, in WelcomeInput) (WelcomeOutput, error) {
 //	    return WelcomeOutput{Sent: true}, nil
 //	})
 func ActTyped[In any, Out any](name string, fn func(ctx context.Context, input In) (Out, error)) Option {
+	if fn == nil {
+		return optionError(Errors{{
+			Code:    "AX507",
+			Kind:    "config",
+			Entity:  name,
+			Message: "typed activity function must not be nil",
+			Hint:    "Pass a non-nil typed activity function.",
+		}})
+	}
+	if err := validateTypedActivityShape[In](name, "input"); err != nil {
+		return optionError(err)
+	}
+	if err := validateTypedActivityShape[Out](name, "output"); err != nil {
+		return optionError(err)
+	}
+
 	return Act(name, func(ctx context.Context, input Input) (Output, error) {
 		data, err := json.Marshal(input)
 		if err != nil {
@@ -231,6 +252,30 @@ func ActTyped[In any, Out any](name string, fn func(ctx context.Context, input I
 	})
 }
 
+func optionError(err error) Option {
+	return func(*engineConfig) error { return err }
+}
+
+func validateTypedActivityShape[T any](name, role string) error {
+	typ := reflect.TypeFor[T]()
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+
+	supported := typ.Kind() == reflect.Struct || (typ.Kind() == reflect.Map && typ.Key().Kind() == reflect.String)
+	if supported {
+		return nil
+	}
+
+	return Errors{{
+		Code:    "AX507",
+		Kind:    "config",
+		Entity:  name,
+		Message: fmt.Sprintf("typed activity %s must be a struct or a map with string keys; got %s", role, typ),
+		Hint:    "Use a struct (recommended) or a map whose key type is string. Use axiom.Act for dynamic scalar integration boundaries.",
+	}}
+}
+
 func structToOutput(v any) Output {
 	val := reflect.ValueOf(v)
 	for val.Kind() == reflect.Pointer {
@@ -239,13 +284,15 @@ func structToOutput(v any) Output {
 	if !val.IsValid() {
 		return nil
 	}
+	if val.Kind() == reflect.Map && val.Type().Key().Kind() == reflect.String {
+		out := Output{}
+		iter := val.MapRange()
+		for iter.Next() {
+			out[iter.Key().String()] = iter.Value().Interface()
+		}
+		return out
+	}
 	if val.Kind() != reflect.Struct {
-		if m, ok := v.(Output); ok {
-			return m
-		}
-		if m, ok := v.(map[string]any); ok {
-			return m
-		}
 		return nil
 	}
 	out := Output{}
@@ -324,6 +371,11 @@ func WithStrictFastRuntime() Option {
 // WithProductionMode enables production safeguards:
 //   - Strict fast runtime (no slow-path fallback)
 //   - Transactional store required (Pebble or custom durable store)
+//   - Policy fields that are not complete runtime guarantees are rejected
+//
+// In particular, retry, timeout and concurrency declarations currently cause
+// production Engine construction to fail rather than being silently mistaken
+// for enforced behavior.
 func WithProductionMode() Option {
 	return func(c *engineConfig) error {
 		c.production = true
@@ -515,10 +567,14 @@ func New(module *Module, opts ...Option) (*Engine, error) {
 		}
 	}
 
-	// Production mode requires a transactional store.
+	// Production mode requires a transactional store and rejects policy fields
+	// that the current runtime does not yet enforce as complete guarantees.
 	if cfg.production {
 		if _, ok := cfg.store.(runtimepkg.TransactionalStore); !ok {
 			return nil, Errors{{Code: "AX506", Kind: "config", Message: "production mode requires a transactional store", Hint: "Use OpenPebble or provide a Store that implements TransactionalStore."}}
+		}
+		if err := validateProductionPolicyConfig(module); err != nil {
+			return nil, err
 		}
 	}
 
@@ -652,6 +708,35 @@ func validateActivityConfig(module *Module, activities ActivityRegistry) error {
 			})
 		}
 	}
+	sort.Slice(errs, func(i, j int) bool {
+		return errs[i].Entity < errs[j].Entity
+	})
+	if len(errs) > 0 {
+		return errs
+	}
+	return nil
+}
+
+func validateProductionPolicyConfig(module *Module) error {
+	unsupported := []string{"retry", "timeout", "concurrency"}
+	var errs Errors
+
+	for name, policy := range module.Policies {
+		for _, key := range unsupported {
+			if _, ok := policy.Entries[key]; !ok {
+				continue
+			}
+			errs = append(errs, Error{
+				Code:    "AX508",
+				Kind:    "config",
+				Entity:  name + "." + key,
+				Line:    policy.Line,
+				Message: fmt.Sprintf("policy.%s is not yet an enforced production runtime guarantee", key),
+				Hint:    fmt.Sprintf("Remove %s from the production plan or run without WithProductionMode until the runtime implements this guarantee.", key),
+			})
+		}
+	}
+
 	sort.Slice(errs, func(i, j int) bool {
 		return errs[i].Entity < errs[j].Entity
 	})

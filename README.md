@@ -10,12 +10,14 @@ Axiom — библиотека Go для моделирования перехо
 
 Она объединяет несколько способов описания процесса с единым исполняемым представлением `axiom.Plan`:
 
-- типизированный Go reducer (`axiom.Flow`);
-- декларативная Go-модель (`model`);
-- файловый DSL AXM (`axm`);
-- таблицы решений TOML (`table`).
+- декларативная Go-модель (`model`) — **рекомендуемый старт для новых Go-проектов**;
+- типизированный Go reducer (`axiom.Flow`) — для компактной логики без необходимости статического анализа;
+- файловый DSL AXM (`axm`) — когда модель должна храниться отдельно от Go-кода;
+- таблицы решений TOML (`table`) — для задач, естественно описываемых decision table.
 
 Компилируемый runtime хранит состояние, историю и задания activity, проверяет инварианты (`claim`), поддерживает replay и может использовать транзакционное Pebble-хранилище.
+
+Подробная схема выбора frontend: [`docs/api-guide.md`](docs/api-guide.md).
 
 ## Когда использовать
 
@@ -44,6 +46,8 @@ Axiom не заменяет:
 go get github.com/Homiakus/axiom
 ```
 
+До первого стабильного `v1` публичный API развивается по pre-v1 SemVer policy. Правила совместимости и release checklist: [`docs/versioning.md`](docs/versioning.md).
+
 Для разработки самой библиотеки:
 
 ```bash
@@ -64,6 +68,7 @@ import (
     "fmt"
     "log"
 
+    "github.com/Homiakus/axiom"
     "github.com/Homiakus/axiom/model"
 )
 
@@ -77,19 +82,16 @@ type SetValue struct {
 
 func main() {
     definition := model.New("Counter")
-    current := model.State[Counter](definition, "Current")
-    setValue := model.Event[SetValue](definition, "SetValue")
+    current := model.Bind[Counter](definition, "Current")
+    setValue := model.EventOf[SetValue](definition)
 
     definition.Rule("set").
         On(setValue.Trigger()).
-        Set(current.Field("Value"), setValue.Field("Value"))
+        Set(current.Int("Value"), setValue.Int("Value"))
 
-    plan, err := definition.Compile()
-    if err != nil {
-        log.Fatal(err)
-    }
+    definition.Claim("nonNegative", current.Int("Value").GreaterOrEqual(0))
 
-    engine, err := plan.New()
+    engine, err := axiom.Open(definition)
     if err != nil {
         log.Fatal(err)
     }
@@ -110,9 +112,11 @@ func main() {
 
 `Dispatch` создаёт execution при первом обращении, отправляет типизированное событие и выполняет доступные inline activities до состояния idle.
 
+Для сравнений typed fields с Go-значениями новый код рекомендуется писать через `Equal`, `GreaterOrEqual`, `LessThan` и другие строгие helpers: literal имеет тот же `T`, поэтому часть ошибок ловит уже компилятор Go.
+
 ## Долговременное хранение
 
-По умолчанию `Plan.New()` использует хранилище в памяти. Для Pebble:
+По умолчанию `Plan.New()` / `axiom.Open()` используют хранилище в памяти. Для Pebble:
 
 ```go
 store, err := axiom.OpenPebble("data/axiom")
@@ -121,17 +125,23 @@ if err != nil {
 }
 defer store.Close()
 
-engine, err := plan.New(axiom.WithStore(store))
+engine, err := axiom.Open(
+    definition,
+    axiom.WithStore(store),
+)
 ```
 
 Режим `axiom.WithProductionMode()` дополнительно требует хранилище, реализующее `TransactionalStore`, и включает строгий fast runtime. Модель, не поддерживаемая строгим runtime, будет отклонена при создании `Engine`.
 
+Production mode также **fail-fast отклоняет `policy.retry`, `policy.timeout` и `policy.concurrency`**, пока эти поля не реализованы как полные runtime-гарантии. Это предотвращает ситуацию, когда конфигурация выглядит надёжнее фактического исполнения.
+
 ## Activity
 
-Внешние операции регистрируются как Go-функции:
+Для прикладного кода предпочитайте типизированные обработчики:
 
 ```go
-engine, err := plan.New(
+engine, err := axiom.Open(
+    definition,
     axiom.ActTyped("SendEmail", func(
         ctx context.Context,
         input SendEmailInput,
@@ -142,18 +152,38 @@ engine, err := plan.New(
 )
 ```
 
+`ActTyped` принимает struct / pointer-to-struct или map со строковыми ключами для входа и выхода. Неподходящая typed-сигнатура или nil handler отклоняются при создании `Engine` (`AX507`), а не проявляются поздней ошибкой во время activity.
+
+`axiom.Act` с `axiom.Input` / `axiom.Output` остаётся удобным для динамических integration boundaries, где payload уже представлен как `map[string]any`.
+
 Для activity с `effect: external` компилятор требует policy с `idempotency: required` и `idempotencyKey`. Это обеспечивает дедупликацию заданий в используемом store, но не является гарантией exactly-once во внешней системе.
 
 ## Поддерживаемые способы описания процесса
 
-| Способ | Пакет | Статический анализ | Хранение модели |
-|---|---|---:|---|
-| Typed Go Flow | `github.com/Homiakus/axiom` | Нет (`opaque`) | Go-код |
-| Декларативная Go-модель | `github.com/Homiakus/axiom/model` | Да (`static`) | Go-код |
-| AXM | `github.com/Homiakus/axiom/axm` | Да (`static`) | `.axm` |
-| TOML | `github.com/Homiakus/axiom/table` | Да (`static`) | `.toml` |
+| Способ | Пакет | Когда выбирать | Статический анализ | Хранение модели |
+|---|---|---|---:|---|
+| Declarative Go | `github.com/Homiakus/axiom/model` | **По умолчанию для нового Go-кода** | Да (`static`) | Go-код |
+| Typed Go Flow | `github.com/Homiakus/axiom` | Маленький reducer / произвольная Go-логика | Нет (`opaque`) | Go-код |
+| AXM | `github.com/Homiakus/axiom/axm` | Модель вне Go / tooling | Да (`static`) | `.axm` |
+| TOML | `github.com/Homiakus/axiom/table` | Decision tables | Да (`static`) | `.toml` |
 
 Все декларативные frontends компилируются в `axiom.Plan`. Typed Go Flow использует отдельный reducer runtime и не преобразуется в статический граф зависимостей.
+
+## Runtime API
+
+Для одного процесса предпочитайте handle `Run`:
+
+```go
+run := engine.Execution("order-42")
+
+err := run.Dispatch(ctx, Event{...})
+err = run.State(ctx, &state)
+status, err := run.Status(ctx)
+history, err := run.History(ctx)
+explanation, err := run.Explain(ctx)
+```
+
+`Run` также предоставляет `Signal`, `Patch`, `PendingActivities` и `Cancel`. Низкоуровневые методы `Engine`, требующие повторной передачи execution ID, в основном полезны для integration/tooling слоёв.
 
 ## Основные команды
 
@@ -175,7 +205,7 @@ go vet ./...
 go run ./examples/coffee-machine
 ```
 
-Ожидаемые денежные итоги примера проверяются в GitHub Actions.
+Ожидаемые денежные итоги примера проверяются в GitHub Actions. CI также собирает внешний consumer module, чтобы публичные пакеты проверялись с точки зрения реального пользователя библиотеки.
 
 ## Кодогенератор
 
@@ -210,7 +240,7 @@ go run ./cmd/axiombench \
 
 ## Важные текущие ограничения
 
-1. `policy.retry`, `policy.timeout` и `policy.concurrency` присутствуют в модели, но не должны считаться полностью реализованными runtime-гарантиями. В текущем inline runtime ошибка activity переводит task и execution в `Failed`; автоматический повтор после ошибки и таймаут вокруг вызова activity не выполняются.
+1. `policy.retry`, `policy.timeout` и `policy.concurrency` присутствуют в модели, но не являются полностью реализованными runtime-гарантиями. В development/test режиме они могут компилироваться для tooling и будущей совместимости; `WithProductionMode()` отклоняет такие планы с `AX508`.
 2. Блокировка одного `execution ID` действует внутри одного `Engine`, а не между процессами.
 3. Typed Go Flow выполняет effects перед вызовом `FlowStore.Save`. Обработчики effects должны быть идемпотентными, а пользовательский store — учитывать возможную ошибку сохранения после внешнего эффекта.
 4. In-memory store предназначен для разработки и тестов; он не обеспечивает восстановление после перезапуска процесса.
@@ -220,6 +250,9 @@ go run ./cmd/axiombench \
 ## Документация
 
 - [Навигация по документации](docs/README.md)
+- [Выбор публичного API](docs/api-guide.md)
+- [Версионирование и совместимость](docs/versioning.md)
+- [Каталог примеров](examples/README.md)
 - [Архитектура](ARCHITECTURE.md)
 - [Локальная разработка](DEVELOPMENT.md)
 - [Правила внесения изменений](CONTRIBUTING.md)

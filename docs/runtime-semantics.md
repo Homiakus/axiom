@@ -18,6 +18,7 @@
 | Блокировка действует между процессами | Не реализовано |
 | `Dispatch` автоматически создаёт отсутствующий execution | Подтверждено кодом |
 | Production mode требует transactional store | Подтверждено кодом и test |
+| Production mode отклоняет `retry`, `timeout`, `concurrency`, пока они не являются полными runtime-гарантиями | Подтверждено кодом и test (`AX508`) |
 
 ## Activity
 
@@ -25,12 +26,20 @@
 |---|---|
 | External activity должна быть зарегистрирована в Go | Подтверждено кодом |
 | External activity требует idempotency policy и key | Подтверждено compiler validation |
+| `ActTyped` отклоняет scalar input/output и nil handler при создании Engine | Подтверждено кодом и test (`AX507`) |
+| `ActTyped` принимает structs, pointers to structs и maps со string keys | Подтверждено кодом |
 | Tasks хранят input, status, attempts, lease, result/error | Подтверждено кодом |
 | Completed task не выполняется повторно при replay/recovery | Подтверждено test |
 | Failed handler автоматически повторяется по `retry` | Не реализовано в проверенном path |
 | Handler автоматически отменяется по `timeout` policy | Не реализовано в проверенном path |
 | `concurrency` policy управляет worker scheduling | Не реализовано в проверенном path |
 | Expired running lease может быть возвращён в pending | Подтверждено кодом |
+
+### Что означает production guardrail
+
+Парсер и компилятор продолжают принимать `retry`, `timeout` и `concurrency`: это сохраняет формат модели и позволяет развивать runtime без миграции DSL. Но `WithProductionMode()` теперь fail-fast отклоняет план с такими полями, потому что production-конфигурация не должна выглядеть более надёжной, чем фактическое исполнение.
+
+В development/test режиме эти поля по-прежнему можно компилировать для моделирования, tooling и будущей совместимости, однако нельзя строить correctness assumptions на их автоматическом исполнении.
 
 ## Idempotency
 
@@ -90,4 +99,5 @@ load -> reducer -> claims -> effects -> save
 2. Timeout context для activity handler.
 3. Явная semantics `concurrency` policy.
 4. Tests для terminal/retryable errors и exhausted attempts.
-5. Operational runbook для stuck leases, failed executions и manual recovery.
+5. После реализации убрать соответствующие `AX508` production-блокировки и заменить их тестами фактической гарантии.
+6. Operational runbook для stuck leases, failed executions и manual recovery.
