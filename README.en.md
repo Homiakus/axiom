@@ -114,7 +114,9 @@ engine, err := axiom.Open(
 )
 ```
 
-`axiom.WithProductionMode()` additionally requires a `TransactionalStore` and enables the strict fast runtime. `retry` is enforced at the durable task level: each handler attempt receives a lease, `Attempt`/`MaxAttempts` and `NextAttemptAt` are persisted, and another Engine can continue the task after a process restart. `backoff` accepts a fixed duration, `fixed(...)`, or `exponential(...)`; when omitted, retry uses deterministic exponential delay starting at 100 ms and capped at 30 s. `timeout` applies independently to each attempt. `concurrency: once` serializes calls of one activity within one Engine, while `parallel` adds no serialization. `concurrency: latest/first` are still rejected with `AX508` because they require correct durable task-supersession semantics.
+`axiom.WithProductionMode()` additionally requires a `TransactionalStore` and enables the strict fast runtime. `retry` is enforced at the durable task level: each handler attempt receives a lease, `Attempt`/`MaxAttempts` and `NextAttemptAt` are persisted, and another Engine can continue the task after a process restart. `backoff` accepts a fixed duration, `fixed(...)`, or `exponential(...)`; when omitted, retry uses deterministic exponential delay starting at 100 ms and capped at 30 s. `timeout` applies independently to each attempt.
+
+Concurrency policies have distinct guarantees: `parallel` adds no serialization, `once` serializes one activity within one Engine, `first` keeps the earliest active task in the `execution + activity` lane and records later tasks as `TaskSuperseded`, and `latest` replaces older **pending** tasks with the newest pending task. `latest` never pretends to forcibly cancel arbitrary running Go code; a new task waits behind the current lease. Production mode supports all four modes with a transactional store, and Pebble performs the pending-supersession decision inside the store transaction.
 
 ## Activities
 
@@ -134,7 +136,7 @@ engine, err := axiom.Open(
 
 `ActTyped` accepts structs, pointers to structs, or maps with string keys for input and output. Unsupported shapes and nil typed handlers fail during Engine construction with `AX507` instead of becoming late runtime failures. Use `axiom.Act` for dynamic `map[string]any` integration boundaries.
 
-For `effect: external`, the compiler requires an idempotency policy and `idempotencyKey`. This deduplicates tasks in the configured store, but it is not an exactly-once guarantee for an external API, device, or payment system. Durable retry can invoke a handler more than once, so the external operation must remain idempotent.
+For `effect: external`, the compiler requires an idempotency policy and `idempotencyKey`. This deduplicates tasks in the configured store, but it is not an exactly-once guarantee for an external API, device, or payment system. Durable retry can invoke a handler more than once, so the external operation must remain idempotent. An explicit non-empty idempotency key takes precedence over first/latest supersession: the same external intent is deduplicated before supersession.
 
 ## Frontends
 
@@ -189,11 +191,12 @@ The command is non-interactive and prints a JSON report. See [`docs/axiomgen.md`
 
 ## Current limitations
 
-1. `concurrency: once` is local to one Engine. `latest/first` do not yet have safe task-supersession semantics and are rejected in production mode.
-2. Execution locking is process-local to one `Engine`.
-3. Durable retry persists checkpoints between attempts but does not make an external effect exactly once; activity handlers still need idempotency.
-4. Typed Go Flow executes effects before `FlowStore.Save`; effect handlers must be idempotent and custom stores must account for a save failure after an external effect.
-5. The in-memory store preserves retry checkpoints across replacement Engine instances, but it does not survive a process restart. Use Pebble or another durable store for process-level recovery.
+1. `once` is local to one Engine and is not a distributed lock. `first/latest` atomically manage pending tasks only within the guarantees of the selected `TransactionalStore`.
+2. `latest` does not cancel an already running handler: the current guarantee is **latest pending wins**, not unsafe force-cancellation of arbitrary Go code.
+3. Execution locking is process-local to one `Engine`.
+4. Durable retry persists checkpoints between attempts but does not make an external effect exactly once; activity handlers still need idempotency.
+5. Typed Go Flow executes effects before `FlowStore.Save`; effect handlers must be idempotent and custom stores must account for a save failure after an external effect.
+6. The in-memory store preserves retry checkpoints across replacement Engine instances, but it does not survive a process restart. Use Pebble or another durable store for process-level recovery.
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`docs/runtime-semantics.md`](docs/runtime-semantics.md).
 
