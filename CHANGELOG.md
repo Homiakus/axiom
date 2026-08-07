@@ -16,7 +16,11 @@ Axiom follows the pre-v1 Semantic Versioning policy described in [`docs/versioni
 - memory-store Engine replacement and Pebble close/reopen regression tests for retry recovery;
 - terminal `TaskSuperseded` status and `ActivitySuperseded` history entries;
 - transactional pending-task supersession for `concurrency: first` and `concurrency: latest`;
-- stable runtime query namespace validation and `model.Runtime.*` helpers.
+- stable runtime query namespace validation and `model.Runtime.*` helpers;
+- typed activity domain failures via `axiom.FailActivity(code, err)` / `ActivityErrorCoder`;
+- runtime policy `catch:` dispatch with exact error-code matching and `*` fallback;
+- `model.PolicyBuilder.Catch` and `CatchAll` helpers;
+- `ActivityCaught` history and standard catch-signal metadata payload.
 
 ### Changed
 
@@ -30,14 +34,17 @@ Axiom follows the pre-v1 Semantic Versioning policy described in [`docs/versioni
 - `concurrency: latest` replaces older pending work with the newest pending task, but never pretends to forcibly cancel arbitrary running Go code;
 - explicit non-empty idempotency keys continue to deduplicate the same external intent before supersession logic is applied;
 - production mode accepts `parallel`, `once`, `first`, and `latest` when used with a transactional store;
-- unknown `runtime.*` projections are rejected on canonical Plan/Open/New paths instead of silently becoming `nil`.
+- unknown `runtime.*` projections are rejected on canonical Plan/Open/New paths instead of silently becoming `nil`;
+- policy catch routing now happens only after retry exhaustion/terminal handler failure; intermediate retry attempts never dispatch catch signals;
+- exact coded catches take precedence over wildcard fallback; output-contract failures `AX503`/`AX504` remain terminal runtime validation errors rather than catchable domain failures;
+- a failing catch target rolls back the catch transaction and returns `AX511` instead of committing partial catch state.
 
 ### Planned
 
-- runtime dispatch for policy `catch:` mappings;
 - distributed execution ownership/coordination semantics for multiple processes;
 - multi-file AXM import resolution and linking;
 - explicit wall-clock timer scheduler contract;
+- operational recovery tooling for failed catch/lease scenarios;
 - public API classification and cleanup before `v1.0.0`.
 
 ## [v0.1.0] - 2026-08-07
