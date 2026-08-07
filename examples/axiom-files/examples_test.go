@@ -1,4 +1,4 @@
-package axiomfiles_test
+package main_test
 
 import (
 	"os"
