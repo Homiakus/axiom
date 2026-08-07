@@ -112,19 +112,33 @@ type queryDecl struct {
 }
 
 type Definition struct {
-	name, version  string
-	events, states []schemaDecl
-	computeds      []computedDecl
-	facts          []factDecl
-	policies       []policyDecl
-	activities     []activityDecl
-	rules          []ruleDecl
-	claims         []claimDecl
-	queries        []queryDecl
+	name, version      string
+	events, states     []schemaDecl
+	computeds          []computedDecl
+	facts              []factDecl
+	policies           []policyDecl
+	activities         []activityDecl
+	rules              []ruleDecl
+	claims             []claimDecl
+	queries            []queryDecl
+	builderDiagnostics axiom.Errors
 }
 
 func New(name string) *Definition                        { return &Definition{name: name, version: "1"} }
 func (d *Definition) Version(version string) *Definition { d.version = version; return d }
+
+func (d *Definition) addBuilderDiagnostic(entity, message, hint string) {
+	if d == nil {
+		return
+	}
+	d.builderDiagnostics = append(d.builderDiagnostics, axiom.Error{
+		Code:    "AX509",
+		Kind:    "model",
+		Entity:  entity,
+		Message: message,
+		Hint:    hint,
+	})
+}
 
 type StateRef[T any] struct {
 	definition *Definition
@@ -136,30 +150,66 @@ type EventRef[T any] struct {
 }
 
 func State[T any](d *Definition, name string) *StateRef[T] {
-	declaration := schemaFromType(reflect.TypeFor[T](), name)
+	declaration, err := schemaFromType(reflect.TypeFor[T](), name)
+	if err != nil {
+		d.addBuilderDiagnostic(name, err.Error(), "Use a struct or pointer-to-struct as the state type.")
+		declaration = schemaDecl{name: name}
+	}
 	d.states = append(d.states, declaration)
 	return &StateRef[T]{definition: d, index: len(d.states) - 1}
 }
 
 func Event[T any](d *Definition, name string) *EventRef[T] {
-	declaration := schemaFromType(reflect.TypeFor[T](), name)
+	declaration, err := schemaFromType(reflect.TypeFor[T](), name)
+	if err != nil {
+		d.addBuilderDiagnostic(name, err.Error(), "Use a struct or pointer-to-struct as the event type.")
+		declaration = schemaDecl{name: name}
+	}
 	d.events = append(d.events, declaration)
 	return &EventRef[T]{definition: d, index: len(d.events) - 1}
 }
 
 func (s *StateRef[T]) Field(name string) Expr {
-	return Ref(s.definition.states[s.index].name + "." + fieldName(s.definition.states[s.index], name))
+	declaration := s.definition.states[s.index]
+	resolved, ok := fieldName(declaration, name)
+	if !ok {
+		s.definition.addBuilderDiagnostic(
+			declaration.name+"."+name,
+			"unknown state field "+declaration.name+"."+name,
+			"Use the Go field name or its json/axiom serialized name.",
+		)
+		return Ref("__invalid_state_field__." + name)
+	}
+	return Ref(declaration.name + "." + resolved)
 }
 func (s *StateRef[T]) Changed(name string) Trigger { return OnChanged(s.Field(name)) }
 func (s *StateRef[T]) Default(name string, value any) *StateRef[T] {
 	declaration := &s.definition.states[s.index]
-	field := fieldIndex(*declaration, name)
+	field, ok := fieldIndex(*declaration, name)
+	if !ok {
+		s.definition.addBuilderDiagnostic(
+			declaration.name+"."+name,
+			"unknown state field "+declaration.name+"."+name,
+			"Use the Go field name or its json/axiom serialized name.",
+		)
+		return s
+	}
 	expression := Lit(value)
 	declaration.fields[field].defaultValue = &expression
 	return s
 }
 func (e *EventRef[T]) Field(name string) Expr {
-	return Ref("signal." + fieldName(e.definition.events[e.index], name))
+	declaration := e.definition.events[e.index]
+	resolved, ok := fieldName(declaration, name)
+	if !ok {
+		e.definition.addBuilderDiagnostic(
+			declaration.name+"."+name,
+			"unknown event field "+declaration.name+"."+name,
+			"Use the Go field name or its json/axiom serialized name.",
+		)
+		return Ref("signal.__invalid_event_field__." + name)
+	}
+	return Ref("signal." + resolved)
 }
 func (e *EventRef[T]) Trigger() Trigger { return OnSignal(e.definition.events[e.index].name) }
 
@@ -286,6 +336,17 @@ func (d *Definition) Query(name string, values map[string]Expr) *Definition {
 
 func (d *Definition) CompilePlan() (*axiom.Plan, error) { return d.Compile() }
 func (d *Definition) Compile() (*axiom.Plan, error) {
+	if d == nil {
+		return nil, axiom.Errors{{Code: "AX509", Kind: "model", Message: "model definition is required", Hint: "Create a definition with model.New(name)."}}
+	}
+	if len(d.builderDiagnostics) > 0 {
+		diagnostics := append(axiom.Errors(nil), d.builderDiagnostics...)
+		sort.SliceStable(diagnostics, func(i, j int) bool {
+			return diagnostics[i].Entity < diagnostics[j].Entity
+		})
+		return nil, diagnostics
+	}
+
 	source := []byte(d.Source())
 	plan, err := axiom.CompilePlan(source, axiom.WithSourceName("go:model:"+d.name))
 	if err != nil {
@@ -380,12 +441,12 @@ func (d *Definition) Source() string {
 	return out.String()
 }
 
-func schemaFromType(typ reflect.Type, name string) schemaDecl {
+func schemaFromType(typ reflect.Type, name string) (schemaDecl, error) {
 	for typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
 	if typ.Kind() != reflect.Struct {
-		panic("axiom/model: state and event types must be structs")
+		return schemaDecl{name: name}, fmt.Errorf("state and event types must be structs; %s uses %s", name, typ)
 	}
 	declaration := schemaDecl{name: name}
 	for index := 0; index < typ.NumField(); index++ {
@@ -405,7 +466,7 @@ func schemaFromType(typ reflect.Type, name string) schemaDecl {
 		}
 		declaration.fields = append(declaration.fields, fieldDecl{goName: field.Name, name: serialized, typ: axiomType(field.Type)})
 	}
-	return declaration
+	return declaration, nil
 }
 func axiomType(typ reflect.Type) string {
 	optional := false
@@ -442,16 +503,20 @@ func axiomType(typ reflect.Type) string {
 	}
 	return value
 }
-func fieldName(declaration schemaDecl, name string) string {
-	return declaration.fields[fieldIndex(declaration, name)].name
+func fieldName(declaration schemaDecl, name string) (string, bool) {
+	index, ok := fieldIndex(declaration, name)
+	if !ok {
+		return "", false
+	}
+	return declaration.fields[index].name, true
 }
-func fieldIndex(declaration schemaDecl, name string) int {
+func fieldIndex(declaration schemaDecl, name string) (int, bool) {
 	for index, field := range declaration.fields {
 		if field.goName == name || field.name == name {
-			return index
+			return index, true
 		}
 	}
-	panic("axiom/model: unknown field " + declaration.name + "." + name)
+	return 0, false
 }
 func lowerFirst(value string) string {
 	if value == "" {
