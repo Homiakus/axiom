@@ -72,8 +72,24 @@ Compiler scope rules:
 
 - `signal.*` is valid only in a rule triggered by a signal and in activity input/idempotency expressions compiled in signal scope;
 - `output.*` is valid only when the rule runs an activity exposing the referenced output field;
-- `runtime.*` is accepted only in query scope, but current runtime resolution returns `nil` for runtime projections;
+- `runtime.*` is valid only in query scope;
 - writes may target only declared context fields.
+
+Stable runtime query projections in the v0.1.0 baseline are:
+
+```text
+runtime.id
+runtime.domain
+runtime.status
+runtime.version
+runtime.createdAt
+runtime.updatedAt
+runtime.moduleHash
+runtime.compilerVersion
+runtime.planVersion
+```
+
+Unknown runtime projection names are not part of the public contract. The evaluator currently returns `nil` for an unknown runtime field; compiler-side rejection is planned as additional hardening.
 
 ## Types
 
@@ -82,8 +98,8 @@ The runtime explicitly checks these type names:
 | AXM type | Runtime value |
 |---|---|
 | `String` | Go `string` |
-| `Int` | Go integer types |
-| `Float` | Go integer or floating-point values |
+| `Int` | signed 64-bit integer range |
+| `Float` | signed integer or floating-point value |
 | `Bool` | Go `bool` |
 | `Time` | Go `string` |
 | `Duration` | duration literal or string |
@@ -92,7 +108,9 @@ The runtime explicitly checks these type names:
 | `Map<K,V>` | `map[string]any` |
 | `T?` | nullable form of a type |
 
-Unknown type identifiers are not rejected uniformly by the current runtime and should not be used as a stable contract.
+`Int` is a signed 64-bit runtime contract. Signed Go integer widths are normalized losslessly. Unsigned Go integer values are accepted only when the numeric value is less than or equal to `math.MaxInt64`; larger values are rejected with `AX406` instead of being truncated or wrapped.
+
+Unknown AXM type identifiers are not rejected uniformly by the current runtime and should not be used as a stable contract.
 
 ## Literals
 
@@ -112,6 +130,8 @@ null
 ```
 
 Duration literals start with a number followed by alphabetic unit text. Repository examples use `ms`, `s`, `m`, and `h`.
+
+The Go `model` frontend serializes general literal values through JSON. `model.TryLit(value)` returns serialization errors immediately; `model.Lit(value)` retains them and `Definition.Compile()` reports them as `AX510` with the declaration path.
 
 ## Expressions
 
@@ -146,7 +166,8 @@ Arithmetic semantics:
 - `-`, `*`, `/`, `%` require numeric operands;
 - multiplication, division, and modulo bind more tightly than addition and subtraction;
 - operators of the same precedence are left-associative;
-- integer operands preserve integer results; integer division uses Go-style truncating integer division;
+- signed integer operations remain exact through the `int64` range and report overflow explicitly;
+- integer division uses Go-style truncating integer division;
 - when a floating operand participates, division and modulo return floating-point results (`math.Mod` semantics for `%`);
 - division or modulo by zero returns a runtime error;
 - unary `-` accepts numeric values and is supported by both the regular evaluator and fast expression VM.
@@ -326,10 +347,12 @@ Claims are checked during execution and before/after writes. A violating write i
 query CheckoutStatus:
   return:
     status = Payment.status
-    paid = Payment.status == "paid"
+    executionId = runtime.id
+    runtimeStatus = runtime.status
+    updatedAt = runtime.updatedAt
 ```
 
-Queries are read-only projections evaluated against an existing execution.
+Queries are read-only projections evaluated against an existing execution. Runtime projections expose stable execution metadata but do not expose task locks, worker state, or other internal scheduling details.
 
 ## Runtime entry points
 
@@ -376,6 +399,5 @@ These are compiled-artifact identifiers, not semantic-version release tags.
 - Imports have parser/AST support but no verified public resolver/linker.
 - Timer triggers are indexed, but a complete wall-clock scheduler contract is not documented as implemented.
 - Retry is currently in-process rather than durable task-level backoff/requeue; `latest/first` concurrency and policy catch dispatch remain incomplete.
-- `runtime.*` query projections currently resolve to `nil` in the verified evaluator.
-- Numeric evaluation still normalizes signed integer arithmetic through the runtime numeric conversion layer; very large integer precision and unsigned-integer semantics are not yet a stable contract.
-- Unknown type identifiers are not rejected consistently.
+- Unknown `runtime.*` projection names are not yet rejected by the compiler.
+- Unknown AXM type identifiers are not rejected consistently.
