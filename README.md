@@ -133,7 +133,7 @@ engine, err := axiom.Open(
 
 Режим `axiom.WithProductionMode()` дополнительно требует хранилище, реализующее `TransactionalStore`, и включает строгий fast runtime. Модель, не поддерживаемая строгим runtime, будет отклонена при создании `Engine`.
 
-Production mode также **fail-fast отклоняет `policy.retry`, `policy.timeout` и `policy.concurrency`**, пока эти поля не реализованы как полные runtime-гарантии. Это предотвращает ситуацию, когда конфигурация выглядит надёжнее фактического исполнения.
+`retry` и `timeout` теперь исполняются runtime вокруг activity handler. `concurrency: once` сериализует вызовы одной activity внутри конкретного `Engine`, а `parallel` не добавляет сериализацию. `concurrency: latest/first` пока отклоняются production mode с `AX508`, поскольку для них требуется корректная durable task-supersession semantics.
 
 ## Activity
 
@@ -240,10 +240,11 @@ go run ./cmd/axiombench \
 
 ## Важные текущие ограничения
 
-1. `policy.retry`, `policy.timeout` и `policy.concurrency` присутствуют в модели, но не являются полностью реализованными runtime-гарантиями. В development/test режиме они могут компилироваться для tooling и будущей совместимости; `WithProductionMode()` отклоняет такие планы с `AX508`.
-2. Блокировка одного `execution ID` действует внутри одного `Engine`, а не между процессами.
-3. Typed Go Flow выполняет effects перед вызовом `FlowStore.Save`. Обработчики effects должны быть идемпотентными, а пользовательский store — учитывать возможную ошибку сохранения после внешнего эффекта.
-4. In-memory store предназначен для разработки и тестов; он не обеспечивает восстановление после перезапуска процесса.
+1. `retry` выполняется как немедленный in-process повтор handler и пока не является durable task-level retry с backoff/`NextAttemptAt` и отдельной history-записью на каждую попытку.
+2. `concurrency: once` действует внутри одного `Engine`; `latest/first` пока не имеют безопасной supersession semantics и отклоняются production mode.
+3. Блокировка одного `execution ID` действует внутри одного `Engine`, а не между процессами.
+4. Typed Go Flow выполняет effects перед вызовом `FlowStore.Save`. Обработчики effects должны быть идемпотентными, а пользовательский store — учитывать возможную ошибку сохранения после внешнего эффекта.
+5. In-memory store предназначен для разработки и тестов; он не обеспечивает восстановление после перезапуска процесса.
 
 Подробности и границы гарантий: [`ARCHITECTURE.md`](ARCHITECTURE.md) и [`docs/runtime-semantics.md`](docs/runtime-semantics.md).
 
