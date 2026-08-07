@@ -73,11 +73,34 @@ func TestStructToOutputSupportsNamedStringKeyMaps(t *testing.T) {
 	}
 }
 
-func TestProductionModeRejectsUnenforcedPolicyGuarantees(t *testing.T) {
+func TestProductionModeAcceptsEnforcedRetryTimeoutAndOnce(t *testing.T) {
 	module, err := Compile([]byte(`domain ProductionGuard
 
 policy delivery:
   retry: 3
+  timeout: 2s
+  concurrency: once
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenPebble(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if _, err = New(module, WithStore(store), WithProductionMode()); err != nil {
+		t.Fatalf("production mode rejected enforced policy: %v", err)
+	}
+}
+
+func TestProductionModeRejectsConcurrencyModesWithoutSupersessionSemantics(t *testing.T) {
+	module, err := Compile([]byte(`domain ProductionGuard
+
+policy delivery:
+  concurrency: latest
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -91,9 +114,9 @@ policy delivery:
 
 	_, err = New(module, WithStore(store), WithProductionMode())
 	if err == nil {
-		t.Fatal("expected production policy validation error")
+		t.Fatal("expected production concurrency validation error")
 	}
-	if !strings.Contains(err.Error(), "AX508") || !strings.Contains(err.Error(), "delivery.retry") {
+	if !strings.Contains(err.Error(), "AX508") || !strings.Contains(err.Error(), "delivery.concurrency") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

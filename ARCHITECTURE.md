@@ -28,7 +28,8 @@ flowchart LR
     Store --> Pebble[Pebble transactional store]
     Engine --> Tasks[Activity tasks]
     Tasks --> Worker[Inline worker / StartWorker]
-    Worker --> Activities[Registered Go activities]
+    Worker --> Policy[Activity policy wrapper]
+    Policy --> Activities[Registered Go activities]
     Engine --> History[Execution history]
     History --> Replay[ReplayFromHistory]
 ```
@@ -39,12 +40,13 @@ flowchart LR
 |---|---|---|
 | Public API | Загрузка, компиляция, options, activity registration, replay | `axiom.go`, `plan.go`, `runtime_aliases.go` |
 | Typed Go Flow | File-free reducer API с отдельным store и effects | `flow.go` |
-| Declarative Go model | Генерация AXM из типизированных Go declarations | `model/model.go`, `model/typed.go` |
+| Declarative Go model | Генерация AXM из типизированных Go declarations | `model/model.go`, `model/typed.go`, `model/strict.go` |
 | AXM frontend | Загрузка и компиляция `.axm` в `Plan` | `axm/axm.go`, `internal/lang/*`, `internal/compiler/*` |
 | TOML frontend | Разбор таблицы решений и рендеринг в AXM | `table/toml.go` |
 | TRIZ normalization | Преобразование пользовательского TRIZ-синтаксиса в AXM v0 | `internal/triz/*`, exported API в `axiom.go` |
 | Canonical Plan | Общая форма для декларативных frontends | `plan.go` |
 | Compiled runtime | Execution lifecycle, rules, claims, tasks, queries | `internal/runtime/*` |
+| Activity policy runtime | Retry, timeout и process-local concurrency wrappers | `internal/runtime/policy.go` |
 | Stores | Memory и Pebble implementations | `internal/store/memory/*`, `internal/store/pebble/*`, `store/pebble/pebble.go` |
 | Code generation | Типизированные activity boundaries | `cmd/axiomgen/*` |
 | Diagrams | Mermaid и PlantUML из module/history | `diagram/diagram.go` |
@@ -88,7 +90,7 @@ stateDiagram-v2
     Started --> Running: signal / patch / dispatch
     Running --> Waiting: fixpoint reached
     Waiting --> Running: next input or activity result
-    Running --> Failed: runtime, claim or activity error
+    Running --> Failed: runtime, claim or exhausted activity error
     Waiting --> Canceled: cancel
     Running --> Canceled: cancel
     Failed --> [*]
@@ -114,6 +116,7 @@ sequenceDiagram
     participant C as Caller
     participant E as Engine
     participant S as Store
+    participant P as Policy
     participant A as Activity
 
     C->>E: Dispatch(event)
@@ -124,8 +127,13 @@ sequenceDiagram
     alt rule has activity
         E->>S: Append ActivityScheduled
         E->>S: Enqueue task
-        E->>A: Execute registered handler
-        A-->>E: result or error
+        E->>P: Execute with policy
+        P->>A: handler attempt
+        opt retry after error
+            P->>A: next handler attempt
+        end
+        A-->>P: result or terminal error
+        P-->>E: result or error
         E->>S: Append ActivityCompleted/Failed
     end
     E->>E: Apply writes and claims
@@ -139,7 +147,7 @@ sequenceDiagram
 - `TraceFull`: `RuleScheduled`, `RuleSkipped`;
 - `TraceAggregate`: `RulesEvaluated`.
 
-Документация не должна перечислять несуществующие history events как реализованные.
+Внутренние handler retry пока не создают отдельные history entries. `ActivityFailed` появляется после исчерпания retry budget или terminal cancellation.
 
 ## Хранилища и транзакции
 
@@ -162,7 +170,7 @@ Pebble store реализует durable и transactional storage. Публичн
 
 Изменения execution, history и task records выполняются через store transaction там, где runtime вызывает `withStoreTransaction`. Внешняя activity находится за границей локальной транзакции: её результат записывается после завершения Go handler.
 
-Это означает, что внешняя система должна поддерживать безопасную идемпотентность по переданному business key.
+Это означает, что внешняя система должна поддерживать безопасную идемпотентность по переданному business key. Retry усиливает это требование, потому что один task может вызвать handler несколько раз.
 
 ## Activity tasks
 
@@ -174,18 +182,30 @@ Runtime умеет:
 - выдавать task с lease;
 - восстанавливать просроченный lease;
 - дедуплицировать незавершённую или завершённую task по rule/activity/key;
-- фиксировать completed или failed result.
+- фиксировать completed или failed result;
+- применять activity policy перед вызовом зарегистрированного handler.
 
-### Текущее состояние policy
+### Policy semantics
 
-| Поле policy | Что подтверждено | Чего нельзя обещать |
+| Поле policy | Реализованная гарантия | Текущая граница |
 |---|---|---|
-| `retry` | Парсится; `MaxAttempts = retry + 1` записывается в task | Повтор после ошибки activity handler сейчас не выполняется автоматически |
-| `timeout` | Парсится и валидируется как часть модели | Runtime не оборачивает вызов activity в отдельный timeout context |
-| `concurrency` | Парсится | Значение policy не управляет планированием; фактическая сериализация задаётся execution lock, а worker concurrency — `WorkerOptions` |
+| `retry` | До `retry + 1` последовательных handler-вызовов | Повторы immediate/in-process; нет durable backoff/requeue и retry history per attempt |
+| `timeout` | Отдельный `context.WithTimeout` на каждую handler-попытку | Handler должен соблюдать context cancellation |
+| `concurrency: once` | Одна activity сериализуется внутри одного `Engine` | Не distributed lock между процессами/Engine |
+| `concurrency: parallel` | Дополнительная сериализация не вводится | Общие execution/store ограничения остаются |
+| `concurrency: latest/first` | Парсится для forward compatibility | Production mode отклоняет `AX508`; task supersession ещё не реализован |
 | `idempotency` | Для external activity компилятор требует `required` и key; store выполняет task deduplication | Это не exactly-once гарантия внешнего API или оборудования |
 
-До реализации недостающей семантики эти поля следует документировать как частично поддерживаемые.
+`ActivityTask.Attempt` сейчас отражает lease/task attempt, а не каждую внутреннюю handler retry-попытку. `MaxAttempts` остаётся частью task model, но текущий immediate retry выполняется policy wrapper-ом до финального `CompleteTask`/`FailTask`.
+
+## Production mode
+
+`WithProductionMode()`:
+
+- требует transactional store;
+- включает strict fast runtime;
+- разрешает `retry`, `timeout`, `once` и `parallel`;
+- отклоняет `latest/first` через `AX508`, пока отсутствует корректная durable supersession semantics.
 
 ## Typed Go Flow
 
@@ -227,7 +247,8 @@ load state -> reducer -> claims -> execute effects -> save state and history
 ## Известные ограничения
 
 - нет распределённого lock/owner router;
-- runtime policy retry/timeout/concurrency реализованы не полностью;
+- retry пока immediate/in-process, без durable backoff/`NextAttemptAt` и retry history per attempt;
+- `concurrency: latest/first` не имеют task-supersession semantics;
 - автоматический переход в `Completed` не подтверждён execution path;
 - Typed Go Flow не имеет статического dependency graph;
 - imports разбираются parser, но полноценная загрузка/линковка нескольких AXM modules не подтверждена в проверенном runtime path;

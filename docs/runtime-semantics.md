@@ -4,9 +4,9 @@
 
 ## Статусы подтверждения
 
-- **Подтверждено кодом** — поведение реализовано в текущем runtime path и/или покрыто tests.
-- **Частично реализовано** — model/compiler поддерживают параметр, но runtime semantics неполны.
-- **Требует уточнения** — public surface существует, но стабильность или intended contract не зафиксированы.
+- **Подтверждено кодом** — поведение реализовано в текущем runtime path и покрыто tests.
+- **Частично реализовано** — часть semantics существует, но остаются ограничения, важные для production.
+- **Не реализовано** — синтаксис может существовать, но соответствующей runtime-гарантии нет.
 
 ## Execution
 
@@ -18,7 +18,8 @@
 | Блокировка действует между процессами | Не реализовано |
 | `Dispatch` автоматически создаёт отсутствующий execution | Подтверждено кодом |
 | Production mode требует transactional store | Подтверждено кодом и test |
-| Production mode отклоняет `retry`, `timeout`, `concurrency`, пока они не являются полными runtime-гарантиями | Подтверждено кодом и test (`AX508`) |
+| Production mode принимает `retry`, `timeout`, `concurrency: once/parallel` | Подтверждено кодом и test |
+| Production mode отклоняет `concurrency: latest/first` | Подтверждено кодом и test (`AX508`) |
 
 ## Activity
 
@@ -30,22 +31,63 @@
 | `ActTyped` принимает structs, pointers to structs и maps со string keys | Подтверждено кодом |
 | Tasks хранят input, status, attempts, lease, result/error | Подтверждено кодом |
 | Completed task не выполняется повторно при replay/recovery | Подтверждено test |
-| Failed handler автоматически повторяется по `retry` | Не реализовано в проверенном path |
-| Handler автоматически отменяется по `timeout` policy | Не реализовано в проверенном path |
-| `concurrency` policy управляет worker scheduling | Не реализовано в проверенном path |
+| Handler повторяется по `retry` | Подтверждено: до `retry + 1` вызовов |
+| `timeout` отменяет контекст одной handler-попытки | Подтверждено кодом и test |
+| `concurrency: once` сериализует вызовы одной activity | Подтверждено внутри одного Engine |
+| `concurrency: parallel` не добавляет сериализацию | Подтверждено |
+| `concurrency: latest/first` выполняет supersession | Не реализовано; production отклоняет |
 | Expired running lease может быть возвращён в pending | Подтверждено кодом |
 
-### Что означает production guardrail
+## Retry
 
-Парсер и компилятор продолжают принимать `retry`, `timeout` и `concurrency`: это сохраняет формат модели и позволяет развивать runtime без миграции DSL. Но `WithProductionMode()` теперь fail-fast отклоняет план с такими полями, потому что production-конфигурация не должна выглядеть более надёжной, чем фактическое исполнение.
+`retry: N` означает **до N повторов после исходного вызова**, то есть максимум `N + 1` вызовов зарегистрированного handler.
 
-В development/test режиме эти поля по-прежнему можно компилировать для моделирования, tooling и будущей совместимости, однако нельзя строить correctness assumptions на их автоматическом исполнении.
+Текущая реализация выполняет эти повторы внутри одного leased task и одного процесса:
+
+```text
+lease task -> handler attempt 1 -> ... -> handler attempt N+1 -> complete/fail task
+```
+
+Повторы сейчас немедленные. Backoff, `NextAttemptAt` между handler-попытками и отдельные durable history entries для каждой попытки ещё не реализованы.
+
+Это важная граница: поле `ActivityTask.Attempt` отражает попытки выдачи task/lease, а не каждую внутреннюю попытку handler. Поэтому текущий retry защищает от кратковременной ошибки handler во время живого процесса, но не является полноценной durable retry queue после падения процесса между попытками.
+
+## Timeout
+
+`timeout` применяется **к каждой handler-попытке отдельно** через `context.WithTimeout`.
+
+Handler обязан соблюдать переданный `context.Context`. Библиотека не может безопасно принудительно остановить произвольный Go-код, который игнорирует отмену контекста.
+
+Если попытка завершается по deadline, она считается ошибочной и может быть повторена в пределах `retry`. Отмена родительского context прекращает дальнейшие повторы.
+
+## Concurrency
+
+Поддерживаемые режимы:
+
+- `parallel` — runtime не добавляет ограничение на параллельные вызовы activity;
+- `once` — вызовы одной activity сериализуются mutex-ом внутри конкретного `Engine`;
+- `latest` и `first` — синтаксис парсится, но production mode возвращает `AX508`, потому что корректная semantics требует атомарной отмены/замещения pending tasks.
+
+`once` — **process-local guarantee**. Он не является распределённым lock между несколькими процессами или несколькими Engine. Для такого сценария приложению всё ещё нужен ownership/router или внешний coordination mechanism.
+
+## Production guardrail
+
+`WithProductionMode()`:
+
+1. требует `TransactionalStore`;
+2. включает strict fast runtime;
+3. разрешает `retry`, `timeout`, `concurrency: once` и `concurrency: parallel`;
+4. отклоняет `concurrency: latest/first` через `AX508` до появления корректной durable task supersession semantics.
+
+Таким образом production mode больше не блокирует те policy-поля, которые runtime действительно выполняет, но не обещает semantics, которых ещё нет.
 
 ## Idempotency
 
 Task deduplication ищет task по execution, rule, activity и idempotency key. Незавершённая или completed task не планируется повторно. Failed task не блокирует новое планирование.
 
-Это локальная гарантия store/runtime, а не гарантия exactly once для сети, платёжной системы или оборудования. Activity handler должен передавать тот же key внешней системе или реализовать собственный deduplication record.
+Это локальная гарантия store/runtime, а не exactly-once гарантия для сети, платёжной системы или оборудования. Activity handler должен передавать тот же key внешней системе или реализовать собственный deduplication record.
+
+Retry делает идемпотентность ещё важнее: handler может быть вызван несколько раз при одном task.
 
 ## Claims и writes
 
@@ -70,7 +112,7 @@ Transactional store определяет атомарность persisted execut
 - `ExecutionReachedFixpoint`;
 - `ExecutionCanceled`.
 
-Не добавляйте в reference список events, которых нет в runtime code или tests.
+Внутренние handler-retry пока не создают отдельные history entries. `ActivityFailed` фиксируется только после исчерпания доступных retry или terminal cancellation.
 
 ## Replay
 
@@ -93,11 +135,10 @@ load -> reducer -> claims -> effects -> save
 
 Если effect завершился, а `FlowStore.Save` затем завершился ошибкой, внешний effect уже нельзя отменить. Это ограничение должно быть известно до использования Flow для платежей или оборудования.
 
-## Что требуется реализовать до усиления обещаний документации
+## Следующий reliability-слой
 
-1. Реальный retry loop с backoff/NextAttemptAt и history entries.
-2. Timeout context для activity handler.
-3. Явная semantics `concurrency` policy.
-4. Tests для terminal/retryable errors и exhausted attempts.
-5. После реализации убрать соответствующие `AX508` production-блокировки и заменить их тестами фактической гарантии.
-6. Operational runbook для stuck leases, failed executions и manual recovery.
+1. Durable task-level retry с backoff и `NextAttemptAt`.
+2. History entries для каждой retry-попытки и исчерпания retry budget.
+3. `latest/first` через атомарную task supersession semantics.
+4. Явное distributed ownership/coordination contract для нескольких Engine/processes.
+5. Operational runbook для stuck leases, failed executions и manual recovery.
