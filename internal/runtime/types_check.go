@@ -19,7 +19,7 @@ func (e *Engine) checkContextValue(target string, value any) error {
 		return nil
 	}
 	if !valueMatchesType(value, symbol.Type) {
-		return diag.Error{Code: "AX406", Kind: "runtime", Entity: field, Message: fmt.Sprintf("type mismatch for %s: got %T, want %s", field, value, symbol.Type), Hint: "Make the patch, initial context, or rule write value match the declared field type."}
+		return diag.Error{Code: "AX406", Kind: "runtime", Entity: field, Message: fmt.Sprintf("type mismatch for %s: got %T, want %s", field, value, symbol.Type), Hint: "Make the patch, initial context, or rule write value match the declared field type and the supported numeric range."}
 	}
 	return nil
 }
@@ -70,12 +70,8 @@ func valueMatchesType(value any, typeName string) bool {
 }
 
 func isRuntimeInt(value any) bool {
-	switch value.(type) {
-	case int, int8, int16, int32, int64:
-		return true
-	default:
-		return false
-	}
+	_, ok := signedInteger(value)
+	return ok
 }
 
 func isSlice(value any) bool {
