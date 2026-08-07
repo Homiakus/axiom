@@ -80,12 +80,12 @@ func TestWorkerServiceDrainFinishesClaimedWithoutTakingNext(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("worker did not claim first task")
 	}
+	// BeginDrain is synchronous: after it returns no new task may be claimed.
+	service.BeginDrain()
+	close(release)
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), time.Second)
 	defer drainCancel()
-	drainDone := make(chan error, 1)
-	go func() { drainDone <- service.Drain(drainCtx) }()
-	close(release)
-	if err := <-drainDone; err != nil {
+	if err := service.Drain(drainCtx); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-runErr; err != nil {
@@ -136,12 +136,11 @@ func TestRetentionDeletesTerminalAndPrunesFileVersions(t *testing.T) {
 	current, _ := store.Load(ctx, execution.ID)
 	if _, err := store.Commit(ctx, execution.ID, current.Version, func(x *Execution) error {
 		x.Status = StatusCompleted
-		x.UpdatedAt = time.Now().Add(-time.Hour)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := CollectExecutions(ctx, store, RetentionPolicy{TerminalFor: time.Nanosecond})
+	result, err := CollectExecutions(ctx, store, RetentionPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
