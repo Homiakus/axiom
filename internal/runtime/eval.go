@@ -223,7 +223,7 @@ func resolveRef(ref string, env evalEnv) any {
 		return resolvePath(env.output, ref[7:])
 	}
 	if strings.HasPrefix(ref, "runtime.") {
-		return nil
+		return resolveRuntimeRef(env.execution, strings.TrimPrefix(ref, "runtime."))
 	}
 	if env.execution == nil {
 		return nil
