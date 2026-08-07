@@ -192,6 +192,9 @@ func (e *Engine) completeActivity(ctx context.Context, executionID string, task 
 		if err := e.store.FailTask(ctx, task.ID, activityErr.Error()); err != nil {
 			return err
 		}
+		if caught, err := e.handleActivityCatch(ctx, execution, task, activityErr, runErr); caught {
+			return err
+		}
 		if err := e.store.AppendHistory(ctx, executionID, "ActivityFailed", map[string]any{"activity": task.ActivityName, "rule": task.RuleName, "error": activityErr.Error()}); err != nil {
 			return err
 		}
