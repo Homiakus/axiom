@@ -30,6 +30,22 @@ jobs:
           set -o pipefail
           go test ./... 2>&1 | tee test-artifacts/go-test.log
 
+      - name: Run documented public examples
+        shell: bash
+        run: |
+          set -euo pipefail
+          examples=(model go-first order axiom-files table triz)
+          for example in "${examples[@]}"; do
+            echo "==> examples/${example}"
+            go run "./examples/${example}" 2>&1 | tee "test-artifacts/${example}.log"
+          done
+          grep -F 'welcome sent: true' test-artifacts/model.log
+          grep -F 'state count=2 history=2' test-artifacts/go-first.log
+          grep -F 'status=paid total=1599 receiptSent=true' test-artifacts/order.log
+          grep -F 'welcomeSent=true' test-artifacts/axiom-files.log
+          grep -F 'welcomeSent=true' test-artifacts/table.log
+          grep -F 'domain=HydroPilotMini' test-artifacts/triz.log
+
       - name: Run coffee machine example
         shell: bash
         run: |
