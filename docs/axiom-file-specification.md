@@ -122,6 +122,7 @@ Implemented operators, from lower to higher practical precedence:
 - `and`;
 - `==`, `!=`, `>`, `>=`, `<`, `<=`, `in`;
 - `+`, `-`;
+- `*`, `/`, `%`;
 - unary `not`, unary `-`, and postfix `exists`;
 - parentheses.
 
@@ -133,10 +134,22 @@ not User.disabled
 Cart.total >= 100
 Risk.status in ["unknown", "expired"]
 Payment.status == "paid" implies Payment.id exists
-Counter.value + signal.by
+Counter.value + signal.by * 2
+(State.total + signal.delta) / 4
+State.sequence % 2
+-State.offset
 ```
 
-`+` supports numbers and string concatenation. `-` requires numeric operands. Multiplication, division, and modulo tokens are not accepted by the current AXM lexer.
+Arithmetic semantics:
+
+- `+` supports numbers and string concatenation;
+- `-`, `*`, `/`, `%` require numeric operands;
+- multiplication, division, and modulo bind more tightly than addition and subtraction;
+- operators of the same precedence are left-associative;
+- integer operands preserve integer results; integer division uses Go-style truncating integer division;
+- when a floating operand participates, division and modulo return floating-point results (`math.Mod` semantics for `%`);
+- division or modulo by zero returns a runtime error;
+- unary `-` accepts numeric values and is supported by both the regular evaluator and fast expression VM.
 
 Implemented calls:
 
@@ -364,5 +377,5 @@ These are compiled-artifact identifiers, not semantic-version release tags.
 - Timer triggers are indexed, but a complete wall-clock scheduler contract is not documented as implemented.
 - Retry is currently in-process rather than durable task-level backoff/requeue; `latest/first` concurrency and policy catch dispatch remain incomplete.
 - `runtime.*` query projections currently resolve to `nil` in the verified evaluator.
-- Multiplication, division, and modulo are not accepted by the AXM lexer.
+- Numeric evaluation still normalizes signed integer arithmetic through the runtime numeric conversion layer; very large integer precision and unsigned-integer semantics are not yet a stable contract.
 - Unknown type identifiers are not rejected consistently.

@@ -48,32 +48,27 @@ func (program *exprProgram) eval(env evalEnv) (any, error) {
 		case opLoadRef:
 			stack = append(stack, resolveRef(in.ref, env))
 		case opExists:
-			var val any
-			if len(stack) > 0 {
-				val = stack[len(stack)-1]
-				stack = stack[:len(stack)-1]
-			}
+			val := popVMValue(&stack)
 			stack = append(stack, exists(val))
 		case opMissing:
-			var val any
-			if len(stack) > 0 {
-				val = stack[len(stack)-1]
-				stack = stack[:len(stack)-1]
-			}
+			val := popVMValue(&stack)
 			stack = append(stack, !exists(val))
 		case opNot:
-			var val any
-			if len(stack) > 0 {
-				val = stack[len(stack)-1]
-				stack = stack[:len(stack)-1]
-			}
+			val := popVMValue(&stack)
 			stack = append(stack, !truthy(val))
+		case opNeg:
+			val := popVMValue(&stack)
+			value, err := negateValue(val)
+			if err != nil {
+				return nil, err
+			}
+			stack = append(stack, value)
 		case opChangedField:
 			stack = append(stack, env.dirty.Fields != nil && env.dirty.Fields.has(int(in.a)))
 		case opChangedRef:
 			_, ok := env.changed[in.ref]
 			stack = append(stack, ok)
-		case opEq, opNe, opGt, opGe, opLt, opLe, opIn, opAnd, opOr, opImplies, opAdd, opSub:
+		case opEq, opNe, opGt, opGe, opLt, opLe, opIn, opAnd, opOr, opImplies, opAdd, opSub, opMul, opDiv, opMod:
 			var right, left any
 			if len(stack) >= 2 {
 				right = stack[len(stack)-1]
@@ -146,6 +141,16 @@ func (program *exprProgram) eval(env evalEnv) (any, error) {
 	return stack[len(stack)-1], nil
 }
 
+func popVMValue(stack *[]any) any {
+	values := *stack
+	if len(values) == 0 {
+		return nil
+	}
+	value := values[len(values)-1]
+	*stack = values[:len(values)-1]
+	return value
+}
+
 type opCode uint8
 
 const (
@@ -158,6 +163,7 @@ const (
 	opExists
 	opMissing
 	opNot
+	opNeg
 	opChangedField
 	opChangedRef
 	opEq
@@ -172,6 +178,9 @@ const (
 	opImplies
 	opAdd
 	opSub
+	opMul
+	opDiv
+	opMod
 	opList
 	opMap
 	opHash
@@ -217,15 +226,16 @@ func (c exprCompiler) emit(program *exprProgram, expr *lang.Expr) {
 		c.emitRef(program, expr.Name)
 	case lang.ExprUnary:
 		c.emit(program, expr.Left)
-		if expr.Op == "exists" {
+		switch expr.Op {
+		case "exists":
 			program.instrs = append(program.instrs, instr{op: opExists})
-			return
-		}
-		if expr.Op == "not" {
+		case "not":
 			program.instrs = append(program.instrs, instr{op: opNot})
-			return
+		case "-":
+			program.instrs = append(program.instrs, instr{op: opNeg})
+		default:
+			program.instrs = append(program.instrs, instr{op: opPureCall, s: expr.Op, n: 1})
 		}
-		program.instrs = append(program.instrs, instr{op: opPureCall, s: expr.Op, n: 1})
 	case lang.ExprBinary:
 		c.emit(program, expr.Left)
 		c.emit(program, expr.Right)
@@ -338,6 +348,12 @@ func binaryOp(op string) opCode {
 		return opAdd
 	case "-":
 		return opSub
+	case "*":
+		return opMul
+	case "/":
+		return opDiv
+	case "%":
+		return opMod
 	default:
 		return opPureCall
 	}
@@ -451,15 +467,13 @@ func evalVMBinary(op opCode, left any, right any) (any, error) {
 	case opAdd:
 		return addValues(left, right)
 	case opSub:
-		a, aok := number(left)
-		b, bok := number(right)
-		if !aok || !bok {
-			return nil, fmt.Errorf("operator - requires numbers")
-		}
-		if isIntLike(left) && isIntLike(right) {
-			return int(a - b), nil
-		}
-		return a - b, nil
+		return subtractValues(left, right)
+	case opMul:
+		return multiplyValues(left, right)
+	case opDiv:
+		return divideValues(left, right)
+	case opMod:
+		return moduloValues(left, right)
 	default:
 		return nil, fmt.Errorf("unsupported binary opcode %d", op)
 	}
