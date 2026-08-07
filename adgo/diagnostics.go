@@ -24,25 +24,25 @@ type Diagnostic struct {
 }
 
 type TaskDiagnostic struct {
-	ID         string     `json:"id"`
-	NodeID     string     `json:"nodeId"`
-	Activity   string     `json:"activity"`
-	WorkerID   string     `json:"workerId,omitempty"`
-	Attempt    int        `json:"attempt"`
-	Status     TaskStatus `json:"status"`
-	LeaseUntil time.Time  `json:"leaseUntil,omitempty"`
+	ID         string        `json:"id"`
+	NodeID     string        `json:"nodeId"`
+	Activity   string        `json:"activity"`
+	WorkerID   string        `json:"workerId,omitempty"`
+	Attempt    int           `json:"attempt"`
+	Status     TaskStatus    `json:"status"`
+	LeaseUntil time.Time     `json:"leaseUntil,omitempty"`
 	LeaseLeft  time.Duration `json:"leaseLeft,omitempty"`
 }
 
 type ExecutionDiagnostics struct {
-	Summary      ExecutionSummary     `json:"summary"`
-	Ready        []string             `json:"ready,omitempty"`
-	Waiting      map[string]string    `json:"waiting,omitempty"`
-	ActiveTasks  []TaskDiagnostic     `json:"activeTasks,omitempty"`
-	Budget       BudgetUsage          `json:"budget"`
-	BudgetLimit  BudgetLimit          `json:"budgetLimit"`
-	Quality      QualityVector        `json:"quality,omitempty"`
-	Diagnostics  []Diagnostic         `json:"diagnostics,omitempty"`
+	Summary        ExecutionSummary   `json:"summary"`
+	Ready          []string           `json:"ready,omitempty"`
+	Waiting        map[string]string  `json:"waiting,omitempty"`
+	ActiveTasks    []TaskDiagnostic   `json:"activeTasks,omitempty"`
+	Budget         BudgetUsage        `json:"budget"`
+	BudgetLimit    BudgetLimit        `json:"budgetLimit"`
+	Quality        QualityVector      `json:"quality,omitempty"`
+	Diagnostics    []Diagnostic       `json:"diagnostics,omitempty"`
 	ProviderHealth []ProviderHealth   `json:"providerHealth,omitempty"`
 }
 
@@ -100,12 +100,11 @@ func AuditExecution(plan *Plan, execution *Execution, now time.Time) []Diagnosti
 
 	activeByNode := map[string]int{}
 	for taskID, task := range execution.ActiveTasks {
-		node, exists := plan.Nodes[task.NodeID]
+		_, exists := plan.Nodes[task.NodeID]
 		if !exists {
 			out = append(out, Diagnostic{Severity: DiagnosticError, Code: "ADG-DIAG-ORPHAN-TASK", TaskID: taskID, NodeID: task.NodeID, Message: "active task references unknown node"})
 			continue
 		}
-		_ = node
 		activeByNode[task.NodeID]++
 		runtime := execution.Nodes[task.NodeID]
 		if runtime == nil || runtime.Status != NodeRunning {
@@ -166,14 +165,6 @@ func AuditExecution(plan *Plan, execution *Execution, now time.Time) []Diagnosti
 	}
 	if terminal(execution.Status) && len(execution.ActiveTasks) > 0 {
 		out = append(out, Diagnostic{Severity: DiagnosticError, Code: "ADG-DIAG-TERMINAL-ACTIVE", Message: "terminal execution still contains active tasks"})
-	}
-	return out
-}
-
-func cloneStringMap(values map[string]string) map[string]string {
-	out := make(map[string]string, len(values))
-	for key, value := range values {
-		out[key] = value
 	}
 	return out
 }
