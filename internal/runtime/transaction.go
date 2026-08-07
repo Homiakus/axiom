@@ -7,16 +7,19 @@ import (
 	"github.com/Homiakus/axiom/internal/diag"
 )
 
-// shouldCommitTransactionError identifies domain failures whose failed state
-// has already been written to the transaction and must remain durable even
-// though the original error is returned to the caller.
+// shouldCommitTransactionError identifies domain failures whose state changes
+// have already been written to the transaction and must remain durable even
+// though a control-flow error is returned to the caller.
 func shouldCommitTransactionError(err error) bool {
+	if _, ok := retryScheduled(err); ok {
+		return true
+	}
 	var diagnostic *diag.Error
 	if !errors.As(err, &diagnostic) || diagnostic == nil {
 		return false
 	}
 	switch diagnostic.Code {
-	case "AX505": // activity handler failed after task/history/state were updated
+	case "AX505": // terminal activity handler failure after task/history/state were updated
 		return true
 	default:
 		return false
@@ -59,6 +62,11 @@ func (e *Engine) withStoreTransaction(ctx context.Context, fn func(*Engine) erro
 
 	if commitErr := tx.Commit(); commitErr != nil {
 		if callbackErr != nil {
+			// A retry marker is only meaningful after its checkpoint committed.
+			// Never let callers treat a failed commit as a successfully scheduled retry.
+			if _, ok := retryScheduled(callbackErr); ok {
+				return commitErr
+			}
 			return errors.Join(callbackErr, commitErr)
 		}
 		return commitErr
