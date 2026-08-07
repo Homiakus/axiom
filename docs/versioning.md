@@ -56,16 +56,20 @@ Each version must have release notes at `docs/releases/<version>.md`.
 
 The repository provides `.github/workflows/release.yml` with a manual `workflow_dispatch` entry point.
 
+A release is published from a **frozen release branch** so later commits to `main` cannot silently change the contents of an already-reviewed release candidate.
+
 To publish a version:
 
 1. merge the release candidate into `main` and confirm its normal CI is green;
-2. open **Actions -> release -> Run workflow** on `main`;
-3. enter a pre-v1 SemVer tag such as `v0.1.0`;
-4. set `prerelease` when appropriate;
-5. the workflow re-runs module consistency, unit tests and `go vet`;
-6. on success, `gh release create` creates the tag on the verified workflow commit and publishes the GitHub Release using `docs/releases/<version>.md`.
+2. create `release/<version>` at the exact reviewed commit, for example `release/v0.1.0`;
+3. keep `docs/releases/<version>.md` on `main`;
+4. open **Actions -> release -> Run workflow** on `main`;
+5. enter a pre-v1 SemVer tag such as `v0.1.0` and choose prerelease status;
+6. the workflow resolves `release/<version>`, verifies that commit is an ancestor of `main`, then checks out the frozen SHA;
+7. it re-runs module consistency, `go test ./...`, and `go vet ./...` on that frozen candidate;
+8. on success, `gh release create` creates the tag at the frozen SHA and publishes the GitHub Release using `docs/releases/<version>.md` from release tooling on `main`.
 
-The workflow refuses an already-existing tag, malformed pre-v1 version, or missing release-notes file.
+The workflow refuses malformed versions, duplicate tags, missing release notes, missing frozen branches, candidates that are not ancestors of `main`, and dispatches from a branch other than `main`.
 
 ## v0.1.0 release checklist
 
@@ -73,15 +77,18 @@ The workflow refuses an already-existing tag, malformed pre-v1 version, or missi
 - [x] Typed activity boundary fails fast on invalid shapes/handlers.
 - [x] Common model-builder mistakes return diagnostics rather than panic.
 - [x] Invalid model literals retain their original encoding error.
-- [x] Retry/timeout/once policy semantics are implemented and documented.
+- [x] Retry/timeout/once policy semantics for the frozen baseline are documented.
 - [x] AXM arithmetic is consistent across parser, regular evaluator and fast VM.
 - [x] AXM `Int` has an explicit signed 64-bit range contract.
 - [x] Stable `runtime.*` execution metadata projections are implemented.
 - [x] Fuzz-discovered parser panic has regression coverage.
 - [x] Current usability audit exists and the July report is marked superseded.
 - [x] `CHANGELOG.md` and `docs/releases/v0.1.0.md` are prepared.
-- [ ] Release-readiness PR is merged into `main` with green CI.
+- [x] Release-readiness PR is merged into `main` with green CI.
+- [x] Release tooling supports a frozen `release/v0.1.0` candidate.
 - [ ] `release` workflow is executed for `v0.1.0`.
+
+Changes merged after the frozen candidate, including durable task-level retry, belong to `Unreleased` and do not retroactively change the `v0.1.0` contract.
 
 ## Deprecation policy
 
@@ -97,10 +104,10 @@ A field being accepted by a model or parser does not automatically make it a run
 
 ## Post-v0.1.0 reliability roadmap
 
-1. durable task-level retry/backoff with `NextAttemptAt` and retry history;
-2. atomic task supersession for `concurrency: latest/first`;
-3. compile-time validation of `runtime.*` projection names;
-4. runtime policy `catch:` dispatch;
-5. wall-clock timer scheduler contract;
-6. AXM multi-file import resolver/linker;
+1. atomic task supersession for `concurrency: latest/first`;
+2. compile-time validation of `runtime.*` projection names;
+3. runtime policy `catch:` dispatch;
+4. wall-clock timer scheduler contract;
+5. AXM multi-file import resolver/linker;
+6. distributed execution ownership/coordination contract;
 7. root public API classification and cleanup before `v1.0.0`.
