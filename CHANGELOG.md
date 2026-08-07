@@ -13,7 +13,10 @@ Axiom follows the pre-v1 Semantic Versioning policy described in [`docs/versioni
 - public `axiom.ErrRetryScheduled` / `axiom.RetryScheduledError` for low-level schedulers;
 - retry `backoff` policy with fixed duration, `fixed(...)`, and `exponential(...)` forms;
 - `model.PolicyBuilder.Backoff` and `ExponentialBackoff` helpers;
-- memory-store Engine replacement and Pebble close/reopen regression tests for retry recovery.
+- memory-store Engine replacement and Pebble close/reopen regression tests for retry recovery;
+- terminal `TaskSuperseded` status and `ActivitySuperseded` history entries;
+- transactional pending-task supersession for `concurrency: first` and `concurrency: latest`;
+- stable runtime query namespace validation and `model.Runtime.*` helpers.
 
 ### Changed
 
@@ -22,15 +25,20 @@ Axiom follows the pre-v1 Semantic Versioning policy described in [`docs/versioni
 - `Run.Dispatch`, `Run.Signal`, and `Run.Patch` keep synchronous behavior by waiting for due durable retries within the caller context;
 - low-level `Engine.RunUntilIdle` returns `ErrRetryScheduled` after a retry checkpoint instead of sleeping until `NextAttemptAt`;
 - delayed in-memory tasks are prefiltered before polling, preventing pending-queue spin when all work is scheduled for the future;
-- retry-aware stores preserve indexed `TaskDedupStore` behavior instead of falling back to linear task scans.
+- retry-aware stores preserve indexed `TaskDedupStore` behavior instead of falling back to linear task scans;
+- `concurrency: first` keeps the earliest active task in one execution/activity lane and records later scheduled tasks as superseded;
+- `concurrency: latest` replaces older pending work with the newest pending task, but never pretends to forcibly cancel arbitrary running Go code;
+- explicit non-empty idempotency keys continue to deduplicate the same external intent before supersession logic is applied;
+- production mode accepts `parallel`, `once`, `first`, and `latest` when used with a transactional store;
+- unknown `runtime.*` projections are rejected on canonical Plan/Open/New paths instead of silently becoming `nil`.
 
 ### Planned
 
-- production-safe `concurrency: latest/first` task supersession;
 - runtime dispatch for policy `catch:` mappings;
-- stricter validation of unknown `runtime.*` query projection names;
+- distributed execution ownership/coordination semantics for multiple processes;
 - multi-file AXM import resolution and linking;
-- explicit wall-clock timer scheduler contract.
+- explicit wall-clock timer scheduler contract;
+- public API classification and cleanup before `v1.0.0`.
 
 ## [v0.1.0] - 2026-08-07
 
@@ -52,8 +60,8 @@ First versioned public baseline of Axiom.
 - implemented `retry: N` as the initial activity handler call plus up to `N` immediate in-process retries;
 - implemented per-attempt activity `timeout` using `context.WithTimeout`;
 - implemented process-local `concurrency: once` serialization per activity and retained unrestricted `parallel` behavior;
-- production mode now accepts implemented retry/timeout/once/parallel policies;
-- production mode rejects `concurrency: latest/first` with `AX508` until durable supersession semantics exist.
+- production mode accepts implemented retry/timeout/once/parallel policies;
+- production mode rejects `concurrency: latest/first` with `AX508` in the frozen v0.1.0 baseline.
 
 ### Expressions and numeric behavior
 
@@ -84,9 +92,9 @@ First versioned public baseline of Axiom.
 
 ### Known limitations in v0.1.0
 
-- retry is immediate and in-process; durable task-level retry/backoff is not yet implemented;
+- retry is immediate and in-process; durable task-level retry/backoff is not yet implemented in the frozen v0.1.0 baseline;
 - `concurrency: once` is local to one `Engine`, not a distributed lock;
-- `latest/first` concurrency modes are not production-supported;
+- `latest/first` concurrency modes are not production-supported in the frozen v0.1.0 baseline;
 - policy `catch:` targets are parsed/validated but not dispatched by the verified runtime path;
 - timer triggers do not yet define a complete wall-clock scheduler contract;
 - AXM imports are parsed but the public compiler has no multi-file resolver/linker;
