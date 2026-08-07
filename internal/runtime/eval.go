@@ -307,18 +307,29 @@ func truthy(value any) bool {
 		return false
 	case string:
 		return v != ""
-	case int:
-		return v != 0
-	case int64:
-		return v != 0
-	case float64:
-		return v != 0
-	default:
-		return true
 	}
+	if integer, ok := signedInteger(value); ok {
+		return integer != 0
+	}
+	if number, ok := floatingNumber(value); ok {
+		return number != 0
+	}
+	return true
 }
 
 func compareNumbers(left any, right any, cmp func(float64, float64) bool) (bool, error) {
+	if a, aok := signedInteger(left); aok {
+		if b, bok := signedInteger(right); bok {
+			switch {
+			case a < b:
+				return cmp(-1, 0), nil
+			case a > b:
+				return cmp(1, 0), nil
+			default:
+				return cmp(0, 0), nil
+			}
+		}
+	}
 	a, aok := number(left)
 	b, bok := number(right)
 	if !aok || !bok {
@@ -327,18 +338,25 @@ func compareNumbers(left any, right any, cmp func(float64, float64) bool) (bool,
 	return cmp(a, b), nil
 }
 
-func number(value any) (float64, bool) {
+func signedInteger(value any) (int64, bool) {
 	switch v := value.(type) {
 	case int:
-		return float64(v), true
+		return int64(v), true
 	case int8:
-		return float64(v), true
+		return int64(v), true
 	case int16:
-		return float64(v), true
+		return int64(v), true
 	case int32:
-		return float64(v), true
+		return int64(v), true
 	case int64:
-		return float64(v), true
+		return v, true
+	default:
+		return 0, false
+	}
+}
+
+func floatingNumber(value any) (float64, bool) {
+	switch v := value.(type) {
 	case float32:
 		return float64(v), true
 	case float64:
@@ -348,22 +366,72 @@ func number(value any) (float64, bool) {
 	}
 }
 
-func isIntLike(value any) bool {
-	switch value.(type) {
-	case int, int8, int16, int32, int64:
-		return true
-	default:
-		return false
+func number(value any) (float64, bool) {
+	if v, ok := signedInteger(value); ok {
+		return float64(v), true
 	}
+	return floatingNumber(value)
+}
+
+func isIntLike(value any) bool {
+	_, ok := signedInteger(value)
+	return ok
+}
+
+func integerResult(value int64) any {
+	if strconv.IntSize == 64 || (value >= -1<<31 && value <= 1<<31-1) {
+		return int(value)
+	}
+	return value
+}
+
+func safeAddInt64(a, b int64) (int64, bool) {
+	if b > 0 && a > math.MaxInt64-b {
+		return 0, false
+	}
+	if b < 0 && a < math.MinInt64-b {
+		return 0, false
+	}
+	return a + b, true
+}
+
+func safeSubInt64(a, b int64) (int64, bool) {
+	if b > 0 && a < math.MinInt64+b {
+		return 0, false
+	}
+	if b < 0 && a > math.MaxInt64+b {
+		return 0, false
+	}
+	return a - b, true
+}
+
+func safeMulInt64(a, b int64) (int64, bool) {
+	if a == 0 || b == 0 {
+		return 0, true
+	}
+	if (a == math.MinInt64 && b == -1) || (b == math.MinInt64 && a == -1) {
+		return 0, false
+	}
+	result := a * b
+	if result/b != a {
+		return 0, false
+	}
+	return result, true
 }
 
 func addValues(left any, right any) (any, error) {
+	if a, aok := signedInteger(left); aok {
+		if b, bok := signedInteger(right); bok {
+			result, ok := safeAddInt64(a, b)
+			if !ok {
+				return nil, fmt.Errorf("integer overflow in operator +")
+			}
+			return integerResult(result), nil
+		}
+	}
 	a, aok := number(left)
 	b, bok := number(right)
 	if aok && bok {
-		if isIntLike(left) && isIntLike(right) {
-			return int(a + b), nil
-		}
 		return a + b, nil
 	}
 	if s, ok := left.(string); ok {
@@ -376,41 +444,67 @@ func addValues(left any, right any) (any, error) {
 }
 
 func negateValue(value any) (any, error) {
-	n, ok := number(value)
+	if integer, ok := signedInteger(value); ok {
+		if integer == math.MinInt64 {
+			return nil, fmt.Errorf("integer overflow in unary -")
+		}
+		return integerResult(-integer), nil
+	}
+	n, ok := floatingNumber(value)
 	if !ok {
 		return nil, fmt.Errorf("unary - requires a number")
-	}
-	if isIntLike(value) {
-		return int(-n), nil
 	}
 	return -n, nil
 }
 
 func subtractValues(left any, right any) (any, error) {
+	if a, aok := signedInteger(left); aok {
+		if b, bok := signedInteger(right); bok {
+			result, ok := safeSubInt64(a, b)
+			if !ok {
+				return nil, fmt.Errorf("integer overflow in operator -")
+			}
+			return integerResult(result), nil
+		}
+	}
 	a, aok := number(left)
 	b, bok := number(right)
 	if !aok || !bok {
 		return nil, fmt.Errorf("operator - requires numbers")
 	}
-	if isIntLike(left) && isIntLike(right) {
-		return int(a - b), nil
-	}
 	return a - b, nil
 }
 
 func multiplyValues(left any, right any) (any, error) {
+	if a, aok := signedInteger(left); aok {
+		if b, bok := signedInteger(right); bok {
+			result, ok := safeMulInt64(a, b)
+			if !ok {
+				return nil, fmt.Errorf("integer overflow in operator *")
+			}
+			return integerResult(result), nil
+		}
+	}
 	a, aok := number(left)
 	b, bok := number(right)
 	if !aok || !bok {
 		return nil, fmt.Errorf("operator * requires numbers")
 	}
-	if isIntLike(left) && isIntLike(right) {
-		return int(a * b), nil
-	}
 	return a * b, nil
 }
 
 func divideValues(left any, right any) (any, error) {
+	if a, aok := signedInteger(left); aok {
+		if b, bok := signedInteger(right); bok {
+			if b == 0 {
+				return nil, fmt.Errorf("division by zero")
+			}
+			if a == math.MinInt64 && b == -1 {
+				return nil, fmt.Errorf("integer overflow in operator /")
+			}
+			return integerResult(a / b), nil
+		}
+	}
 	a, aok := number(left)
 	b, bok := number(right)
 	if !aok || !bok {
@@ -419,13 +513,18 @@ func divideValues(left any, right any) (any, error) {
 	if b == 0 {
 		return nil, fmt.Errorf("division by zero")
 	}
-	if isIntLike(left) && isIntLike(right) {
-		return int(a) / int(b), nil
-	}
 	return a / b, nil
 }
 
 func moduloValues(left any, right any) (any, error) {
+	if a, aok := signedInteger(left); aok {
+		if b, bok := signedInteger(right); bok {
+			if b == 0 {
+				return nil, fmt.Errorf("modulo by zero")
+			}
+			return integerResult(a % b), nil
+		}
+	}
 	a, aok := number(left)
 	b, bok := number(right)
 	if !aok || !bok {
@@ -433,9 +532,6 @@ func moduloValues(left any, right any) (any, error) {
 	}
 	if b == 0 {
 		return nil, fmt.Errorf("modulo by zero")
-	}
-	if isIntLike(left) && isIntLike(right) {
-		return int(a) % int(b), nil
 	}
 	return math.Mod(a, b), nil
 }
