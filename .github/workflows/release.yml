@@ -1,0 +1,97 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "SemVer tag to publish, for example v0.1.0"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark the GitHub Release as a prerelease"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      PRERELEASE: ${{ inputs.prerelease }}
+    steps:
+      - name: Checkout main release tooling
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+
+      - name: Resolve frozen release candidate
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Release workflow must be dispatched from main; got: $GITHUB_REF" >&2
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^v0\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Expected a pre-v1 tag such as v0.1.0; got: $VERSION" >&2
+            exit 1
+          fi
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Tag already exists: $VERSION" >&2
+            exit 1
+          fi
+
+          notes="docs/releases/${VERSION}.md"
+          if [[ ! -f "$notes" ]]; then
+            echo "Missing release notes: $notes" >&2
+            exit 1
+          fi
+
+          release_branch="release/${VERSION}"
+          if ! git fetch --no-tags origin "refs/heads/${release_branch}:refs/remotes/origin/${release_branch}"; then
+            echo "Missing frozen release branch: ${release_branch}" >&2
+            exit 1
+          fi
+          target_sha="$(git rev-parse "refs/remotes/origin/${release_branch}")"
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$target_sha" origin/main; then
+            echo "Frozen release candidate ${target_sha} is not an ancestor of main" >&2
+            exit 1
+          fi
+          echo "sha=$target_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Verify frozen release candidate
+        shell: bash
+        env:
+          TARGET_SHA: ${{ steps.candidate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git checkout --detach "$TARGET_SHA"
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          go test ./...
+          go vet ./...
+
+      - name: Publish GitHub Release and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ steps.candidate.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "$GITHUB_SHA"
+          args=(release create "$VERSION" --target "$TARGET_SHA" --title "Axiom $VERSION" --notes-file "docs/releases/${VERSION}.md")
+          if [[ "$PRERELEASE" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+          gh "${args[@]}"
