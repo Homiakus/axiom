@@ -1,21 +1,16 @@
 package runtime
 
+import "strconv"
+
 func valueOf(value any) Value {
+	if integer, ok := signedInteger(value); ok {
+		return Value{Kind: ValueInt, I64: integer}
+	}
 	switch v := value.(type) {
 	case nil:
 		return Value{Kind: ValueNull}
 	case bool:
 		return Value{Kind: ValueBool, B: v}
-	case int:
-		return Value{Kind: ValueInt, I64: int64(v)}
-	case int8:
-		return Value{Kind: ValueInt, I64: int64(v)}
-	case int16:
-		return Value{Kind: ValueInt, I64: int64(v)}
-	case int32:
-		return Value{Kind: ValueInt, I64: int64(v)}
-	case int64:
-		return Value{Kind: ValueInt, I64: v}
 	case float32:
 		return Value{Kind: ValueFloat, F64: float64(v)}
 	case float64:
@@ -34,6 +29,9 @@ func (v Value) Interface() any {
 	case ValueBool:
 		return v.B
 	case ValueInt:
+		if strconv.IntSize == 32 && (v.I64 < -1<<31 || v.I64 > 1<<31-1) {
+			return v.I64
+		}
 		return int(v.I64)
 	case ValueFloat:
 		return v.F64
