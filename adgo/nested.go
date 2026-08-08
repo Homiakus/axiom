@@ -14,10 +14,10 @@ import (
 // application therefore resumes the same child, while a legitimate parent
 // revision gets a new child execution.
 type NestedInvocation struct {
-	ParentExecutionID  string
-	ParentNodeID       string
+	ParentExecutionID   string
+	ParentNodeID        string
 	ParentApplicationID string
-	FlowName           string
+	FlowName            string
 }
 
 // NestedLocalOptions configures embedded execution of a child plan through the
@@ -86,7 +86,7 @@ func RunNestedLocal(
 	}
 	worker := options.Worker
 	if strings.TrimSpace(worker.ID) == "" {
-		worker.ID = "nested/" + invocation.FlowName + "/" + shortNestedID(childID)
+		worker.ID = "nested/" + safeName(invocation.FlowName) + "/" + shortNestedID(childID)
 	}
 	execution, err := engine.RunLocal(ctx, childID, LocalRunOptions{
 		Worker:          worker,
