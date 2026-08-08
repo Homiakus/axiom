@@ -1,0 +1,47 @@
+name: module-checksum
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checksum:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Compute exact pseudo-version and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(python3 - <<'PY'
+          import datetime, subprocess
+          raw = subprocess.check_output(['git', 'show', '-s', '--format=%cI', 'HEAD'], text=True).strip()
+          dt = datetime.datetime.fromisoformat(raw.replace('Z', '+00:00')).astimezone(datetime.timezone.utc)
+          sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()[:12]
+          print(f"v0.0.0-{dt:%Y%m%d%H%M%S}-{sha}")
+          PY
+          )"
+          echo "AXIOM_VERSION=${VERSION}"
+          TMP="$(mktemp -d)"
+          cd "${TMP}"
+          go mod init axiom-checksum-probe
+          GONOSUMDB=github.com/Homiakus/axiom GOPROXY=direct \
+            go mod download -json "github.com/Homiakus/axiom@${VERSION}" | tee module.json
+          python3 - <<'PY'
+          import json
+          x=json.load(open('module.json'))
+          print('AXIOM_SUM='+x.get('Sum',''))
+          print('AXIOM_GOMOD_SUM='+x.get('GoModSum',''))
+          print('AXIOM_VERSION_RESOLVED='+x.get('Version',''))
+          PY
