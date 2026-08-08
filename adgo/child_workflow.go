@@ -20,6 +20,16 @@ type ChildOptions struct {
 	Budget  BudgetLimit
 }
 
+// ChildExecutionID returns the canonical deterministic identity for a child
+// workflow. Parent redelivery with the same logical item therefore resumes the
+// same child instead of creating duplicate work.
+func ChildExecutionID(parentID, parentNode, itemID string) string {
+	if itemID == "" {
+		itemID = "child"
+	}
+	return parentID + "/" + safeName(parentNode) + "/" + safeName(itemID)
+}
+
 // StartChild creates or resumes a deterministic child execution. The ID is a
 // function of parent execution, parent node and logical item id, so at-least-once
 // parent activity delivery cannot duplicate the child workflow.
@@ -34,7 +44,7 @@ func (h *Host) StartChild(ctx context.Context, parentID, parentNode, itemID stri
 	if err != nil {
 		return ChildHandle{}, nil, err
 	}
-	childID := parentID + "/" + safeName(parentNode) + "/" + safeName(itemID)
+	childID := ChildExecutionID(parentID, parentNode, itemID)
 	initial := make(map[string]any, len(options.Initial)+3)
 	for key, value := range options.Initial {
 		initial[key] = value
