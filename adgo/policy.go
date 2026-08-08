@@ -54,8 +54,8 @@ func (f RuntimePolicyFunc) Authorize(ctx context.Context, request PolicyRequest)
 type PolicyEngineOptions struct {
 	// FailClosed denies work when the policy service itself errors. When false,
 	// policy-service errors durably delay the task and retry later.
-	FailClosed          bool
-	PolicyErrorRetry    time.Duration
+	FailClosed            bool
+	PolicyErrorRetry      time.Duration
 	MaxPolicySkipsPerPoll int
 }
 
@@ -102,7 +102,7 @@ func (p *PolicyEngine) Poll(ctx context.Context, spec WorkerSpec) (*WorkItem, er
 			WorkerID:    item.Token.WorkerID,
 			Attempt:     item.Token.Attempt,
 			Data:        cloneRawMap(item.Request.Data),
-			Artifacts:   cloneArtifacts(item.Request.Artifacts),
+			Artifacts:   cloneArtifactMap(item.Request.Artifacts),
 			BudgetUsage: execution.BudgetUsage,
 			BudgetLimit: execution.BudgetLimit,
 			Quality:     cloneQuality(execution.Quality),
@@ -166,8 +166,8 @@ func (p *PolicyEngine) auditDecision(ctx context.Context, item *WorkItem, decisi
 			}
 		}
 		appendHistory(execution, "runtime_policy", item.Node.ID, decision.Reason, map[string]any{
-			"action": decision.Action,
-			"worker": item.Token.WorkerID,
+			"action":   decision.Action,
+			"worker":   item.Token.WorkerID,
 			"metadata": decision.Metadata,
 		})
 		return nil
@@ -192,9 +192,9 @@ func (p *PolicyEngine) releaseClaim(ctx context.Context, item *WorkItem, status 
 			execution.Status = StatusRunning
 		}
 		appendHistory(execution, historyKind, item.Node.ID, decision.Reason, map[string]any{
-			"action": decision.Action,
-			"worker": item.Token.WorkerID,
-			"metadata": decision.Metadata,
+			"action":     decision.Action,
+			"worker":     item.Token.WorkerID,
+			"metadata":   decision.Metadata,
 			"retryAfter": decision.RetryAfter.String(),
 		})
 		return nil
@@ -226,7 +226,7 @@ func (p *PolicyEngine) denyClaim(ctx context.Context, item *WorkItem, decision P
 			}
 		}
 		appendHistory(execution, "policy_denied", item.Node.ID, execution.Failure, map[string]any{
-			"worker": item.Token.WorkerID,
+			"worker":   item.Token.WorkerID,
 			"metadata": decision.Metadata,
 		})
 		return nil
