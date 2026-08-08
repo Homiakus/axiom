@@ -157,23 +157,22 @@ func (e *Engine) pollExecution(ctx context.Context, executionID string, spec Wor
 	return nil, ErrNoWork
 }
 
-func (e *Engine) executeLocalBatch(ctx context.Context, base WorkerSpec, items []*WorkItem) error {
+func (e *Engine) executeLocalBatch(ctx context.Context, spec WorkerSpec, items []*WorkItem) error {
 	if len(items) == 1 {
-		return e.executeWorkItem(ctx, base, items[0])
+		return e.executeWorkItem(ctx, spec, items[0])
 	}
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(items))
-	for index, item := range items {
-		index, item := index, item
+	for _, item := range items {
+		item := item
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			spec := base
-			spec.ID = fmt.Sprintf("%s/local-%d", base.ID, index+1)
-			// The task was claimed using base.ID. Preserve the fencing identity;
-			// the suffix is only useful when RunWorker itself performs the claim.
-			spec.ID = item.Token.WorkerID
-			err := e.executeWorkItem(ctx, spec, item)
+			local := spec
+			// Tasks were already fenced to the worker identity recorded in the
+			// token. Preserve that identity while the local batch runs in parallel.
+			local.ID = item.Token.WorkerID
+			err := e.executeWorkItem(ctx, local, item)
 			if err != nil && !errors.Is(err, ErrStaleTask) {
 				errCh <- err
 			}
