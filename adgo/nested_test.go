@@ -95,6 +95,20 @@ func TestChildExecutionIDIsCanonicalAcrossHostAndNestedHelpers(t *testing.T) {
 	}
 }
 
+func TestNestedExecutionIDUsesCanonicalChildPrefix(t *testing.T) {
+	id, err := NestedExecutionID(NestedInvocation{
+		ParentExecutionID: "parent", ParentNodeID: "drafting stage",
+		ParentApplicationID: "revision-3", FlowName: "writer flow",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const prefix = "parent/drafting_stage/writer_flow-"
+	if len(id) <= len(prefix) || id[:len(prefix)] != prefix {
+		t.Fatalf("nested id=%q, want prefix %q", id, prefix)
+	}
+}
+
 func containsString(value, needle string) bool {
 	if len(needle) == 0 {
 		return true
