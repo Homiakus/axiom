@@ -87,6 +87,14 @@ func TestNestedExecutionIDDoesNotExposeApplicationMaterial(t *testing.T) {
 	}
 }
 
+func TestChildExecutionIDIsCanonicalAcrossHostAndNestedHelpers(t *testing.T) {
+	got := ChildExecutionID("parent", "drafting stage", "item/7")
+	want := "parent/drafting_stage/item_7"
+	if got != want {
+		t.Fatalf("ChildExecutionID=%q, want %q", got, want)
+	}
+}
+
 func containsString(value, needle string) bool {
 	if len(needle) == 0 {
 		return true
