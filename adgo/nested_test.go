@@ -18,7 +18,10 @@ func TestRunNestedLocalResumesSameParentApplication(t *testing.T) {
 		ID: "nested.test", Version: "1",
 		Nodes: []Node{{ID: "work", Kind: NodeActivity, Activity: "work", Produces: []string{"done"}}},
 	}
-	invocation := NestedInvocation{ParentExecutionID: "parent", ParentNodeID: "drafting", ParentApplicationID: "parent:drafting:r1:input-a", FlowName: "writer"}
+	invocation := NestedInvocation{
+		ParentExecutionID: "parent", ParentNodeID: "drafting",
+		ParentApplicationID: "parent:drafting:r1:input-a", FlowName: "writer",
+	}
 	first, err := RunNestedLocal(context.Background(), store, definition, registry, invocation, nil, NestedLocalOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +50,10 @@ func TestRunNestedLocalChangesIdentityWithParentApplication(t *testing.T) {
 		ID: "nested.test.revision", Version: "1",
 		Nodes: []Node{{ID: "work", Kind: NodeActivity, Activity: "work", Produces: []string{"done"}}},
 	}
-	firstInvocation := NestedInvocation{ParentExecutionID: "parent", ParentNodeID: "drafting", ParentApplicationID: "parent:drafting:r1:input-a", FlowName: "writer"}
+	firstInvocation := NestedInvocation{
+		ParentExecutionID: "parent", ParentNodeID: "drafting",
+		ParentApplicationID: "parent:drafting:r1:input-a", FlowName: "writer",
+	}
 	secondInvocation := firstInvocation
 	secondInvocation.ParentApplicationID = "parent:drafting:r2:input-a"
 	first, err := RunNestedLocal(context.Background(), store, definition, registry, firstInvocation, nil, NestedLocalOptions{})
@@ -67,7 +73,10 @@ func TestRunNestedLocalChangesIdentityWithParentApplication(t *testing.T) {
 }
 
 func TestNestedExecutionIDDoesNotExposeApplicationMaterial(t *testing.T) {
-	id, err := NestedExecutionID(NestedInvocation{ParentExecutionID: "parent", ParentNodeID: "node", ParentApplicationID: "secret-looking-logical-input-that-must-not-be-in-id", FlowName: "writer"})
+	id, err := NestedExecutionID(NestedInvocation{
+		ParentExecutionID: "parent", ParentNodeID: "node",
+		ParentApplicationID: "secret-looking-logical-input-that-must-not-be-in-id", FlowName: "writer",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +97,10 @@ func TestChildExecutionIDIsCanonicalAcrossHostAndNestedHelpers(t *testing.T) {
 }
 
 func TestNestedExecutionIDUsesCanonicalChildPrefix(t *testing.T) {
-	id, err := NestedExecutionID(NestedInvocation{ParentExecutionID: "parent", ParentNodeID: "drafting stage", ParentApplicationID: "revision-3", FlowName: "writer flow"})
+	id, err := NestedExecutionID(NestedInvocation{
+		ParentExecutionID: "parent", ParentNodeID: "drafting stage",
+		ParentApplicationID: "revision-3", FlowName: "writer flow",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
