@@ -1,0 +1,82 @@
+name: verify-iris-nested
+
+on:
+  push:
+    branches:
+      - agent/verify-iris-nested-contracts
+
+permissions:
+  contents: read
+
+jobs:
+  iris:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout IRIS nested-contract branch
+        uses: actions/checkout@v4
+        with:
+          repository: Homiakus/iris-studio
+          ref: agent/nested-axiom-contracts
+          path: iris
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.x
+          cache: false
+      - name: Check formatting
+        working-directory: iris
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            orchestration/axiomflow/contract.go
+            orchestration/axiomflow/observer.go
+            orchestration/axiomflow/runner.go
+            orchestration/axiomflow/contract_test.go
+            engine/nested_axiom_inventory_test.go
+            stages/drafting/nested_axiom_contract_test.go
+            stages/factcheck/nested_axiom_contract_test.go
+            stages/editorial/nested_axiom_contract_test.go
+            stages/literary_analysis/nested_axiom_contract_test.go
+            stages/narrative_cognition/nested_axiom_contract_test.go
+            stages/polish/nested_axiom_contract_test.go
+            stages/export_stage/nested_axiom_contract_test.go
+          )
+          bad="$(gofmt -l "${files[@]}")"
+          if [[ -n "$bad" ]]; then
+            printf 'gofmt required:\n%s\n' "$bad"
+            exit 1
+          fi
+      - name: Test nested contract packages
+        working-directory: iris
+        run: >-
+          go test
+          ./orchestration/axiomflow
+          ./engine
+          ./stages/drafting
+          ./stages/factcheck
+          ./stages/editorial
+          ./stages/literary_analysis
+          ./stages/narrative_cognition
+          ./stages/polish
+          ./stages/export_stage
+          -count=1
+      - name: Test full IRIS repository
+        working-directory: iris
+        run: go test ./... -count=1
+      - name: Race test changed runtime packages
+        working-directory: iris
+        run: >-
+          go test -race
+          ./orchestration/axiomflow
+          ./stages/drafting
+          ./stages/factcheck
+          ./stages/editorial
+          ./stages/literary_analysis
+          ./stages/narrative_cognition
+          ./stages/polish
+          ./stages/export_stage
+          -count=1
+      - name: Vet IRIS
+        working-directory: iris
+        run: go vet ./...
