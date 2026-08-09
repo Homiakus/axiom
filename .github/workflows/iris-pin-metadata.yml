@@ -1,0 +1,24 @@
+name: iris-pin-metadata
+
+on:
+  push:
+    branches:
+      - agent/iris-pin-metadata
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+      - name: Resolve Axiom module metadata
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          cd "$tmp"
+          go mod init iris-pin-probe
+          go mod download -json github.com/Homiakus/axiom@0ad40aeb765da93e29f08d66983fd6c6400f363c
