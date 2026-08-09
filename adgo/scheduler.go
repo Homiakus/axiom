@@ -35,6 +35,16 @@ func DefaultScheduler() UtilityScheduler {
 // selected work, preventing one parallel batch from individually fitting but
 // collectively exceeding the execution budget.
 func (s UtilityScheduler) Select(p *Plan, e *Execution, in []Candidate) []Candidate {
+	// A durable human interrupt is an execution-wide admission barrier for new
+	// external work. readyCandidates may have derived candidates from the snapshot
+	// that existed immediately before a gate/approval path changed the execution
+	// to StatusHuman. Re-checking the committed status here prevents enqueue from
+	// overwriting awaiting_human with running and preserves the interrupt until it
+	// is explicitly resolved.
+	if e != nil && e.Status == StatusHuman {
+		return nil
+	}
+
 	now := time.Now().UTC()
 	out := append([]Candidate(nil), in...)
 	for i := range out {
