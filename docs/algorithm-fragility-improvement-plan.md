@@ -11,6 +11,7 @@
 
 - Анализ выполнен по исходному коду, тестам, документации и CI базовой ревизии.
 - В базовой ревизии workflow test и module-checksum завершились успешно. Это подтверждает текущую регрессионную базу, но не опровергает приведённые ниже контрпримеры: соответствующие классы входов в ней отсутствуют.
+- При проверке первого docs-коммита 0b61d90 module-checksum, unit tests, examples, race, vet и performance прошли. Workflow остановился только на govulncheck: setup-go выбрал Go 1.26.5, а четыре найденные уязвимости standard library исправлены в Go 1.26.6. Это отдельный operational finding для HP-13, а не следствие изменения Markdown.
 - Записи со статусом CONFIRMED опираются на воспроизводимый статический контрпример или доказуемое нарушение контракта/инварианта.
 - Гипотезы, которым нужна нагрузочная либо многопроцессная проверка, не объявлены дефектами и помечены TO VERIFY.
 - Pull request #20 и #21 не входят в базовую ревизию. После их слияния затронутые runtime/timer-контракты нужно прогнать через этот план повторно.
@@ -35,7 +36,7 @@
 
 Подтверждено четыре P0-направления:
 
-1. Неинъективное преобразование идентификаторов в adgo создаёт коллизии, потерю inbox-событий и выход из каталога executions для идентификаторов . и ...
+1. Неинъективное преобразование идентификаторов в adgo создаёт коллизии, потерю inbox-событий и выход из каталога executions для идентификаторов "." и "..".
 2. Компиляция плана и проверка plan delta игнорируют ошибку JSON-сериализации; NaN/Inf могут дать digest пустого байтового массива и обойти числовые ограничения.
 3. Бюджет принимает отрицательные, нечисловые и переполняющиеся приращения; MemoryStore способен опубликовать новое состояние, а затем вернуть ошибку клонирования.
 4. Pebble формирует диапазоны из сырых execution ID, поэтому execution a может прочитать history/tasks execution a/b; escape также неинъективен для / и %2f.
@@ -470,7 +471,7 @@ P1-риски: удаление живой lock-файла после фикси
 - Что делаем: отделяем display sanitization от identity. Составные IDs кодируем через versioned length framing или SHA-256 от canonical framed tuple; перед filesystem I/O проверяем containment. Пустой ID, . и .. получают явный contract. Не сокращаем hash до 64 bit для durable identity без отдельного collision contract.
 - Где делаем: adgo/store.go safeName/executionDir/inbox paths; adgo/child_workflow.go ChildExecutionID; adgo/subflow.go; adgo/schedule.go path/lock/scheduledExecutionID; adgo/router_store.go; adgo/runtime.go eventID/taskID/renderIdempotency; adgo/cache.go DefaultActivityCacheKey. Маленький internal helper оправдан повторением одной доказанной ошибки в нескольких подсистемах.
 - Почему: устраняются FRAG-CONTRACT/STATE/RECOVERY и CE-001…CE-004.
-- Как проверить: table tests для separators, ., .., NUL, CRLF, Unicode normalization forms и delimiter-in-components; fuzz property distinct tuple → distinct encoded bytes в corpus; filepath.Rel никогда не начинается с ...
+- Как проверить: table tests для separators, ".", "..", NUL, CRLF, Unicode normalization forms и delimiter-in-components; fuzz property distinct tuple → distinct encoded bytes в corpus; результат filepath.Rel не равен ".." и не начинается с "../".
 - Regression test: TestIdentityInjectiveExamples, FuzzIdentityCodec, TestAllFilePathsContained.
 - Migration: добавить schema version; для существующих file layouts — read-old/write-new с обнаружением неоднозначных legacy names и явным migration report. Не выполнять silent merge.
 - Done: все логические key builders используют один codec; поиск safeName не показывает identity usage; corpus и fuzz проходят.
@@ -586,15 +587,15 @@ P1-риски: удаление живой lock-файла после фикси
 - Regression test: TestRetryClassificationWrapping, TestLegacyRetryCodeDecode.
 - Done: production state transition не ветвится по строковому prefix.
 
-### HP-13 — Расширить CI только на доказанные hotspots
+### HP-13 — Устранить toolchain blocker и расширить CI только на доказанные hotspots
 
 - Priority / level: P1 / LEVEL 0.
-- Что делаем: добавляем race для adgo, short fuzz smoke для identity/compile/key codec, nightly longer fuzz, multi-process fault suite, targeted mutation и performance envelope. Minimized fuzz corpus коммитится как regression.
+- Что делаем: сначала гарантируем patched Go 1.26.6 или новее вместо разрешения 1.26.x в уже установленную 1.26.5; затем добавляем race для adgo, short fuzz smoke для identity/compile/key codec, nightly longer fuzz, multi-process fault suite, targeted mutation и performance envelope. Minimized fuzz corpus коммитится как regression.
 - Где делаем: .github/workflows/test.yml и отдельные scheduled workflows при необходимости; testdata/fuzz в соответствующих packages.
-- Почему: текущий race job покрывает root/internal runtime/store, но не adgo; текущий CI fuzz запускает только parser и TRIZ normalizer по 5 секунд; performance job публикует отчёт без regression threshold.
-- Как проверить: PR smoke завершается в согласованный бюджет времени; nightly job сохраняет seed/artifacts; intentional mutant в safeName/digest/budget/comparator убивается тестами; intentional graph regression нарушает envelope.
+- Почему: docs-коммит 0b61d90 доказал, что go-version 1.26.x без требования свежего patch выбрал Go 1.26.5 и упал на GO-2026-6218, GO-2026-6090, GO-2026-5972 и GO-2026-5026, исправленных в 1.26.6. Кроме того, текущий race job покрывает root/internal runtime/store, но не adgo; CI fuzz запускает только parser и TRIZ normalizer по 5 секунд; performance job публикует отчёт без regression threshold.
+- Как проверить: первый повторный run сообщает Go 1.26.6+ и проходит govulncheck; PR smoke завершается в согласованный бюджет времени; nightly job сохраняет seed/artifacts; intentional mutant в safeName/digest/budget/comparator убивается тестами; intentional graph regression нарушает envelope.
 - Regression test: workflow self-test через временную controlled mutation в PR, затем mutation удаляется до merge.
-- Done: required checks включают test/module-checksum, adgo-race и hotspot-smoke; nightly failures создают actionable artifact с seed/command.
+- Done: toolchain не выбирает patch ниже зафиксированного security minimum; required checks включают test/module-checksum, adgo-race и hotspot-smoke; nightly failures создают actionable artifact с seed/command.
 
 ### HP-14 — Зафиксировать контракты и rollout gates
 
