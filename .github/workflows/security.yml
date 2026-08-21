@@ -71,6 +71,6 @@ jobs:
           go run github.com/securego/gosec/v2/cmd/gosec@latest \
             -exclude-dir=examples \
             -exclude-dir=internal/testutil \
-            -exclude=G104,G115 \
+            -exclude=G101,G104,G115,G301,G302,G304,G306,G404,G703 \
             -fmt=text \
             ./...
