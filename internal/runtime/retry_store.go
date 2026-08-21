@@ -258,7 +258,7 @@ func cloneRetryTask(task *ActivityTask) *ActivityTask {
 }
 
 func isRetryableActivityFailure(message string) bool {
-	return strings.HasPrefix(message, "AX505:") || message == "AX505"
+	return strings.HasPrefix(message, "AX505:") || message == "AX505" || strings.Contains(message, "AX505")
 }
 
 func retryDelay(module *compiler.Module, activityName string, attempt int) time.Duration {

@@ -115,7 +115,7 @@ type Output = map[string]any
 type Patch = map[string]any
 
 // Activity is a Go function that implements a .axm activity block.
-// ctx is cancelled when the execution is cancelled or times out.
+// ctx is canceled when the execution is canceled or times out.
 type Activity func(ctx context.Context, input Input) (Output, error)
 
 // ActivityRegistry maps .axm activity names to their Go implementations.
@@ -357,7 +357,7 @@ func Register(name string, fn Activity) Option { return Act(name, fn) }
 // WithActivities registers multiple activities (alias for Acts).
 func WithActivities(registry ActivityRegistry) Option { return Acts(registry) }
 
-// ── Runtime behaviour ─────────────────────────────────────────────────────
+// ── Runtime behavior ─────────────────────────────────────────────────────
 
 // WithStrictFastRuntime enables strict mode: refuses to fall back to the
 // slow path. Use in tests to catch unsupported .axm patterns early.
@@ -649,7 +649,7 @@ func NewEngine(module *Module, store Store, activities ActivityRegistry) *Engine
 	}
 	engine, err := New(module, WithStore(store), WithActivities(activities))
 	if err != nil {
-		// Fall back to pre-validation behaviour for backwards compat.
+		// Fall back to pre-validation behavior for backwards compat.
 		return runtimepkg.NewEngine(module, store, toRuntimeActivities(activities))
 	}
 	return engine

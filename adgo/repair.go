@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"time"
 )
@@ -236,11 +237,23 @@ func ValidatePlanDelta(base *Plan, proposal PlanProposal, policy PlanDeltaPolicy
 	if policy.MaxAddedNodes > 0 && len(proposal.Nodes) > policy.MaxAddedNodes {
 		return ValidatedPlanDelta{}, fmt.Errorf("adgo: proposal exceeds max added nodes")
 	}
+	if math.IsNaN(policy.RemainingBudget) || math.IsInf(policy.RemainingBudget, 0) || policy.RemainingBudget < 0 {
+		return ValidatedPlanDelta{}, fmt.Errorf("adgo: invalid remaining budget: %v", policy.RemainingBudget)
+	}
 	ids := map[string]bool{}
 	cost := 0.0
 	for _, n := range proposal.Nodes {
 		if n.ID == "" || base.Nodes[n.ID].ID != "" || ids[n.ID] {
 			return ValidatedPlanDelta{}, fmt.Errorf("adgo: invalid or duplicate proposed node %q", n.ID)
+		}
+		if math.IsNaN(n.EstimatedCost) || math.IsInf(n.EstimatedCost, 0) || n.EstimatedCost < 0 {
+			return ValidatedPlanDelta{}, fmt.Errorf("adgo: proposed node %s has invalid estimated cost", n.ID)
+		}
+		if math.IsNaN(n.ExpectedQualityGain) || math.IsInf(n.ExpectedQualityGain, 0) || n.ExpectedQualityGain < 0 {
+			return ValidatedPlanDelta{}, fmt.Errorf("adgo: proposed node %s has invalid expected quality gain", n.ID)
+		}
+		if math.IsNaN(n.CriticalPathWeight) || math.IsInf(n.CriticalPathWeight, 0) || n.CriticalPathWeight < 0 {
+			return ValidatedPlanDelta{}, fmt.Errorf("adgo: proposed node %s has invalid critical path weight", n.ID)
 		}
 		ids[n.ID] = true
 		if n.Risk > policy.MaxRisk {
@@ -265,7 +278,10 @@ func ValidatePlanDelta(base *Plan, proposal PlanProposal, policy PlanDeltaPolicy
 	if policy.RemainingBudget > 0 && cost > policy.RemainingBudget {
 		return ValidatedPlanDelta{}, ErrBudgetExceeded
 	}
-	raw, _ := json.Marshal(proposal)
+	raw, err := json.Marshal(proposal)
+	if err != nil {
+		return ValidatedPlanDelta{}, fmt.Errorf("adgo: failed to serialize proposal: %w", err)
+	}
 	sum := sha256.Sum256(raw)
 	return ValidatedPlanDelta{Proposal: proposal, Digest: "sha256:" + hex.EncodeToString(sum[:])}, nil
 }

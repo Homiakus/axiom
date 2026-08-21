@@ -1,0 +1,18 @@
+# Gitleaks configuration for Axiom
+title = "Axiom Gitleaks Config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Global allowlist"
+paths = [
+    '''(?i).*\.png$''',
+    '''(?i).*\.jpg$''',
+    '''(?i).*\.svg$''',
+    '''(?i).*\.pb\.go$''',
+    '''(?i)test-artifacts/.*''',
+    '''(?i)artifacts/.*''',
+    '''(?i)docs/.*''',
+    '''(?i).*_test\.go$''',
+]

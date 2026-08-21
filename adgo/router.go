@@ -148,6 +148,11 @@ func (r *AdaptiveRouter) Ranked(ctx context.Context, capability string, policy P
 		if provider.Available != nil && !provider.Available(ctx) {
 			continue
 		}
+		if math.IsNaN(provider.Quality) || math.IsInf(provider.Quality, 0) ||
+			math.IsNaN(provider.Cost) || math.IsInf(provider.Cost, 0) ||
+			math.IsNaN(provider.Privacy) || math.IsInf(provider.Privacy, 0) {
+			continue
+		}
 		if policy.MinQuality > 0 && provider.Quality < policy.MinQuality {
 			continue
 		}
@@ -184,11 +189,11 @@ func (r *AdaptiveRouter) Ranked(ctx context.Context, capability string, policy P
 			latency = health.EWMALatency
 		}
 		quality := provider.Quality
-		if health.EWMAQuality > 0 {
+		if health.EWMAQuality > 0 && !math.IsNaN(health.EWMAQuality) {
 			quality = 0.45*provider.Quality + 0.55*health.EWMAQuality
 		}
 		cost := provider.Cost
-		if health.EWMACost > 0 {
+		if health.EWMACost > 0 && !math.IsNaN(health.EWMACost) {
 			cost = 0.45*provider.Cost + 0.55*health.EWMACost
 		}
 		reliability := float64(health.Successes+2) / float64(health.Requests+4) // beta prior
@@ -203,10 +208,20 @@ func (r *AdaptiveRouter) Ranked(ctx context.Context, capability string, policy P
 		return nil, fmt.Errorf("adgo: no healthy provider satisfies policy for capability %q", capability)
 	}
 	sort.SliceStable(valid, func(i, j int) bool {
-		if math.Abs(valid[i].score-valid[j].score) < 1e-9 {
+		si, sj := valid[i].score, valid[j].score
+		if math.IsNaN(si) && math.IsNaN(sj) {
 			return valid[i].provider.Name < valid[j].provider.Name
 		}
-		return valid[i].score > valid[j].score
+		if math.IsNaN(si) {
+			return false
+		}
+		if math.IsNaN(sj) {
+			return true
+		}
+		if math.Abs(si-sj) < 1e-9 {
+			return valid[i].provider.Name < valid[j].provider.Name
+		}
+		return si > sj
 	})
 	out := make([]Provider, 0, len(valid))
 	for _, item := range valid {

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -83,7 +84,10 @@ func Compile(def Definition) (*Plan, error) {
 			return canon.Nodes[i].Next[a].To < canon.Nodes[i].Next[b].To
 		})
 	}
-	raw, _ := json.Marshal(canon)
+	raw, err := json.Marshal(canon)
+	if err != nil {
+		return nil, ValidationErrors{ValidationError{Code: "ADG099", Message: fmt.Sprintf("failed to serialize canonical plan: %v", err)}}
+	}
 	sum := sha256.Sum256(raw)
 
 	p := &Plan{
@@ -209,6 +213,33 @@ func validateDefinition(def Definition) ValidationErrors {
 		if n.MaxFanout < 0 {
 			errs = append(errs, ValidationError{Code: "ADG045", Node: n.ID, Message: "maxFanout must be >= 0"})
 		}
+		if math.IsNaN(n.EstimatedCost) || math.IsInf(n.EstimatedCost, 0) || n.EstimatedCost < 0 {
+			errs = append(errs, ValidationError{Code: "ADG080", Node: n.ID, Message: "estimatedCost must be finite and >= 0"})
+		}
+		if math.IsNaN(n.ExpectedQualityGain) || math.IsInf(n.ExpectedQualityGain, 0) || n.ExpectedQualityGain < 0 {
+			errs = append(errs, ValidationError{Code: "ADG081", Node: n.ID, Message: "expectedQualityGain must be finite and >= 0"})
+		}
+		if math.IsNaN(n.CriticalPathWeight) || math.IsInf(n.CriticalPathWeight, 0) || n.CriticalPathWeight < 0 {
+			errs = append(errs, ValidationError{Code: "ADG082", Node: n.ID, Message: "criticalPathWeight must be finite and >= 0"})
+		}
+		if math.IsNaN(n.Retry.JitterFraction) || math.IsInf(n.Retry.JitterFraction, 0) || n.Retry.JitterFraction < 0 || n.Retry.JitterFraction > 1 {
+			errs = append(errs, ValidationError{Code: "ADG083", Node: n.ID, Message: "retry jitterFraction must be finite and between 0 and 1"})
+		}
+		if n.Loop != nil {
+			if math.IsNaN(n.Loop.MaxCost) || math.IsInf(n.Loop.MaxCost, 0) || n.Loop.MaxCost < 0 {
+				errs = append(errs, ValidationError{Code: "ADG084", Node: n.ID, Message: "loop maxCost must be finite and >= 0"})
+			}
+			if math.IsNaN(n.Loop.Epsilon) || math.IsInf(n.Loop.Epsilon, 0) || n.Loop.Epsilon <= 0 {
+				errs = append(errs, ValidationError{Code: "ADG085", Node: n.ID, Message: "loop epsilon must be finite and > 0"})
+			}
+		}
+		if n.Kind == NodeGate && n.Gate != nil {
+			for k, v := range n.Gate.HardFloors {
+				if math.IsNaN(v) || math.IsInf(v, 0) {
+					errs = append(errs, ValidationError{Code: "ADG086", Node: n.ID, Message: fmt.Sprintf("gate hardFloor %q must be finite", k)})
+				}
+			}
+		}
 		if n.Kind == NodeGate && n.Gate != nil {
 			for _, root := range n.Gate.RepairFrom {
 				rn, ok := byID[root]
@@ -235,6 +266,7 @@ func validateDefinition(def Definition) ValidationErrors {
 			roots = append(roots, n.ID)
 		}
 	}
+	fwdAdj := buildForwardAdjacency(def.Nodes)
 	seen := map[string]bool{}
 	var walk func(string)
 	walk = func(id string) {
@@ -242,16 +274,8 @@ func validateDefinition(def Definition) ValidationErrors {
 			return
 		}
 		seen[id] = true
-		n := byID[id]
-		for _, tr := range n.Next {
-			walk(tr.To)
-		}
-		for _, cand := range def.Nodes {
-			for _, dep := range cand.DependsOn {
-				if dep == id {
-					walk(cand.ID)
-				}
-			}
+		for _, nextID := range fwdAdj[id] {
+			walk(nextID)
 		}
 	}
 	for _, r := range roots {
@@ -305,6 +329,69 @@ func validateDefinition(def Definition) ValidationErrors {
 		}
 	}
 	return errs
+}
+
+func buildForwardAdjacency(nodes []Node) map[string][]string {
+	adj := make(map[string][]string, len(nodes))
+	for _, n := range nodes {
+		for _, tr := range n.Next {
+			adj[n.ID] = append(adj[n.ID], tr.To)
+		}
+		for _, dep := range n.DependsOn {
+			adj[dep] = append(adj[dep], n.ID)
+		}
+	}
+	return adj
+}
+
+func reachability(nodes []Node) map[string]map[string]bool {
+	adj := buildForwardAdjacency(nodes)
+	out := make(map[string]map[string]bool, len(nodes))
+	for _, n := range nodes {
+		out[n.ID] = map[string]bool{}
+		q := append([]string(nil), adj[n.ID]...)
+		for len(q) > 0 {
+			v := q[0]
+			q = q[1:]
+			if out[n.ID][v] {
+				continue
+			}
+			out[n.ID][v] = true
+			q = append(q, adj[v]...)
+		}
+	}
+	return out
+}
+
+func computeDescendants(p *Plan) map[string]map[string]struct{} {
+	fwdAdj := make(map[string][]string, len(p.Nodes))
+	for _, n := range p.Nodes {
+		for _, tr := range p.outbound[n.ID] {
+			fwdAdj[n.ID] = append(fwdAdj[n.ID], tr.To)
+		}
+		for _, dep := range n.DependsOn {
+			fwdAdj[dep] = append(fwdAdj[dep], n.ID)
+		}
+	}
+	out := make(map[string]map[string]struct{}, len(p.Nodes))
+	for id := range p.Nodes {
+		desc := make(map[string]struct{})
+		q := []string{id}
+		seen := map[string]bool{id: true}
+		for len(q) > 0 {
+			cur := q[0]
+			q = q[1:]
+			for _, nextID := range fwdAdj[cur] {
+				if !seen[nextID] {
+					seen[nextID] = true
+					desc[nextID] = struct{}{}
+					q = append(q, nextID)
+				}
+			}
+		}
+		out[id] = desc
+	}
+	return out
 }
 
 func cloneNode(n Node) Node {
@@ -377,67 +464,6 @@ func overlap(a, b []string) bool {
 		}
 	}
 	return false
-}
-
-func reachability(nodes []Node) map[string]map[string]bool {
-	adj := map[string][]string{}
-	for _, n := range nodes {
-		for _, tr := range n.Next {
-			adj[n.ID] = append(adj[n.ID], tr.To)
-		}
-		for _, cand := range nodes {
-			for _, dep := range cand.DependsOn {
-				if dep == n.ID {
-					adj[n.ID] = append(adj[n.ID], cand.ID)
-				}
-			}
-		}
-	}
-	out := map[string]map[string]bool{}
-	for _, n := range nodes {
-		out[n.ID] = map[string]bool{}
-		q := append([]string(nil), adj[n.ID]...)
-		for len(q) > 0 {
-			v := q[0]
-			q = q[1:]
-			if out[n.ID][v] {
-				continue
-			}
-			out[n.ID][v] = true
-			q = append(q, adj[v]...)
-		}
-	}
-	return out
-}
-
-func computeDescendants(p *Plan) map[string]map[string]struct{} {
-	out := map[string]map[string]struct{}{}
-	for id := range p.Nodes {
-		out[id] = map[string]struct{}{}
-		q := []string{id}
-		seen := map[string]bool{id: true}
-		for len(q) > 0 {
-			cur := q[0]
-			q = q[1:]
-			for _, tr := range p.outbound[cur] {
-				if !seen[tr.To] {
-					seen[tr.To] = true
-					out[id][tr.To] = struct{}{}
-					q = append(q, tr.To)
-				}
-			}
-			for _, cand := range p.Nodes {
-				for _, dep := range cand.DependsOn {
-					if dep == cur && !seen[cand.ID] {
-						seen[cand.ID] = true
-						out[id][cand.ID] = struct{}{}
-						q = append(q, cand.ID)
-					}
-				}
-			}
-		}
-	}
-	return out
 }
 
 func tarjan(nodes []Node) [][]string {

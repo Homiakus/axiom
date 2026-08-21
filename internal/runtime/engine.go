@@ -502,7 +502,7 @@ func (e *Engine) scheduleActivity(ctx context.Context, execution *Execution, rul
 		}
 		key = fmt.Sprint(value)
 	}
-	taskSeq := 1
+	var taskSeq int
 	if indexed, ok := e.store.(TaskDedupStore); ok {
 		task, err := indexed.FindTask(ctx, execution.ID, rule.Name, activity.Name, key)
 		if err != nil {

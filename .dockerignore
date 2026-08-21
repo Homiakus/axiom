@@ -1,0 +1,12 @@
+.git
+.github
+bin
+artifacts
+test-artifacts
+docs
+*.md
+coverage.out
+.golangci.yml
+.gitleaks.toml
+Makefile
+scripts

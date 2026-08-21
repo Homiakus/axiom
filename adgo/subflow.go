@@ -68,7 +68,7 @@ func RunFanout(ctx context.Context, parentExecutionID, nodeID string, child *Run
 				return
 			}
 			defer func() { <-sem }()
-			childID := parentExecutionID + "/" + safeName(nodeID) + "/" + safeName(item.ID)
+			childID := ChildExecutionID(parentExecutionID, nodeID, item.ID)
 			_, err := child.Start(ctx, childID, item.Initial, BudgetLimit{})
 			if err != nil && !errors.Is(err, ErrExecutionExists) {
 				ch <- indexed{i: i, r: ChildResult{ID: item.ID, Status: StatusFailed, Error: err.Error()}}

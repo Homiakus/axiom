@@ -320,7 +320,6 @@ func runParallel(operations, workers int, operation func(worker, sequence int) e
 	var errorsCount atomic.Int64
 	var group sync.WaitGroup
 	ready := make(chan struct{})
-	started := time.Now()
 	offset := 0
 	for worker := 0; worker < workers; worker++ {
 		count := operations / workers
@@ -342,7 +341,7 @@ func runParallel(operations, workers int, operation func(worker, sequence int) e
 			}
 		}(worker, count, startIndex)
 	}
-	started = time.Now()
+	started := time.Now()
 	close(ready)
 	group.Wait()
 	return runMetrics{latencies: latencies, errors: errorsCount.Load(), duration: time.Since(started)}

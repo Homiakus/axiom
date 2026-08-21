@@ -3,7 +3,6 @@ package adgo
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -237,7 +236,6 @@ func (r *Runtime) Step(ctx context.Context, executionID string) (StepResult, err
 		if err != nil {
 			return StepResult{}, err
 		}
-		progressed = true
 		e, _ = r.store.Load(ctx, executionID)
 		if terminal(e.Status) {
 			return StepResult{ExecutionID: executionID, Status: e.Status, Progressed: true, Executed: executed}, nil
@@ -692,6 +690,11 @@ func (r *Runtime) applyActivityResultImpl(ctx context.Context, e *Execution, rr 
 	node := rr.s.c.Node
 	task := rr.s.task
 	if rr.err == nil {
+		if err := validateBudgetUsage(rr.res.Budget); err != nil {
+			rr.err = err
+		}
+	}
+	if rr.err == nil {
 		return r.commit(ctx, e, func(x *Execution) error {
 			rt := x.Nodes[node.ID]
 			rt.Status = NodeCompleted
@@ -718,7 +721,9 @@ func (r *Runtime) applyActivityResultImpl(ctx context.Context, e *Execution, rr 
 			if after > before {
 				x.Metrics.QualityGain += after - before
 			}
-			addBudget(&x.BudgetUsage, rr.res.Budget)
+			if err := addBudget(&x.BudgetUsage, rr.res.Budget); err != nil {
+				return err
+			}
 			x.Metrics.Cost = x.BudgetUsage.Cost
 			x.Metrics.Tokens = x.BudgetUsage.Tokens
 			x.Metrics.Activities++
@@ -1129,7 +1134,10 @@ func maxRiskPolicy(nodeRisk RiskLevel) RiskLevel {
 
 func checkBudget(e *Execution, now time.Time) error {
 	l, u := e.BudgetLimit, e.BudgetUsage
-	if l.MaxCost > 0 && u.Cost >= l.MaxCost {
+	if math.IsNaN(u.Cost) || math.IsInf(u.Cost, 0) || u.Cost < 0 {
+		return ErrBudgetExceeded
+	}
+	if l.MaxCost > 0 && (math.IsNaN(l.MaxCost) || u.Cost >= l.MaxCost) {
 		return ErrBudgetExceeded
 	}
 	if l.MaxTokens > 0 && u.Tokens >= l.MaxTokens {
@@ -1149,13 +1157,59 @@ func checkBudget(e *Execution, now time.Time) error {
 	}
 	return nil
 }
-func addBudget(dst *BudgetUsage, inc BudgetUsage) {
-	dst.Cost += inc.Cost
-	dst.Tokens += inc.Tokens
-	dst.ActiveDuration += inc.ActiveDuration
-	dst.LLMCalls += inc.LLMCalls
-	dst.SearchQueries += inc.SearchQueries
-	dst.BrowserFetches += inc.BrowserFetches
+
+func validateBudgetUsage(b BudgetUsage) error {
+	if math.IsNaN(b.Cost) || math.IsInf(b.Cost, 0) || b.Cost < 0 {
+		return fmt.Errorf("adgo: invalid budget cost %v", b.Cost)
+	}
+	if b.Tokens < 0 {
+		return fmt.Errorf("adgo: invalid budget tokens %d", b.Tokens)
+	}
+	if b.ActiveDuration < 0 {
+		return fmt.Errorf("adgo: invalid budget active duration %v", b.ActiveDuration)
+	}
+	if b.LLMCalls < 0 || b.SearchQueries < 0 || b.BrowserFetches < 0 {
+		return fmt.Errorf("adgo: invalid budget call count")
+	}
+	return nil
+}
+
+func addBudget(dst *BudgetUsage, inc BudgetUsage) error {
+	if err := validateBudgetUsage(inc); err != nil {
+		return err
+	}
+	newCost := dst.Cost + inc.Cost
+	if math.IsNaN(newCost) || math.IsInf(newCost, 0) || newCost < dst.Cost {
+		return fmt.Errorf("adgo: cost addition overflow or invalid")
+	}
+	newTokens := dst.Tokens + inc.Tokens
+	if newTokens < dst.Tokens {
+		return fmt.Errorf("adgo: tokens addition overflow")
+	}
+	newDur := dst.ActiveDuration + inc.ActiveDuration
+	if newDur < dst.ActiveDuration {
+		return fmt.Errorf("adgo: active duration addition overflow")
+	}
+	newLLM := dst.LLMCalls + inc.LLMCalls
+	if newLLM < dst.LLMCalls {
+		return fmt.Errorf("adgo: llm calls addition overflow")
+	}
+	newSearch := dst.SearchQueries + inc.SearchQueries
+	if newSearch < dst.SearchQueries {
+		return fmt.Errorf("adgo: search queries addition overflow")
+	}
+	newBrowser := dst.BrowserFetches + inc.BrowserFetches
+	if newBrowser < dst.BrowserFetches {
+		return fmt.Errorf("adgo: browser fetches addition overflow")
+	}
+
+	dst.Cost = newCost
+	dst.Tokens = newTokens
+	dst.ActiveDuration = newDur
+	dst.LLMCalls = newLLM
+	dst.SearchQueries = newSearch
+	dst.BrowserFetches = newBrowser
+	return nil
 }
 
 func DefaultClassify(err error) FailureClass {
@@ -1200,12 +1254,10 @@ func renderIdempotency(template string, e *Execution, n Node, attempt int) strin
 	return r.Replace(template)
 }
 func taskID(exec, node string, attempt int) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d", exec, node, attempt)))
-	return "task-" + hex.EncodeToString(sum[:8])
+	return CanonicalTaskID(exec, node, attempt)
 }
 func eventID(e Event) string {
-	sum := sha256.Sum256(append([]byte(e.Type+"|"+e.TargetNode+"|"), e.Payload...))
-	return "evt-" + hex.EncodeToString(sum[:8])
+	return CanonicalEventID(e)
 }
 
 func (r *Runtime) resumeDueTimers(ctx context.Context, e *Execution) (bool, error) {

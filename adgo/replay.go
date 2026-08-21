@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -82,6 +83,9 @@ func VerifyReplay(plan *Plan, versions []*Execution) ReplayReport {
 		}
 		if e.PlanID != plan.ID || e.PlanDigest != plan.Digest {
 			report.Problems = append(report.Problems, fmt.Sprintf("version %d plan pin mismatch", e.Version))
+		}
+		if math.IsNaN(e.BudgetUsage.Cost) || math.IsInf(e.BudgetUsage.Cost, 0) || e.BudgetUsage.Cost < 0 {
+			report.Problems = append(report.Problems, fmt.Sprintf("invalid non-finite or negative cost at version %d", e.Version))
 		}
 		if i > 0 {
 			prev := versions[i-1]

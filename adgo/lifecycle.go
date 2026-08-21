@@ -63,8 +63,7 @@ func (e *Engine) ContinueAsNew(ctx context.Context, executionID, newID string, o
 		budget = *options.Budget
 	}
 
-	created, err := e.StartOrLoad(ctx, newID, initial, budget)
-	if err != nil {
+	if _, err := e.StartOrLoad(ctx, newID, initial, budget); err != nil {
 		return nil, err
 	}
 	artifactKeys := options.CarryArtifacts
@@ -75,7 +74,7 @@ func (e *Engine) ContinueAsNew(ctx context.Context, executionID, newID string, o
 		}
 		sort.Strings(artifactKeys)
 	}
-	created, err = e.mutate(ctx, newID, func(x *Execution) error {
+	created, err := e.mutate(ctx, newID, func(x *Execution) error {
 		for _, key := range artifactKeys {
 			if artifact, ok := current.Artifacts[key]; ok {
 				x.Artifacts[key] = artifact

@@ -105,7 +105,11 @@ func (c *MemoryActivityCache) Put(_ context.Context, lease CacheLease, result Ac
 	if ttl > 0 {
 		entry.ExpiresAt = now.Add(ttl)
 	}
-	slot.Result = entry
+	cloned, err := cloneCachedResult(entry)
+	if err != nil {
+		return err
+	}
+	slot.Result = cloned
 	slot.Lease = CacheLease{}
 	return nil
 }

@@ -52,14 +52,13 @@ func (h *Host) StartChild(ctx context.Context, parentID, parentNode, itemID stri
 	initial["__adgo:parentExecution"] = parentID
 	initial["__adgo:parentNode"] = parentNode
 	initial["__adgo:childItem"] = itemID
-	execution, err := engine.StartOrLoad(ctx, childID, initial, options.Budget)
-	if err != nil {
+	if _, err := engine.StartOrLoad(ctx, childID, initial, options.Budget); err != nil {
 		return ChildHandle{}, nil, err
 	}
 	if _, err := engine.Advance(ctx, childID); err != nil && !errors.Is(err, ErrDeadlock) {
 		return ChildHandle{}, nil, err
 	}
-	execution, err = h.store.Load(ctx, childID)
+	execution, err := h.store.Load(ctx, childID)
 	if err != nil {
 		return ChildHandle{}, nil, err
 	}

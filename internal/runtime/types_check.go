@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 
@@ -42,8 +43,8 @@ func valueMatchesType(value any, typeName string) bool {
 	case "Int":
 		return isRuntimeInt(value)
 	case "Float":
-		_, ok := number(value)
-		return ok
+		v, ok := number(value)
+		return ok && !math.IsNaN(v) && !math.IsInf(v, 0)
 	case "Bool":
 		_, ok := value.(bool)
 		return ok

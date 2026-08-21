@@ -182,11 +182,39 @@ engine, err := plan.New(
 
 ## Перед коммитом
 
+### Быстрая проверка (Fast Check):
+
+**Linux / macOS:**
+```bash
+make check
+```
+
+**Windows PowerShell:**
+```powershell
+.\scripts\dev.ps1 check
+```
+
+### Полная локальная проверка (Full Local CI):
+
+**Linux / macOS:**
+```bash
+make ci
+```
+
+**Windows PowerShell:**
+```powershell
+.\scripts\dev.ps1 ci
+```
+
+Или вручную:
 ```bash
 go mod tidy
 git diff --exit-code -- go.mod go.sum
+golangci-lint run ./...
+go vet ./...
 go test ./...
 go test -race . ./internal/runtime/... ./internal/store/...
-go vet ./...
 go run ./examples/coffee-machine
 ```
+
+Подробное руководство по архитектуре и пайплайнам см. в [docs/CI_CD.md](docs/CI_CD.md).

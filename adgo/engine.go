@@ -698,7 +698,9 @@ func (e *Engine) Complete(ctx context.Context, token WorkToken, result ActivityR
 		if after > before {
 			x.Metrics.QualityGain += after - before
 		}
-		addBudget(&x.BudgetUsage, result.Budget)
+		if err := addBudget(&x.BudgetUsage, result.Budget); err != nil {
+			return err
+		}
 		x.Metrics.Cost = x.BudgetUsage.Cost
 		x.Metrics.Tokens = x.BudgetUsage.Tokens
 		x.Metrics.Activities++

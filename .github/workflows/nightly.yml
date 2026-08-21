@@ -1,0 +1,65 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # Every night at 02:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  extended-matrix-test:
+    name: Full Matrix Tests (${{ matrix.os }} - Go ${{ matrix.go }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        go: ['1.26.x']
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ matrix.go }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
+      - name: Run all package tests
+        shell: bash
+        run: go test -v ./...
+
+      - name: Run race detector on all packages
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: go test -race ./...
+
+  extended-fuzzing:
+    name: Nightly Deep Fuzzing (60s)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Deep Fuzz Lang Parser
+        run: go test ./internal/lang -run=^$ -fuzz=^FuzzParse$ -fuzztime=60s
+
+      - name: Deep Fuzz TRIZ Normalizer
+        run: go test ./internal/triz -run=^$ -fuzz=^FuzzNormalize$ -fuzztime=60s
+
+      - name: Deep Fuzz Compiler
+        run: go test . -run=^$ -fuzz=^FuzzCompileAXM$ -fuzztime=60s

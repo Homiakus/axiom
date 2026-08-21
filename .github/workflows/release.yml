@@ -1,10 +1,13 @@
 name: release
 
 on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
   workflow_dispatch:
     inputs:
       version:
-        description: "SemVer tag to publish, for example v0.1.0"
+        description: "SemVer tag to publish, e.g. v0.1.0"
         required: true
         type: string
       prerelease:
@@ -15,83 +18,264 @@ on:
 
 permissions:
   contents: write
+  packages: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release:
+  resolve-metadata:
+    name: Resolve Release Metadata
     runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ inputs.version }}
-      PRERELEASE: ${{ inputs.prerelease }}
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      target_sha: ${{ steps.meta.outputs.target_sha }}
     steps:
-      - name: Checkout main release tooling
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Determine version & commit
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ver="${{ inputs.version }}"
+            pre="${{ inputs.prerelease }}"
+            sha="$(git rev-parse HEAD)"
+          else
+            ver="${GITHUB_REF_NAME}"
+            pre="false"
+            if [[ "$ver" =~ [a-zA-Z] ]]; then
+              pre="true"
+            fi
+            sha="${GITHUB_SHA}"
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$pre" >> "$GITHUB_OUTPUT"
+          echo "target_sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "==> Publishing Release: $ver at commit $sha (prerelease=$pre)"
+
+  verify:
+    name: Full Release Pre-Verification
+    needs: resolve-metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-metadata.outputs.target_sha }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
+          cache: true
 
-      - name: Resolve frozen release candidate
-        id: candidate
+      - name: Run verification checks
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
-            echo "Release workflow must be dispatched from main; got: $GITHUB_REF" >&2
-            exit 1
-          fi
-          if [[ ! "$VERSION" =~ ^v0\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Expected a pre-v1 tag such as v0.1.0; got: $VERSION" >&2
-            exit 1
-          fi
-          if git rev-parse "$VERSION" >/dev/null 2>&1; then
-            echo "Tag already exists: $VERSION" >&2
-            exit 1
-          fi
-
-          notes="docs/releases/${VERSION}.md"
-          if [[ ! -f "$notes" ]]; then
-            echo "Missing release notes: $notes" >&2
-            exit 1
-          fi
-
-          release_branch="release/${VERSION}"
-          if ! git fetch --no-tags origin "refs/heads/${release_branch}:refs/remotes/origin/${release_branch}"; then
-            echo "Missing frozen release branch: ${release_branch}" >&2
-            exit 1
-          fi
-          target_sha="$(git rev-parse "refs/remotes/origin/${release_branch}")"
-          git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor "$target_sha" origin/main; then
-            echo "Frozen release candidate ${target_sha} is not an ancestor of main" >&2
-            exit 1
-          fi
-          echo "sha=$target_sha" >> "$GITHUB_OUTPUT"
-
-      - name: Verify frozen release candidate
-        shell: bash
-        env:
-          TARGET_SHA: ${{ steps.candidate.outputs.sha }}
-        run: |
-          set -euo pipefail
-          git checkout --detach "$TARGET_SHA"
           go mod tidy
           git diff --exit-code -- go.mod go.sum
-          go test ./...
           go vet ./...
+          go test ./...
+          go test -race . ./internal/runtime/... ./internal/store/...
 
-      - name: Publish GitHub Release and tag
+  build-binaries:
+    name: Cross-Compile Binaries (${{ matrix.os }}/${{ matrix.arch }})
+    needs: [resolve-metadata, verify]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            ext: ""
+            archive: tar.gz
+          - os: linux
+            arch: arm64
+            ext: ""
+            archive: tar.gz
+          - os: darwin
+            arch: amd64
+            ext: ""
+            archive: tar.gz
+          - os: darwin
+            arch: arm64
+            ext: ""
+            archive: tar.gz
+          - os: windows
+            arch: amd64
+            ext: ".exe"
+            archive: zip
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-metadata.outputs.target_sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Build cross-platform binaries
+        shell: bash
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+          VERSION: ${{ needs.resolve-metadata.outputs.version }}
+          COMMIT: ${{ needs.resolve-metadata.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          build_dir="dist/axiom_${VERSION}_${GOOS}_${GOARCH}"
+          mkdir -p "$build_dir"
+          ldflags="-s -w -X 'main.Version=${VERSION}' -X 'main.Commit=${COMMIT}'"
+          
+          go build -ldflags="$ldflags" -o "${build_dir}/axiomgen${{ matrix.ext }}" ./cmd/axiomgen
+          go build -ldflags="$ldflags" -o "${build_dir}/axiombench${{ matrix.ext }}" ./cmd/axiombench
+          cp LICENSE README.md "$build_dir/"
+          
+          mkdir -p release-assets
+          archive_name="axiom_${VERSION}_${GOOS}_${GOARCH}"
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            (cd dist && zip -r "../release-assets/${archive_name}.zip" "axiom_${VERSION}_${GOOS}_${GOARCH}")
+          else
+            tar -czvf "release-assets/${archive_name}.tar.gz" -C dist "axiom_${VERSION}_${GOOS}_${GOARCH}"
+          fi
+
+      - name: Upload binary archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries-${{ matrix.os }}-${{ matrix.arch }}
+          path: release-assets/*
+          retention-days: 2
+
+  sbom-and-checksums:
+    name: Generate SBOM & SHA256 Checksums
+    needs: [resolve-metadata, build-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-metadata.outputs.target_sha }}
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-binaries-*
+          path: all-assets/
+          merge-multiple: true
+
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          format: 'cyclonedx-json'
+          output-file: 'all-assets/axiom-sbom.cdx.json'
+
+      - name: Compute SHA256SUMS
+        shell: bash
+        run: |
+          cd all-assets
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: complete-release-bundle
+          path: all-assets/*
+          retention-days: 2
+
+  docker-publish:
+    name: Build & Publish Container Images
+    needs: [resolve-metadata, verify]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-metadata.outputs.target_sha }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/axiomgen
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.resolve-metadata.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.resolve-metadata.outputs.version }}
+            type=sha,prefix=sha-
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ needs.resolve-metadata.outputs.version }}
+            COMMIT=${{ needs.resolve-metadata.outputs.target_sha }}
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [resolve-metadata, sbom-and-checksums, docker-publish]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-metadata.outputs.target_sha }}
+
+      - name: Download complete release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: complete-release-bundle
+          path: dist-release/
+
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          TARGET_SHA: ${{ steps.candidate.outputs.sha }}
+          VERSION: ${{ needs.resolve-metadata.outputs.version }}
+          PRERELEASE: ${{ needs.resolve-metadata.outputs.prerelease }}
         shell: bash
         run: |
           set -euo pipefail
-          git checkout --detach "$GITHUB_SHA"
-          args=(release create "$VERSION" --target "$TARGET_SHA" --title "Axiom $VERSION" --notes-file "docs/releases/${VERSION}.md")
-          if [[ "$PRERELEASE" == "true" ]]; then
-            args+=(--prerelease)
+          notes_file="docs/releases/${VERSION}.md"
+          flags=(--title "Axiom ${VERSION}")
+          if [[ -f "$notes_file" ]]; then
+            flags+=(--notes-file "$notes_file")
+          else
+            flags+=(--generate-notes)
           fi
-          gh "${args[@]}"
+          if [[ "$PRERELEASE" == "true" ]]; then
+            flags+=(--prerelease)
+          fi
+          
+          # Create or edit release
+          gh release create "$VERSION" dist-release/* "${flags[@]}" || \
+          gh release upload "$VERSION" dist-release/* --clobber

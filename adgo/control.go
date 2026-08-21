@@ -221,7 +221,7 @@ func (e *Engine) ResolveHuman(ctx context.Context, executionID, nodeID string, r
 		if !ok || node.Kind != NodeHuman {
 			return fmt.Errorf("adgo: interrupt %q for node %s cannot be resolved with HumanResolution", expected, nodeID)
 		}
-		outcome := OutcomePass
+		var outcome Outcome
 		switch resolution.Decision {
 		case HumanApprove, HumanEdit, HumanConfirm:
 			outcome = OutcomePass

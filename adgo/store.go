@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -74,8 +75,12 @@ func (s *MemoryStore) Commit(_ context.Context, id string, expected uint64, muta
 	}
 	next.Version++
 	next.UpdatedAt = time.Now().UTC()
+	res, err := cloneExecution(next)
+	if err != nil {
+		return nil, err
+	}
 	s.exec[id] = next
-	return cloneExecution(next)
+	return res, nil
 }
 func (s *MemoryStore) PutInbox(_ context.Context, id string, e Event) error {
 	s.mu.Lock()
@@ -140,7 +145,7 @@ func NewFileStore(root string) (*FileStore, error) {
 }
 
 func (s *FileStore) executionDir(id string) string {
-	return filepath.Join(s.root, "executions", safeName(id))
+	return filepath.Join(s.root, "executions", EncodeDurableName(id))
 }
 func (s *FileStore) commitsDir(id string) string { return filepath.Join(s.executionDir(id), "commits") }
 func (s *FileStore) inboxDir(id string) string   { return filepath.Join(s.executionDir(id), "inbox") }
@@ -263,7 +268,7 @@ func (s *FileStore) PutInbox(ctx context.Context, id string, e Event) error {
 		if err := os.MkdirAll(s.inboxDir(id), 0o755); err != nil {
 			return err
 		}
-		path := filepath.Join(s.inboxDir(id), safeName(e.ID)+".json")
+		path := filepath.Join(s.inboxDir(id), EncodeDurableName(e.ID)+".json")
 		if _, err := os.Stat(path); err == nil {
 			return nil
 		} else if !errors.Is(err, fs.ErrNotExist) {
@@ -309,7 +314,7 @@ func (s *FileStore) AckInbox(ctx context.Context, id string, ids []string) error
 	defer s.mu.Unlock()
 	return s.withExecutionLock(ctx, id, func() error {
 		for _, eid := range ids {
-			err := os.Remove(filepath.Join(s.inboxDir(id), safeName(eid)+".json"))
+			err := os.Remove(filepath.Join(s.inboxDir(id), EncodeDurableName(eid)+".json"))
 			if err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return err
 			}
@@ -320,7 +325,7 @@ func (s *FileStore) AckInbox(ctx context.Context, id string, ids []string) error
 
 func (s *FileStore) withExecutionLock(ctx context.Context, id string, fn func() error) error {
 	locksDir := filepath.Join(s.root, "locks")
-	path := filepath.Join(locksDir, safeName(id)+".lock")
+	path := filepath.Join(locksDir, EncodeDurableName(id)+".lock")
 	for {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err == nil {
@@ -348,28 +353,23 @@ func (s *FileStore) withExecutionLock(ctx context.Context, id string, fn func() 
 
 func atomicWrite(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	tmp, err := os.CreateTemp(dir, "tmp-*")
 	if err != nil {
 		return err
 	}
 	tmpName := tmp.Name()
-	ok := false
+	cleanup := true
 	defer func() {
-		_ = tmp.Close()
-		if !ok {
+		if cleanup {
 			_ = os.Remove(tmpName)
 		}
 	}()
-	if err := tmp.Chmod(0o644); err != nil {
-		return err
-	}
 	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
@@ -378,13 +378,13 @@ func atomicWrite(path string, data []byte) error {
 	if err := os.Rename(tmpName, path); err != nil {
 		return err
 	}
-	if err := syncDir(dir); err != nil {
-		return err
-	}
-	ok = true
-	return nil
+	cleanup = false
+	return syncDir(dir)
 }
 func syncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	f, err := os.Open(dir)
 	if err != nil {
 		return err

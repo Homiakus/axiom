@@ -1,6 +1,7 @@
 package adgo
 
 import (
+	"math"
 	"sort"
 	"time"
 )
@@ -66,10 +67,20 @@ func (s UtilityScheduler) Select(p *Plan, e *Execution, in []Candidate) []Candid
 		out[i].Score = n.CriticalPathWeight + s.QualityWeight*n.ExpectedQualityGain + s.BlockedWeight*blocked + s.DeadlineWeight*deadlinePressure - s.CostWeight*n.EstimatedCost - s.LatencyWeight*n.EstimatedLatency.Seconds() - s.RiskWeight*float64(n.Risk)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Score == out[j].Score {
+		si, sj := out[i].Score, out[j].Score
+		if math.IsNaN(si) && math.IsNaN(sj) {
 			return out[i].Node.ID < out[j].Node.ID
 		}
-		return out[i].Score > out[j].Score
+		if math.IsNaN(si) {
+			return false
+		}
+		if math.IsNaN(sj) {
+			return true
+		}
+		if math.Abs(si-sj) < 1e-9 {
+			return out[i].Node.ID < out[j].Node.ID
+		}
+		return si > sj
 	})
 
 	activityCount := map[string]int{}

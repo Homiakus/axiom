@@ -117,8 +117,12 @@ func (s *MemoryScheduleStore) Commit(_ context.Context, id string, expected uint
 	}
 	next.Version++
 	next.UpdatedAt = time.Now().UTC()
+	res, err := cloneSchedule(next)
+	if err != nil {
+		return nil, err
+	}
 	s.schedules[id] = next
-	return cloneSchedule(next)
+	return res, nil
 }
 
 type FileScheduleStore struct {
@@ -341,14 +345,27 @@ func (r *ScheduleRunner) Tick(ctx context.Context, now time.Time) ([]string, err
 				return started, err
 			}
 			updated, err := r.commitSchedule(ctx, schedule.ID, func(current *Schedule) error {
+				if current.NextAt.After(fireAt) {
+					// Already advanced by another runner; idempotent success
+					return nil
+				}
 				if !current.NextAt.Equal(fireAt) {
 					return ErrConflict
+				}
+				if current.Every <= 0 {
+					return fmt.Errorf("adgo: invalid non-positive schedule interval")
 				}
 				current.LastFiredAt = fireAt
 				current.NextAt = fireAt.Add(current.Every)
 				if !current.CatchUp && !current.NextAt.After(now) {
-					missed := int64(now.Sub(current.NextAt)/current.Every) + 1
-					current.NextAt = current.NextAt.Add(time.Duration(missed) * current.Every)
+					diff := now.Sub(current.NextAt)
+					if diff > 0 {
+						missed := int64(diff/current.Every) + 1
+						if missed > 1000000 {
+							missed = 1000000
+						}
+						current.NextAt = current.NextAt.Add(time.Duration(missed) * current.Every)
+					}
 				}
 				return nil
 			})

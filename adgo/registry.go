@@ -123,6 +123,11 @@ func (r *Registry) Resolve(ctx context.Context, capability string, policy Provid
 		if p.Available != nil && !p.Available(ctx) {
 			continue
 		}
+		if math.IsNaN(p.Quality) || math.IsInf(p.Quality, 0) ||
+			math.IsNaN(p.Cost) || math.IsInf(p.Cost, 0) ||
+			math.IsNaN(p.Privacy) || math.IsInf(p.Privacy, 0) {
+			continue
+		}
 		if policy.MinQuality > 0 && p.Quality < policy.MinQuality {
 			continue
 		}
@@ -150,7 +155,7 @@ func (r *Registry) Resolve(ctx context.Context, capability string, policy Provid
 			continue
 		}
 		latencySeconds := p.Latency.Seconds()
-		if latencySeconds < 0 {
+		if latencySeconds < 0 || math.IsNaN(latencySeconds) || math.IsInf(latencySeconds, 0) {
 			latencySeconds = 0
 		}
 		score := 3*p.Quality + 1.5*p.Privacy - 1.2*p.Cost - 0.05*latencySeconds - 0.75*float64(p.Risk)
@@ -160,10 +165,20 @@ func (r *Registry) Resolve(ctx context.Context, capability string, policy Provid
 		return Provider{}, fmt.Errorf("adgo: no provider satisfies policy for capability %q", capability)
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
-		if math.Abs(candidates[i].s-candidates[j].s) < 1e-9 {
+		si, sj := candidates[i].s, candidates[j].s
+		if math.IsNaN(si) && math.IsNaN(sj) {
 			return candidates[i].p.Name < candidates[j].p.Name
 		}
-		return candidates[i].s > candidates[j].s
+		if math.IsNaN(si) {
+			return false
+		}
+		if math.IsNaN(sj) {
+			return true
+		}
+		if math.Abs(si-sj) < 1e-9 {
+			return candidates[i].p.Name < candidates[j].p.Name
+		}
+		return si > sj
 	})
 	return candidates[0].p, nil
 }

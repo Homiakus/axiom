@@ -515,13 +515,14 @@ func (s *Store) nextPendingTaskLocked(executionID string, now time.Time) (*runti
 	if err != nil {
 		return nil, err
 	}
-	for _, task := range tasks {
-		if !task.NextAttemptAt.IsZero() && task.NextAttemptAt.After(now) {
-			return nil, nil
-		}
-		return task, nil
+	if len(tasks) == 0 {
+		return nil, nil
 	}
-	return nil, nil
+	task := tasks[0]
+	if !task.NextAttemptAt.IsZero() && task.NextAttemptAt.After(now) {
+		return nil, nil
+	}
+	return task, nil
 }
 
 func (s *Store) listTasksByStatusLocked(executionID string, status runtime.TaskStatus) ([]*runtime.ActivityTask, error) {
@@ -654,20 +655,20 @@ func (s *Store) nextHistorySeq(executionID string) (int, error) {
 	return seq + 1, nil
 }
 
-func execKey(id string) string                   { return "exec/" + id }
-func historySeqKey(executionID string) string    { return "hseq/" + executionID }
-func historyPrefix(executionID string) string    { return "hist/" + executionID + "/" }
+func execKey(id string) string                   { return "exec/" + escape(id) }
+func historySeqKey(executionID string) string    { return "hseq/" + escape(executionID) }
+func historyPrefix(executionID string) string    { return "hist/" + escape(executionID) + "/" }
 func historyPrefixEnd(executionID string) string { return prefixEnd(historyPrefix(executionID)) }
 func historyKey(executionID string, seq int) string {
 	return fmt.Sprintf("%s%020d", historyPrefix(executionID), seq)
 }
-func taskSeqKey(executionID string) string             { return "tseq/" + executionID }
-func taskPrefix(executionID string) string             { return "task/" + executionID + "/" }
+func taskSeqKey(executionID string) string             { return "tseq/" + escape(executionID) }
+func taskPrefix(executionID string) string             { return "task/" + escape(executionID) + "/" }
 func taskPrefixEnd(executionID string) string          { return prefixEnd(taskPrefix(executionID)) }
-func taskKey(executionID string, taskID string) string { return taskPrefix(executionID) + taskID }
+func taskKey(executionID string, taskID string) string { return taskPrefix(executionID) + escape(taskID) }
 func taskIDKey(taskID string) string                   { return "taskid/" + escape(taskID) }
 func taskStatusPrefix(executionID string, status runtime.TaskStatus) string {
-	return "tstatus/" + executionID + "/" + string(status) + "/"
+	return "tstatus/" + escape(executionID) + "/" + string(status) + "/"
 }
 func taskStatusPrefixEnd(executionID string, status runtime.TaskStatus) string {
 	return prefixEnd(taskStatusPrefix(executionID, status))
@@ -680,7 +681,7 @@ func taskStatusKey(task *runtime.ActivityTask) string {
 	return fmt.Sprintf("%s%020d/%s", taskStatusPrefix(task.ExecutionID, task.Status), availableAt.UnixNano(), escape(task.ID))
 }
 func taskDedupKey(executionID string, ruleName string, activityName string, key string) string {
-	return "tdedup/" + executionID + "/" + escape(ruleName) + "/" + escape(activityName) + "/" + escape(key)
+	return "tdedup/" + escape(executionID) + "/" + escape(ruleName) + "/" + escape(activityName) + "/" + escape(key)
 }
 
 func prefixEnd(prefix string) string {
@@ -689,7 +690,8 @@ func prefixEnd(prefix string) string {
 }
 
 func escape(value string) string {
-	return strings.ReplaceAll(value, "/", "%2f")
+	val := strings.ReplaceAll(value, "%", "%25")
+	return strings.ReplaceAll(val, "/", "%2f")
 }
 
 func taskSeqFromID(taskID string) int {
