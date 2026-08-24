@@ -16,7 +16,7 @@ linters:
         - shadow
     misspell:
       locale: US
-      ignore-words:
+      ignore-rules:
         - behaviour
         - serialises
         - cancelled
