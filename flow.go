@@ -174,7 +174,11 @@ func (s *MemoryFlowStore) LoadHistory(_ context.Context, flow, id string) ([]Flo
 	return append([]FlowHistoryEntry(nil), value.history...), nil
 }
 
-type flowConfig struct{ store FlowStore }
+type flowConfig struct {
+	store          FlowStore
+	durableEffects bool
+}
+
 type FlowOption func(*flowConfig) error
 
 func WithFlowStore(store FlowStore) FlowOption {
@@ -187,10 +191,23 @@ func WithFlowStore(store FlowStore) FlowOption {
 	}
 }
 
+// WithDurableFlowEffects enables a transactional outbox for reducer effects.
+// The configured store must implement DurableFlowStore and report synchronous
+// durability. External effect delivery then happens only after state and
+// EffectPending intents are committed. Delivery is at-least-once; use
+// FlowEffectIDFromContext for downstream deduplication.
+func WithDurableFlowEffects() FlowOption {
+	return func(config *flowConfig) error {
+		config.durableEffects = true
+		return nil
+	}
+}
+
 type FlowEngine[S any] struct {
-	flow  *Flow[S]
-	store FlowStore
-	locks *syncx.KeyedLocker
+	flow           *Flow[S]
+	store          FlowStore
+	locks          *syncx.KeyedLocker
+	durableEffects bool
 }
 
 func OpenFlow[S any](flow *Flow[S], opts ...FlowOption) (*FlowEngine[S], error) {
@@ -203,7 +220,24 @@ func OpenFlow[S any](flow *Flow[S], opts ...FlowOption) (*FlowEngine[S], error) 
 			return nil, err
 		}
 	}
-	return &FlowEngine[S]{flow: freezeFlow(flow), store: config.store, locks: syncx.NewKeyedLocker()}, nil
+	if config.durableEffects {
+		store, ok := config.store.(DurableFlowStore)
+		if !ok {
+			return nil, fmt.Errorf("axiom: durable flow effects require a DurableFlowStore with atomic state/outbox commits")
+		}
+		if level := store.Durability(); level != StoreDurabilitySynchronous {
+			return nil, fmt.Errorf("axiom: durable flow effects require synchronous store durability; store reports %q", level)
+		}
+		if err := validateDurableFlowEffectTypes(flow); err != nil {
+			return nil, err
+		}
+	}
+	return &FlowEngine[S]{
+		flow:           freezeFlow(flow),
+		store:          config.store,
+		locks:          syncx.NewKeyedLocker(),
+		durableEffects: config.durableEffects,
+	}, nil
 }
 
 func freezeFlow[S any](flow *Flow[S]) *Flow[S] {
@@ -238,6 +272,10 @@ func (e *FlowExecution[S]) Dispatch(ctx context.Context, event any) error {
 	}
 	unlock := e.engine.locks.Lock(e.id)
 	defer unlock()
+
+	if e.engine.durableEffects {
+		return e.dispatchDurableLocked(ctx, event)
+	}
 
 	handler, normalized, err := e.engine.flow.handlerFor(event)
 	if err != nil {
