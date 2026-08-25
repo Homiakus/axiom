@@ -191,7 +191,7 @@ func (tx *txStore) PollTaskWithLease(ctx context.Context, executionID string, wo
 		return nil, err
 	}
 	if task == nil {
-		return nil, errNoTask
+		return nil, nil
 	}
 	task.Status = runtime.TaskRunning
 	task.Attempt++
