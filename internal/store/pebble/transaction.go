@@ -62,7 +62,7 @@ func (tx *txStore) CreateExecution(ctx context.Context, execution *runtime.Execu
 	} else if exists {
 		return fmt.Errorf("execution already exists: %s", execution.ID)
 	}
-	next := execution
+	next := cloneExecution(execution)
 	tx.executions[next.ID] = next
 	return tx.parent.writeExecution(tx.batch, next)
 }
@@ -88,7 +88,7 @@ func (tx *txStore) SaveExecution(ctx context.Context, execution *runtime.Executi
 			return runtime.ErrExecutionNotFound
 		}
 	}
-	next := execution
+	next := cloneExecution(execution)
 	next.Version++
 	next.UpdatedAt = time.Now().UTC()
 	tx.executions[next.ID] = next
