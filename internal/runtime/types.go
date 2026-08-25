@@ -173,10 +173,9 @@ func NewEngine(module *compiler.Module, store Store, activities ActivityRegistry
 	if activities == nil {
 		activities = ActivityRegistry{}
 	}
-	store = newRetryStore(module, store)
 	activities = applyActivityPolicies(module, activities)
 	fast := compileFastPlan(module, false)
-	return &Engine{
+	engine := &Engine{
 		module:         module,
 		store:          store,
 		activities:     activities,
@@ -186,6 +185,11 @@ func NewEngine(module *compiler.Module, store Store, activities ActivityRegistry
 		clock:          systemClock{},
 		executionLocks: syncx.NewKeyedLocker(),
 	}
+	// retryStore resolves semantic time through engine.now on every decision.
+	// This keeps retry scheduling and due checks in the same clock domain even
+	// when tests or simulation replace the Engine clock after construction.
+	engine.store = newRetryStore(module, store, engine.now)
+	return engine
 }
 
 func (e *Engine) Module() *compiler.Module {

@@ -67,6 +67,7 @@ type retryStore struct {
 	Store
 	module *compiler.Module
 	state  *retryStoreState
+	now    func() time.Time
 }
 
 type retryTransactionalStore struct {
@@ -79,16 +80,23 @@ type retryStoreTransaction struct {
 	tx StoreTransaction
 }
 
-func newRetryStore(module *compiler.Module, store Store) Store {
+func newRetryStore(module *compiler.Module, store Store, now func() time.Time) Store {
 	if store == nil {
 		return nil
 	}
 	state := &retryStoreState{leased: map[string]*ActivityTask{}}
-	base := &retryStore{Store: store, module: module, state: state}
+	base := &retryStore{Store: store, module: module, state: state, now: now}
 	if transactional, ok := store.(TransactionalStore); ok {
 		return &retryTransactionalStore{retryStore: base, transactional: transactional}
 	}
 	return base
+}
+
+func (s *retryStore) currentTime() time.Time {
+	if s.now == nil {
+		return time.Now().UTC()
+	}
+	return s.now().UTC()
 }
 
 func (s *retryTransactionalStore) BeginTransaction(ctx context.Context) (StoreTransaction, error) {
@@ -96,7 +104,7 @@ func (s *retryTransactionalStore) BeginTransaction(ctx context.Context) (StoreTr
 	if err != nil {
 		return nil, err
 	}
-	base := &retryStore{Store: tx, module: s.module, state: s.state}
+	base := &retryStore{Store: tx, module: s.module, state: s.state, now: s.now}
 	return &retryStoreTransaction{retryStore: base, tx: tx}, nil
 }
 
@@ -165,7 +173,7 @@ func (s *retryStore) FailTask(ctx context.Context, taskID string, errorMessage s
 		return nil
 	}
 
-	now := time.Now().UTC()
+	now := s.currentTime()
 	delay := retryDelay(s.module, task.ActivityName, task.Attempt)
 	nextAttemptAt := now.Add(delay)
 	next := cloneRetryTask(task)
@@ -208,7 +216,7 @@ func (s *retryStore) hasDuePendingTask(ctx context.Context, executionID string) 
 	if err != nil {
 		return false, err
 	}
-	now := time.Now().UTC()
+	now := s.currentTime()
 	for _, task := range tasks {
 		if task == nil || task.Status != TaskPending {
 			continue
