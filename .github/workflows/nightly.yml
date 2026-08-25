@@ -16,7 +16,7 @@ jobs:
   extended-matrix-test:
     name: Full Matrix Tests (${{ matrix.os }} - Go ${{ matrix.go }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -36,10 +36,10 @@ jobs:
         shell: bash
         run: go test -v ./...
 
-      - name: Run race detector on all packages
+      - name: Run repeated race detector on all packages
         if: matrix.os != 'windows-latest'
         shell: bash
-        run: go test -race ./...
+        run: go test -race ./... -count=3
 
   extended-fuzzing:
     name: Nightly Deep Fuzzing (60s)
