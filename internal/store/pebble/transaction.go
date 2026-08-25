@@ -143,13 +143,18 @@ func (tx *txStore) EnqueueTask(ctx context.Context, task *runtime.ActivityTask) 
 }
 
 func (tx *txStore) ListTasks(ctx context.Context, executionID string) ([]*runtime.ActivityTask, error) {
+	_ = ctx
+	return tx.listTasksMerged(executionID)
+}
+
+func (tx *txStore) listTasksMerged(executionID string) ([]*runtime.ActivityTask, error) {
 	tasks, err := tx.parent.listTasksLocked(executionID)
 	if err != nil {
 		return nil, err
 	}
-	byID := map[string]*runtime.ActivityTask{}
+	byID := make(map[string]*runtime.ActivityTask, len(tasks)+len(tx.tasks))
 	for _, task := range tasks {
-		byID[task.ID] = task
+		byID[task.ID] = cloneTask(task)
 	}
 	for _, task := range tx.tasks {
 		if task.ExecutionID == executionID {
@@ -160,6 +165,7 @@ func (tx *txStore) ListTasks(ctx context.Context, executionID string) ([]*runtim
 	for _, task := range byID {
 		out = append(out, cloneTask(task))
 	}
+	sortTasksCanonical(out)
 	return out, nil
 }
 
@@ -334,8 +340,12 @@ func (tx *txStore) getTaskLocked(taskID string) (*runtime.ActivityTask, error) {
 }
 
 func (tx *txStore) nextPendingTask(executionID string, now time.Time) (*runtime.ActivityTask, error) {
-	for _, task := range tx.tasks {
-		if task.ExecutionID != executionID || task.Status != runtime.TaskPending {
+	tasks, err := tx.listTasksMerged(executionID)
+	if err != nil {
+		return nil, err
+	}
+	for _, task := range tasks {
+		if task.Status != runtime.TaskPending {
 			continue
 		}
 		if !task.NextAttemptAt.IsZero() && task.NextAttemptAt.After(now) {
@@ -343,7 +353,7 @@ func (tx *txStore) nextPendingTask(executionID string, now time.Time) (*runtime.
 		}
 		return cloneTask(task), nil
 	}
-	return tx.parent.nextPendingTaskLocked(executionID, now)
+	return nil, nil
 }
 
 func (tx *txStore) nextHistorySeq(executionID string) (int, error) {
