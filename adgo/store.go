@@ -326,21 +326,47 @@ func (s *FileStore) AckInbox(ctx context.Context, id string, ids []string) error
 func (s *FileStore) withExecutionLock(ctx context.Context, id string, fn func() error) error {
 	locksDir := filepath.Join(s.root, "locks")
 	path := filepath.Join(locksDir, EncodeDurableName(id)+".lock")
+	owner, err := newFileLockOwner()
+	if err != nil {
+		return err
+	}
 	for {
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-		if err == nil {
-			_, _ = fmt.Fprintf(f, "%d\n", time.Now().UTC().UnixNano())
-			_ = f.Sync()
-			_ = f.Close()
-			_ = syncDir(locksDir)
-			defer func() { _ = os.Remove(path); _ = syncDir(locksDir) }()
+		f, openErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if openErr == nil {
+			record := fileLockRecord{Owner: owner, AcquiredAt: time.Now().UTC()}
+			if err := writeFileLockRecord(f, record); err != nil {
+				_ = f.Close()
+				_ = os.Remove(path)
+				return err
+			}
+			if err := f.Sync(); err != nil {
+				_ = f.Close()
+				_ = releaseFileLock(path, owner)
+				return err
+			}
+			if err := f.Close(); err != nil {
+				_ = releaseFileLock(path, owner)
+				return err
+			}
+			if err := syncDir(locksDir); err != nil {
+				_ = releaseFileLock(path, owner)
+				return err
+			}
+			defer func() {
+				_ = releaseFileLock(path, owner)
+				_ = syncDir(locksDir)
+			}()
 			return fn()
 		}
-		if !errors.Is(err, fs.ErrExist) {
-			return err
+		if !errors.Is(openErr, fs.ErrExist) {
+			return openErr
 		}
-		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > s.lockStaleAfter {
-			_ = os.Remove(path)
+		removed, staleErr := removeStaleFileLock(path, s.lockStaleAfter)
+		if staleErr != nil {
+			return staleErr
+		}
+		if removed {
+			_ = syncDir(locksDir)
 			continue
 		}
 		select {
