@@ -79,7 +79,7 @@ jobs:
   race-detector:
     name: Race & Concurrency
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -90,8 +90,8 @@ jobs:
           go-version: '1.26.x'
           cache: true
 
-      - name: Race test critical packages
-        run: go test -race -v . ./internal/runtime/... ./internal/store/...
+      - name: Race test all packages
+        run: go test -race -v ./...
 
   examples-suite:
     name: Public Examples Verification
