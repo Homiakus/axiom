@@ -370,7 +370,8 @@ func WithStrictFastRuntime() Option {
 
 // WithProductionMode enables production safeguards:
 //   - Strict fast runtime (no slow-path fallback)
-//   - Transactional store required (Pebble or custom durable store)
+//   - Transactional store required for atomic checkpoints and task decisions
+//   - Synchronous durability declaration required for acknowledged commits
 //   - durable retry/backoff and per-attempt timeout
 //   - concurrency: once is serialized per activity within an Engine
 //   - concurrency: parallel remains unrestricted
@@ -569,11 +570,20 @@ func New(module *Module, opts ...Option) (*Engine, error) {
 		}
 	}
 
-	// Production mode requires transactional storage so retry checkpoints and
-	// pending-task supersession decisions are committed atomically.
+	// Production mode requires both atomic transactions and synchronous
+	// persistence. These are separate store capabilities and are validated
+	// independently so a transactional-but-ephemeral store cannot silently
+	// pass the production gate.
 	if cfg.production {
 		if _, ok := cfg.store.(runtimepkg.TransactionalStore); !ok {
 			return nil, Errors{{Code: "AX506", Kind: "config", Message: "production mode requires a transactional store", Hint: "Use OpenPebble or provide a Store that implements TransactionalStore."}}
+		}
+		durability, ok := cfg.store.(runtimepkg.DurabilityProvider)
+		if !ok {
+			return nil, Errors{{Code: "AX506", Kind: "config", Message: "production mode requires the store to declare durability", Hint: "Implement DurabilityProvider and report StoreDurabilitySynchronous, or use default OpenPebble settings."}}
+		}
+		if level := durability.Durability(); level != runtimepkg.StoreDurabilitySynchronous {
+			return nil, Errors{{Code: "AX506", Kind: "config", Message: fmt.Sprintf("production mode requires synchronous durability; store reports %q", level), Hint: "Use default OpenPebble settings. PebbleNoSync and PebbleSyncEvery are intentionally rejected by strict production mode."}}
 		}
 		if err := validateProductionPolicyConfig(module); err != nil {
 			return nil, err
