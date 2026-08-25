@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -53,10 +54,28 @@ func TestRefreshFileLockCannotReviveReplacementOwner(t *testing.T) {
 	}
 	defer oldFile.Close()
 
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
+	if runtime.GOOS == "windows" {
+		// Windows does not permit unlinking this open lock handle. Simulate the
+		// ownership-change half of takeover on the same inode; refresh must still
+		// reject the old owner rather than extending the new lease.
+		if err := oldFile.Truncate(0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := oldFile.Seek(0, 0); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeFileLockRecord(oldFile, fileLockRecord{Owner: "owner-b", AcquiredAt: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := oldFile.Sync(); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		writeLockForTest(t, path, "owner-b")
 	}
-	writeLockForTest(t, path, "owner-b")
 
 	if err := refreshFileLock(oldFile, path, "owner-a"); !errors.Is(err, errFileLockLost) {
 		t.Fatalf("refresh err=%v want %v", err, errFileLockLost)
