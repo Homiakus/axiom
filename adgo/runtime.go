@@ -73,6 +73,7 @@ type Runtime struct {
 	registry          *Registry
 	scheduler         Scheduler
 	repair            RepairPlanner
+	clock             Clock
 	leaseTTL          time.Duration
 	workerID          string
 	approvalThreshold RiskLevel
@@ -98,7 +99,7 @@ func NewRuntime(plan *Plan, store Store, registry *Registry, opts ...RuntimeOpti
 	if registry == nil {
 		registry = NewRegistry()
 	}
-	r := &Runtime{plan: plan, store: store, registry: registry, scheduler: DefaultScheduler(), repair: DependencyRepairPlanner{}, leaseTTL: 30 * time.Second, workerID: fmt.Sprintf("worker-%d", time.Now().UnixNano()), approvalThreshold: RiskHigh, classify: DefaultClassify}
+	r := &Runtime{plan: plan, store: store, registry: registry, scheduler: DefaultScheduler(), repair: DependencyRepairPlanner{}, clock: wallClock{}, leaseTTL: 30 * time.Second, workerID: fmt.Sprintf("worker-%d", time.Now().UnixNano()), approvalThreshold: RiskHigh, classify: DefaultClassify}
 	for _, opt := range opts {
 		opt(r)
 	}
@@ -109,7 +110,7 @@ func (r *Runtime) Start(ctx context.Context, id string, initial map[string]any, 
 	if strings.TrimSpace(id) == "" {
 		return nil, fmt.Errorf("adgo: execution id is required")
 	}
-	now := time.Now().UTC()
+	now := r.now()
 	e := &Execution{ID: id, PlanID: r.plan.ID, PlanVersion: r.plan.Version, PlanDigest: r.plan.Digest, Version: 1, Status: StatusRunning, Nodes: map[string]*NodeRuntime{}, Data: map[string]json.RawMessage{}, Artifacts: map[string]ArtifactRef{}, Quality: QualityVector{}, BudgetLimit: budget, ActiveTasks: map[string]TaskRuntime{}, SeenEvents: map[string]bool{}, RevisionCounters: map[string]int{}, StrategyBans: map[string]bool{}, WaitingFor: map[string]string{}, ThrottleUntil: map[string]time.Time{}, CreatedAt: now, UpdatedAt: now}
 	transitionIncoming := map[string]bool{}
 	for _, n := range r.plan.Nodes {
@@ -473,12 +474,12 @@ func (r *Runtime) runInternal(ctx context.Context, e *Execution) (bool, error) {
 				if rt.NotBefore.IsZero() {
 					_, err = r.commit(ctx, cur, func(x *Execution) error {
 						x.Nodes[id].Status = NodeWaiting
-						x.Nodes[id].NotBefore = time.Now().UTC().Add(n.Wait.Duration)
+						x.Nodes[id].NotBefore = r.now().Add(n.Wait.Duration)
 						x.WaitingFor[id] = "timer"
 						appendHistory(x, "timer_wait", id, "timer scheduled", map[string]any{"until": x.Nodes[id].NotBefore})
 						return nil
 					})
-				} else if !rt.NotBefore.After(time.Now().UTC()) {
+				} else if !rt.NotBefore.After(r.now()) {
 					_, err = r.commit(ctx, cur, func(x *Execution) error {
 						delete(x.WaitingFor, id)
 						return completeNode(r.plan, x, id, OutcomeCompleted, ActivityResult{})
@@ -522,7 +523,7 @@ func (r *Runtime) runInternal(ctx context.Context, e *Execution) (bool, error) {
 
 func (r *Runtime) readyInternal(e *Execution) []string {
 	out := []string{}
-	now := time.Now().UTC()
+	now := r.now()
 	for id, n := range r.plan.Nodes {
 		if n.Kind == NodeActivity || n.Kind == NodeSubflow || n.Kind == NodeCompensation {
 			continue
@@ -1261,7 +1262,7 @@ func eventID(e Event) string {
 }
 
 func (r *Runtime) resumeDueTimers(ctx context.Context, e *Execution) (bool, error) {
-	now := time.Now().UTC()
+	now := r.now()
 	due := []string{}
 	for id, n := range r.plan.Nodes {
 		rt := e.Nodes[id]
