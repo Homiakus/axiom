@@ -14,7 +14,7 @@ func TestEngineFencesExpiredWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := NewMemoryStore()
-	engine, err := NewEngine(plan, store, NewRegistry(), WithEngineLeaseTTL(15*time.Millisecond))
+	engine, err := NewEngine(plan, store, NewRegistry(), WithEngineLeaseTTL(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,15 +29,28 @@ func TestEngineFencesExpiredWorker(t *testing.T) {
 	if len(result.QueuedTasks) != 1 {
 		t.Fatalf("queued=%v", result.QueuedTasks)
 	}
-	oldWork, err := engine.Poll(ctx, WorkerSpec{ID: "worker-a", LeaseTTL: 15 * time.Millisecond})
+	oldWork, err := engine.Poll(ctx, WorkerSpec{ID: "worker-a", LeaseTTL: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(25 * time.Millisecond)
+	// Expire the durable lease explicitly instead of depending on scheduler or
+	// race-instrumentation timing. Advance must recover it on the next pass.
+	current, err := store.Load(ctx, "wf-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Commit(ctx, current.ID, current.Version, func(x *Execution) error {
+		task := x.ActiveTasks[oldWork.Token.TaskID]
+		task.LeaseUntil = time.Now().UTC().Add(-time.Hour)
+		x.ActiveTasks[task.ID] = task
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := engine.Advance(ctx, "wf-1"); err != nil {
 		t.Fatal(err)
 	}
-	newWork, err := engine.Poll(ctx, WorkerSpec{ID: "worker-b", LeaseTTL: time.Second})
+	newWork, err := engine.Poll(ctx, WorkerSpec{ID: "worker-b", LeaseTTL: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,19 +81,33 @@ func TestEngineHeartbeatKeepsLeaseAlive(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := NewMemoryStore()
-	engine, _ := NewEngine(plan, store, NewRegistry(), WithEngineLeaseTTL(30*time.Millisecond))
+	engine, _ := NewEngine(plan, store, NewRegistry(), WithEngineLeaseTTL(2*time.Hour))
 	ctx := context.Background()
 	_, _ = engine.Start(ctx, "hb-1", nil, BudgetLimit{})
 	_, _ = engine.Advance(ctx, "hb-1")
-	work, err := engine.Poll(ctx, WorkerSpec{ID: "worker", LeaseTTL: 30 * time.Millisecond})
+	work, err := engine.Poll(ctx, WorkerSpec{ID: "worker", LeaseTTL: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(15 * time.Millisecond)
+	before, err := store.Load(ctx, "hb-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialLease := before.ActiveTasks[work.Token.TaskID].LeaseUntil
+	if initialLease.IsZero() {
+		t.Fatal("claimed task has no lease")
+	}
 	if err := engine.Heartbeat(ctx, work.Token, map[string]any{"progress": 0.5}); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(20 * time.Millisecond)
+	after, err := store.Load(ctx, "hb-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewedLease := after.ActiveTasks[work.Token.TaskID].LeaseUntil
+	if !renewedLease.After(initialLease) {
+		t.Fatalf("heartbeat did not extend lease: initial=%v renewed=%v", initialLease, renewedLease)
+	}
 	if _, err := engine.Advance(ctx, "hb-1"); err != nil {
 		t.Fatal(err)
 	}
