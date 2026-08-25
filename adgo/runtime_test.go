@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Homiakus/axiom/internal/durabletime"
 )
 
 func TestParallelSuperStep(t *testing.T) {
@@ -244,8 +246,9 @@ func noopActivity(context.Context, ActivityRequest) (ActivityResult, error) {
 }
 
 func TestDurableTimerResumes(t *testing.T) {
+	const waitDuration = 5 * time.Second
 	plan, err := Compile(Definition{ID: "timer", Version: "1", Nodes: []Node{
-		{ID: "wait", Kind: NodeWait, Wait: &WaitSpec{Duration: 5 * time.Millisecond}, Next: []Transition{{To: "done"}}},
+		{ID: "wait", Kind: NodeWait, Wait: &WaitSpec{Duration: waitDuration}, Next: []Transition{{To: "done"}}},
 		{ID: "done", Kind: NodeActivity, Activity: "done", DependsOn: []string{"wait"}},
 	}})
 	if err != nil {
@@ -254,8 +257,20 @@ func TestDurableTimerResumes(t *testing.T) {
 	reg := NewRegistry()
 	reg.Activity("done", noopActivity)
 	store := NewMemoryStore()
-	rt, _ := NewRuntime(plan, store, reg)
-	_, _ = rt.Start(context.Background(), "timer-1", nil, BudgetLimit{})
+	start := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	clock := durabletime.NewManualClock(start)
+	rt, err := NewRuntime(plan, store, reg, WithClock(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := rt.Start(context.Background(), "timer-1", nil, BudgetLimit{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created.CreatedAt.Equal(start) {
+		t.Fatalf("created at %v, want injected clock time %v", created.CreatedAt, start)
+	}
+
 	e, err := rt.Run(context.Background(), "timer-1")
 	if err != nil {
 		t.Fatal(err)
@@ -263,13 +278,31 @@ func TestDurableTimerResumes(t *testing.T) {
 	if e.Status != StatusWaiting {
 		t.Fatalf("expected waiting, got %s", e.Status)
 	}
-	time.Sleep(7 * time.Millisecond)
+	deadline := start.Add(waitDuration)
+	if got := e.Nodes["wait"].NotBefore; !got.Equal(deadline) {
+		t.Fatalf("timer deadline %v, want %v", got, deadline)
+	}
+
+	if err := clock.Advance(waitDuration - time.Nanosecond); err != nil {
+		t.Fatal(err)
+	}
+	e, err = rt.Run(context.Background(), "timer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Status != StatusWaiting {
+		t.Fatalf("expected waiting before deadline, got %s", e.Status)
+	}
+
+	if err := clock.Advance(time.Nanosecond); err != nil {
+		t.Fatal(err)
+	}
 	e, err = rt.Run(context.Background(), "timer-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if e.Status != StatusCompleted {
-		t.Fatalf("expected completed, got %s", e.Status)
+		t.Fatalf("expected completed at deadline, got %s", e.Status)
 	}
 }
 
