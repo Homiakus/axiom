@@ -35,7 +35,7 @@ jobs:
       target_sha: ${{ steps.meta.outputs.target_sha }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
 
@@ -67,12 +67,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout exact release commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.resolve-metadata.outputs.target_sha }}
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.x'
           cache: true
@@ -116,12 +116,12 @@ jobs:
             archive: zip
     steps:
       - name: Checkout release commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.resolve-metadata.outputs.target_sha }}
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.x'
           cache: true
@@ -139,11 +139,11 @@ jobs:
           build_dir="dist/axiom_${VERSION}_${GOOS}_${GOARCH}"
           mkdir -p "$build_dir"
           ldflags="-s -w -X 'main.Version=${VERSION}' -X 'main.Commit=${COMMIT}'"
-          
+
           go build -ldflags="$ldflags" -o "${build_dir}/axiomgen${{ matrix.ext }}" ./cmd/axiomgen
           go build -ldflags="$ldflags" -o "${build_dir}/axiombench${{ matrix.ext }}" ./cmd/axiombench
           cp LICENSE README.md "$build_dir/"
-          
+
           mkdir -p release-assets
           archive_name="axiom_${VERSION}_${GOOS}_${GOARCH}"
           if [[ "${{ matrix.archive }}" == "zip" ]]; then
@@ -153,7 +153,7 @@ jobs:
           fi
 
       - name: Upload binary archive artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-binaries-${{ matrix.os }}-${{ matrix.arch }}
           path: release-assets/*
@@ -165,19 +165,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout release commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.resolve-metadata.outputs.target_sha }}
 
       - name: Download all binary artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: release-binaries-*
           path: all-assets/
           merge-multiple: true
 
       - name: Generate CycloneDX SBOM
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           format: 'cyclonedx-json'
           output-file: 'all-assets/axiom-sbom.cdx.json'
@@ -190,7 +190,7 @@ jobs:
           cat SHA256SUMS
 
       - name: Upload bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: complete-release-bundle
           path: all-assets/*
@@ -202,18 +202,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout release commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.resolve-metadata.outputs.target_sha }}
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -221,7 +221,7 @@ jobs:
 
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/axiomgen
           tags: |
@@ -230,7 +230,7 @@ jobs:
             type=sha,prefix=sha-
 
       - name: Build and push multi-arch image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -247,12 +247,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.resolve-metadata.outputs.target_sha }}
 
       - name: Download complete release bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: complete-release-bundle
           path: dist-release/
@@ -275,7 +275,7 @@ jobs:
           if [[ "$PRERELEASE" == "true" ]]; then
             flags+=(--prerelease)
           fi
-          
+
           # Create or edit release
           gh release create "$VERSION" dist-release/* "${flags[@]}" || \
           gh release upload "$VERSION" dist-release/* --clobber
