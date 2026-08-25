@@ -133,7 +133,11 @@ func (s *Store) PollTaskWithLease(ctx context.Context, executionID string, worke
 		leaseTTL = time.Minute
 	}
 	now := time.Now().UTC()
-	for len(s.pending[executionID]) > 0 {
+	// Scan only the queue snapshot that existed at method entry. A future retry
+	// is rotated to the tail, but must not be visited again in the same poll;
+	// otherwise a queue containing only future retries spins forever.
+	queueLen := len(s.pending[executionID])
+	for scanned := 0; scanned < queueLen; scanned++ {
 		taskID := s.pending[executionID][0]
 		s.pending[executionID] = s.pending[executionID][1:]
 		task := s.taskByID[taskID]
