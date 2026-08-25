@@ -344,19 +344,43 @@ func (s *FileStore) withExecutionLock(ctx context.Context, id string, fn func() 
 				_ = releaseFileLock(path, owner)
 				return err
 			}
-			if err := f.Close(); err != nil {
+			if err := syncDir(locksDir); err != nil {
+				_ = f.Close()
 				_ = releaseFileLock(path, owner)
 				return err
 			}
-			if err := syncDir(locksDir); err != nil {
-				_ = releaseFileLock(path, owner)
-				return err
+
+			heartbeat := startFileLockHeartbeat(f, path, owner, s.lockStaleAfter)
+			cleaned := false
+			cleanup := func() error {
+				heartbeatErr := heartbeat.Stop()
+				closeErr := f.Close()
+				releaseErr := releaseFileLock(path, owner)
+				syncErr := syncDir(locksDir)
+				if heartbeatErr != nil {
+					return heartbeatErr
+				}
+				if closeErr != nil {
+					return closeErr
+				}
+				if releaseErr != nil {
+					return releaseErr
+				}
+				return syncErr
 			}
 			defer func() {
-				_ = releaseFileLock(path, owner)
-				_ = syncDir(locksDir)
+				if !cleaned {
+					_ = cleanup()
+				}
 			}()
-			return fn()
+
+			fnErr := fn()
+			cleanupErr := cleanup()
+			cleaned = true
+			if fnErr != nil {
+				return fnErr
+			}
+			return cleanupErr
 		}
 		if !errors.Is(openErr, fs.ErrExist) {
 			return openErr
