@@ -417,7 +417,8 @@ Priority: **P1.**
 
 ## STORE-001 — Add a reusable ADGO Store conformance suite
 
-Status: **TODO/PARTIAL**
+Status: **DONE**
+
 
 Core Store already has a reusable contract harness. ADGO has many good targeted tests but no equivalent single backend contract.
 
