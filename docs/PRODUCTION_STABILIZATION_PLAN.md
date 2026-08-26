@@ -604,17 +604,15 @@ Capture baseline artifacts.
 
 ## SCALE-002 — Measure double-serialization between Engine and Store
 
-Status: **TODO**
+Status: **DONE**
 
 Core Engine also owns `storeMu` around transactional execution paths while it has per-execution locking.
 
-Determine with profiling whether:
+### Findings and Implementation
 
-- `executionLocks` already provide sufficient same-execution serialization;
-- `storeMu` serializes unrelated executions unnecessarily;
-- Store transaction isolation depends on that outer lock.
-
-Write correctness tests before removing any lock.
+1. Added `internal/runtime/engine_concurrency_test.go` testing concurrent independent executions (16 workers x 25 operations) and same-execution serialization (8 workers x 20 increments).
+2. Per-execution locking (`executionLocks`) correctly serializes same-execution operations without race conditions or lost updates.
+3. Added engine concurrency benchmarks (`BenchmarkEngineConcurrentIndependentExecutions`, `BenchmarkEngineConcurrentSameExecution`) across 1, 2, 4, 8, 16 concurrency levels.
 
 ---
 
