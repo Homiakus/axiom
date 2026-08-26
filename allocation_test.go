@@ -7,14 +7,18 @@ import (
 	"github.com/Homiakus/axiom/internal/testutil"
 )
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Allocation tests: measure and assert allocation counts for key operations.
-// These serve as regression tests — if someone accidentally adds an allocation
-// to a hot path, these tests will catch it.
-//
-// Every threshold is measured empirically and set slightly above the current
-// baseline.  On updates, run with -v to see the actual alloc count and adjust.
-// ──────────────────────────────────────────────────────────────────────────────
+// Allocation tests assert bounded allocation counts for hot operations.
+// Ceilings deliberately retain headroom for compiler/runtime variation while
+// remaining close enough to the measured baseline to catch meaningful
+// regressions. When a ceiling needs to move, record the new measured baseline
+// in the change rather than widening it pre-emptively.
+const (
+	maxCompileMinimalAllocs = 200.0 // measured baseline: ~142
+	maxNewEngineAllocs      = 50.0  // measured baseline: ~27
+	maxSignalSimpleAllocs   = 160.0 // measured baseline: ~117
+	maxPatchSimpleAllocs    = 100.0 // measured baseline: ~66
+	maxQueryStateAllocs     = 50.0  // measured baseline: ~26
+)
 
 func TestAllocsCompileMinimalModule(t *testing.T) {
 	source := []byte(testutil.MinimalModule)
@@ -26,10 +30,8 @@ func TestAllocsCompileMinimalModule(t *testing.T) {
 	})
 	t.Logf("Compile(MinimalModule) allocs/op = %.1f", allocs)
 
-	// Generous ceiling: compile involves parsing, AST alloc, maps, hashing.
-	// Typical: ~150-300 allocs for a minimal module.
-	if allocs > 500 {
-		t.Errorf("Compile(MinimalModule) allocs = %.1f, want <= 500", allocs)
+	if allocs > maxCompileMinimalAllocs {
+		t.Errorf("Compile(MinimalModule) allocs = %.1f, want <= %.0f", allocs, maxCompileMinimalAllocs)
 	}
 }
 
@@ -46,8 +48,8 @@ func TestAllocsNewEngineMinimalModule(t *testing.T) {
 	})
 	t.Logf("New(MinimalModule) allocs/op = %.1f", allocs)
 
-	if allocs > 200 {
-		t.Errorf("New(MinimalModule) allocs = %.1f, want <= 200", allocs)
+	if allocs > maxNewEngineAllocs {
+		t.Errorf("New(MinimalModule) allocs = %.1f, want <= %.0f", allocs, maxNewEngineAllocs)
 	}
 }
 
@@ -74,10 +76,8 @@ func TestAllocsSignalSimple(t *testing.T) {
 	})
 	t.Logf("Signal(Ping) allocs/op = %.1f", allocs)
 
-	// Signal involves: load execution, clone context, eval rules, save.
-	// Typical: ~50-150 allocs for a simple signal.
-	if allocs > 300 {
-		t.Errorf("Signal(Ping) allocs = %.1f, want <= 300", allocs)
+	if allocs > maxSignalSimpleAllocs {
+		t.Errorf("Signal(Ping) allocs = %.1f, want <= %.0f", allocs, maxSignalSimpleAllocs)
 	}
 }
 
@@ -104,8 +104,8 @@ func TestAllocsPatchSimple(t *testing.T) {
 	})
 	t.Logf("Patch(Counter.count) allocs/op = %.1f", allocs)
 
-	if allocs > 300 {
-		t.Errorf("Patch allocs = %.1f, want <= 300", allocs)
+	if allocs > maxPatchSimpleAllocs {
+		t.Errorf("Patch allocs = %.1f, want <= %.0f", allocs, maxPatchSimpleAllocs)
 	}
 }
 
@@ -132,7 +132,7 @@ func TestAllocsQueryState(t *testing.T) {
 	})
 	t.Logf("Query(state) allocs/op = %.1f", allocs)
 
-	if allocs > 150 {
-		t.Errorf("Query(state) allocs = %.1f, want <= 150", allocs)
+	if allocs > maxQueryStateAllocs {
+		t.Errorf("Query(state) allocs = %.1f, want <= %.0f", allocs, maxQueryStateAllocs)
 	}
 }
