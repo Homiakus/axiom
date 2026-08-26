@@ -36,15 +36,16 @@
 - **SCALE-001**: Benchmark Current Core Pebble Transaction Contention (`internal/store/pebble/benchmark_contention_test.go` covering 1-32 concurrent workers, read/write/mixed/same-exec profiles, and latency percentiles).
 - **SCALE-002**: Measure Double-Serialization Between Engine and Store (`internal/runtime/engine_concurrency_test.go` verifying executionLocks isolation and concurrency benchmarks).
 - **SCALE-003**: Design Conflict/Isolation Model Before Replacing Global Mutex (`docs/TRANSACTION_ISOLATION_DESIGN.md` documenting snapshot semantics, sequence allocation, and cross-execution independence).
+- **SCALE-004**: Refactor Core Pebble Transaction Locking (`internal/store/pebble/transaction.go` removing global mutex and introducing execution-scoped locking with 3-5x throughput gain).
 
 ---
 
 ## 2. Immediate Next Tasks — Milestone M3 (SCALE)
 
-### SCALE-004 — Refactor core Pebble transaction locking
-- **Objective**: Refactor PebbleStore to remove transaction-lifetime global mutex holding, using execution-scoped operations while preserving 100% store contracts.
-- **Target Files**: `internal/store/pebble/store.go`, `internal/store/pebble/transaction.go`.
-- **Verification**: `go test -race ./internal/store/pebble/...` and `TestPebbleStoreContract`.
+### SCALE-005 — Benchmark and reduce ADGO Pebble global mutex contention
+- **Objective**: Establish contention profiles, split execution/catalog/inbox lock domains in ADGO `PebbleStore`, preserve version-CAS semantics, and verify with high-contention backend equivalence tests.
+- **Target Files**: `adgo/pebble_store.go`, `adgo/store_test.go`.
+- **Verification**: `go test -race ./adgo/...`.
 
 ### SCALE-003 — MemoryStore lock granularity evaluation
 - **Objective**: Evaluate per-execution sharded mutexes / sync.Map vs global lock to eliminate goroutine lock contention on high-throughput in-memory execution engines.

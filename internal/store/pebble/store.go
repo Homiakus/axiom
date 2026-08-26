@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Homiakus/axiom/internal/runtime"
+	"github.com/Homiakus/axiom/internal/syncx"
 	pebbledb "github.com/cockroachdb/pebble"
 )
 
@@ -20,6 +21,7 @@ const (
 
 type Store struct {
 	mu         sync.Mutex
+	execLocks  *syncx.KeyedLocker
 	db         *pebbledb.DB
 	leaseTTL   time.Duration
 	owner      string
@@ -85,11 +87,12 @@ func Open(path string, opts ...Option) (*Store, error) {
 		return nil, err
 	}
 	store := &Store{
-		db:       db,
-		leaseTTL: defaultLeaseTTL,
-		owner:    fmt.Sprintf("worker-%d", time.Now().UnixNano()),
-		sync:     true,
-		codec:    codecJSON,
+		db:        db,
+		leaseTTL:  defaultLeaseTTL,
+		owner:     fmt.Sprintf("worker-%d", time.Now().UnixNano()),
+		sync:      true,
+		codec:     codecJSON,
+		execLocks: syncx.NewKeyedLocker(),
 	}
 	for _, opt := range opts {
 		opt(store)

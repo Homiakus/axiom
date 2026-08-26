@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Homiakus/axiom/internal/runtime"
@@ -11,46 +12,76 @@ import (
 )
 
 type txStore struct {
-	parent     *Store
-	batch      *pebbledb.Batch
-	closed     bool
-	executions map[string]*runtime.Execution
-	tasks      map[string]*runtime.ActivityTask
-	history    map[string][]runtime.HistoryEntry
-	historySeq map[string]int
+	mu          sync.Mutex
+	parent      *Store
+	batch       *pebbledb.Batch
+	closed      bool
+	executions  map[string]*runtime.Execution
+	tasks       map[string]*runtime.ActivityTask
+	history     map[string][]runtime.HistoryEntry
+	historySeq  map[string]int
+	unlockFuncs []func()
+	lockedExecs map[string]struct{}
 }
 
 func (s *Store) BeginTransaction(ctx context.Context) (runtime.StoreTransaction, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
 	return &txStore{
-		parent:     s,
-		batch:      s.db.NewBatch(),
-		executions: map[string]*runtime.Execution{},
-		tasks:      map[string]*runtime.ActivityTask{},
-		history:    map[string][]runtime.HistoryEntry{},
-		historySeq: map[string]int{},
+		parent:      s,
+		batch:       s.db.NewBatch(),
+		executions:  map[string]*runtime.Execution{},
+		tasks:       map[string]*runtime.ActivityTask{},
+		history:     map[string][]runtime.HistoryEntry{},
+		historySeq:  map[string]int{},
+		lockedExecs: map[string]struct{}{},
 	}, nil
 }
 
+func (tx *txStore) lockExecution(executionID string) {
+	if executionID == "" || tx.parent.execLocks == nil {
+		return
+	}
+	if tx.lockedExecs == nil {
+		tx.lockedExecs = make(map[string]struct{})
+	}
+	if _, ok := tx.lockedExecs[executionID]; ok {
+		return
+	}
+	unlock := tx.parent.execLocks.Lock(executionID)
+	tx.unlockFuncs = append(tx.unlockFuncs, unlock)
+	tx.lockedExecs[executionID] = struct{}{}
+}
+
+func (tx *txStore) cleanupLocks() {
+	for i := len(tx.unlockFuncs) - 1; i >= 0; i-- {
+		tx.unlockFuncs[i]()
+	}
+	tx.unlockFuncs = nil
+	tx.lockedExecs = nil
+}
+
 func (tx *txStore) Commit() error {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
 	if tx.closed {
 		return nil
 	}
 	tx.closed = true
-	defer tx.parent.mu.Unlock()
+	defer tx.cleanupLocks()
 	defer tx.batch.Close()
 	return tx.batch.Commit(tx.parent.writeOptions())
 }
 
 func (tx *txStore) Rollback() error {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
 	if tx.closed {
 		return nil
 	}
 	tx.closed = true
-	defer tx.parent.mu.Unlock()
+	defer tx.cleanupLocks()
 	return tx.batch.Close()
 }
 
@@ -58,6 +89,9 @@ func (tx *txStore) CreateExecution(ctx context.Context, execution *runtime.Execu
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	tx.lockExecution(execution.ID)
 	if _, ok := tx.executions[execution.ID]; ok {
 		return fmt.Errorf("execution already exists: %s", execution.ID)
 	}
@@ -75,6 +109,9 @@ func (tx *txStore) GetExecution(ctx context.Context, id string) (*runtime.Execut
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	tx.lockExecution(id)
 	if execution, ok := tx.executions[id]; ok {
 		return cloneExecution(execution), nil
 	}
@@ -89,6 +126,9 @@ func (tx *txStore) SaveExecution(ctx context.Context, execution *runtime.Executi
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	tx.lockExecution(execution.ID)
 	if _, ok := tx.executions[execution.ID]; !ok {
 		if exists, err := tx.parent.exists(execKey(execution.ID)); err != nil {
 			return err
@@ -107,7 +147,10 @@ func (tx *txStore) AppendHistory(ctx context.Context, executionID string, entryT
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	seq, err := tx.nextHistorySeq(executionID)
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	tx.lockExecution(executionID)
+	seq, err := tx.nextHistorySeqLocked(executionID)
 	if err != nil {
 		return err
 	}
@@ -137,6 +180,9 @@ func (tx *txStore) ListHistory(ctx context.Context, executionID string) ([]runti
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	tx.lockExecution(executionID)
 	history, err := tx.parent.listHistoryLocked(executionID)
 	if err != nil {
 		return nil, err
@@ -151,6 +197,9 @@ func (tx *txStore) EnqueueTask(ctx context.Context, task *runtime.ActivityTask) 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	tx.lockExecution(task.ExecutionID)
 	next := cloneTask(task)
 	tx.tasks[next.ID] = next
 	return tx.parent.writeTask(tx.batch, next)
@@ -160,6 +209,9 @@ func (tx *txStore) ListTasks(ctx context.Context, executionID string) ([]*runtim
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	tx.lockExecution(executionID)
 	return tx.listTasksMerged(executionID)
 }
 
@@ -197,6 +249,13 @@ func (tx *txStore) PollTaskWithLease(ctx context.Context, executionID string, wo
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	tx.lockExecution(executionID)
+	return tx.pollTaskWithLeaseLocked(ctx, executionID, workerID, leaseTTL)
+}
+
+func (tx *txStore) pollTaskWithLeaseLocked(ctx context.Context, executionID string, workerID string, leaseTTL time.Duration) (*runtime.ActivityTask, error) {
 	if workerID == "" {
 		workerID = tx.parent.owner
 	}
@@ -227,10 +286,13 @@ func (tx *txStore) HeartbeatTask(ctx context.Context, taskID string, workerID st
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
 	task, err := tx.getTaskLocked(taskID)
 	if err != nil {
 		return err
 	}
+	tx.lockExecution(task.ExecutionID)
 	if workerID != "" && task.LockedBy != workerID {
 		return fmt.Errorf("task %s locked by %s", taskID, task.LockedBy)
 	}
@@ -247,11 +309,14 @@ func (tx *txStore) RecoverExpiredLeases(ctx context.Context, executionID string,
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	tx.lockExecution(executionID)
 	if leaseTTL <= 0 {
 		leaseTTL = tx.parent.leaseTTL
 	}
 	now := time.Now().UTC()
-	tasks, err := tx.ListTasks(ctx, executionID)
+	tasks, err := tx.listTasksMerged(executionID)
 	if err != nil {
 		return 0, err
 	}
@@ -287,10 +352,13 @@ func (tx *txStore) CompleteTask(ctx context.Context, taskID string, result map[s
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
 	task, err := tx.getTaskLocked(taskID)
 	if err != nil {
 		return err
 	}
+	tx.lockExecution(task.ExecutionID)
 	task.Status = runtime.TaskCompleted
 	task.Result = cloneAnyMap(result)
 	task.Error = ""
@@ -305,10 +373,13 @@ func (tx *txStore) FailTask(ctx context.Context, taskID string, errorMessage str
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
 	task, err := tx.getTaskLocked(taskID)
 	if err != nil {
 		return err
 	}
+	tx.lockExecution(task.ExecutionID)
 	task.Status = runtime.TaskFailed
 	task.Error = errorMessage
 	task.LockedBy = ""
@@ -322,6 +393,9 @@ func (tx *txStore) UpdateTask(ctx context.Context, task *runtime.ActivityTask) e
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	tx.lockExecution(task.ExecutionID)
 	if _, ok := tx.tasks[task.ID]; !ok {
 		if exists, err := tx.parent.exists(taskKey(task.ExecutionID, task.ID)); err != nil {
 			return err
@@ -338,6 +412,9 @@ func (tx *txStore) FindTask(ctx context.Context, executionID string, ruleName st
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	tx.lockExecution(executionID)
 	for _, task := range tx.tasks {
 		if task.ExecutionID == executionID && task.RuleName == ruleName && task.ActivityName == activityName && task.IdempotencyKey == idempotencyKey {
 			return cloneTask(task), nil
@@ -350,6 +427,9 @@ func (tx *txStore) NextTaskSeq(ctx context.Context, executionID string) (int, er
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	tx.lockExecution(executionID)
 	next, err := tx.parent.nextTaskSeqLocked(executionID)
 	if err != nil {
 		return 0, err
@@ -389,7 +469,7 @@ func (tx *txStore) nextPendingTask(executionID string, now time.Time) (*runtime.
 	return nil, nil
 }
 
-func (tx *txStore) nextHistorySeq(executionID string) (int, error) {
+func (tx *txStore) nextHistorySeqLocked(executionID string) (int, error) {
 	if seq, ok := tx.historySeq[executionID]; ok {
 		return seq + 1, nil
 	}
