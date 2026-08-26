@@ -210,7 +210,7 @@ func (e *Engine) Advance(ctx context.Context, executionID string) (AdvanceResult
 		cur, _ = e.store.Load(ctx, executionID)
 		return advanceResult(cur, true, nil, nil), nil
 	}
-	if err := checkBudget(cur, time.Now().UTC()); err != nil {
+	if err := checkBudget(cur, e.now()); err != nil {
 		if err := e.runtime.compensate(ctx, cur, StatusFailed, err.Error()); err != nil {
 			return AdvanceResult{}, err
 		}
@@ -276,7 +276,7 @@ func (e *Engine) Advance(ctx context.Context, executionID string) (AdvanceResult
 		}
 		return advanceResult(cur, true, nil, nil), nil
 	}
-	if len(waiting) > 0 || hasPendingTime(cur) {
+	if len(waiting) > 0 || hasPendingTimeAt(cur, e.now()) {
 		if cur.Status != StatusWaiting && cur.Status != StatusHuman {
 			cur, err = e.mutate(ctx, executionID, func(x *Execution) error {
 				x.Status = StatusWaiting
@@ -321,7 +321,7 @@ func advanceResult(execution *Execution, progressed bool, queued, waiting []stri
 }
 
 func (e *Engine) readyCandidates(ctx context.Context, execution *Execution) ([]Candidate, []string, error) {
-	now := time.Now().UTC()
+	now := e.now()
 	out := make([]Candidate, 0)
 	waiting := make([]string, 0)
 	ids := make([]string, 0, len(e.plan.Nodes))
@@ -456,7 +456,7 @@ func (e *Engine) remainingConcurrency(execution *Execution) int {
 var errAdvanceStale = errors.New("adgo: advance state changed concurrently")
 
 func (e *Engine) enqueue(ctx context.Context, executionID string, selected []Candidate) ([]string, error) {
-	now := time.Now().UTC()
+	now := e.now()
 	queued := make([]string, 0, len(selected))
 	_, err := e.mutate(ctx, executionID, func(x *Execution) error {
 		for _, candidate := range selected {
@@ -536,7 +536,7 @@ func (e *Engine) Poll(ctx context.Context, spec WorkerSpec) (*WorkItem, error) {
 		score     float64
 	}
 	list := make([]pending, 0)
-	now := time.Now().UTC()
+	now := e.now()
 	for _, id := range ids {
 		execution, err := e.store.Load(ctx, id)
 		if err != nil {
@@ -590,7 +590,7 @@ func (e *Engine) Poll(ctx context.Context, spec WorkerSpec) (*WorkItem, error) {
 }
 
 func (e *Engine) claim(ctx context.Context, executionID, taskID string, spec WorkerSpec, score float64) (*WorkItem, error) {
-	now := time.Now().UTC()
+	now := e.now()
 	var claimed TaskRuntime
 	var node Node
 	result, err := e.mutate(ctx, executionID, func(x *Execution) error {
@@ -639,7 +639,7 @@ func (e *Engine) claim(ctx context.Context, executionID, taskID string, spec Wor
 }
 
 func (e *Engine) Heartbeat(ctx context.Context, token WorkToken, details map[string]any) error {
-	now := time.Now().UTC()
+	now := e.now()
 	_, err := e.mutate(ctx, token.ExecutionID, func(x *Execution) error {
 		task, err := validateClaim(x, token, now)
 		if err != nil {
@@ -656,7 +656,7 @@ func (e *Engine) Heartbeat(ctx context.Context, token WorkToken, details map[str
 }
 
 func (e *Engine) Complete(ctx context.Context, token WorkToken, result ActivityResult, duration time.Duration) (*Execution, error) {
-	now := time.Now().UTC()
+	now := e.now()
 	var task TaskRuntime
 	var node Node
 	next, err := e.mutate(ctx, token.ExecutionID, func(x *Execution) error {
@@ -741,7 +741,7 @@ func (e *Engine) Fail(ctx context.Context, token WorkToken, activityErr error, d
 	if activityErr == nil {
 		activityErr = errors.New("activity failed")
 	}
-	now := time.Now().UTC()
+	now := e.now()
 	cur, err := e.store.Load(ctx, token.ExecutionID)
 	if err != nil {
 		return nil, err
@@ -817,7 +817,7 @@ func (e *Engine) Fail(ctx context.Context, token WorkToken, activityErr error, d
 			if planErr != nil {
 				repair = RepairPlan{GateNode: node.ID, Roots: []string{node.ID}, AffectedNodes: []string{node.ID}, Reason: "activity-local repair", ExpectedCost: node.EstimatedCost, Risk: node.Risk}
 			}
-			if applyErr := ApplyRepair(e.plan, x, repair); applyErr != nil {
+			if applyErr := ApplyRepairWithClock(e.plan, x, repair, e.now()); applyErr != nil {
 				x.Status = StatusHuman
 				x.Nodes[node.ID].Status = NodeWaiting
 				x.WaitingFor[node.ID] = "HumanRepairDecision"

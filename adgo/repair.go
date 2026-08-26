@@ -102,7 +102,11 @@ func (DependencyRepairPlanner) PlanRepair(p *Plan, e *Execution, gateID string, 
 }
 
 func ApplyRepair(p *Plan, e *Execution, r RepairPlan) error {
-	now := time.Now().UTC()
+	return ApplyRepairWithClock(p, e, r, time.Now().UTC())
+}
+
+func ApplyRepairWithClock(p *Plan, e *Execution, r RepairPlan, now time.Time) error {
+
 	for _, root := range r.Roots {
 		n := p.Nodes[root]
 		b := n.Loop

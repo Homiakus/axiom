@@ -380,7 +380,8 @@ A ManualClock must be able to advance a durable retry from scheduled to runnable
 
 ## TIME-004 — Convert remaining durable decision paths
 
-Status: **TODO**
+Status: **DONE**
+
 
 After TIME-001 classification, migrate only semantic calls, including where applicable:
 

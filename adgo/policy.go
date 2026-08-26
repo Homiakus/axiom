@@ -92,6 +92,7 @@ func (p *PolicyEngine) Poll(ctx context.Context, spec WorkerSpec) (*WorkItem, er
 		if err != nil {
 			return nil, err
 		}
+		now := p.Engine.now()
 		decision, policyErr := p.Policy.Authorize(ctx, PolicyRequest{
 			ExecutionID: execution.ID,
 			PlanID:      execution.PlanID,
@@ -106,7 +107,7 @@ func (p *PolicyEngine) Poll(ctx context.Context, spec WorkerSpec) (*WorkItem, er
 			BudgetUsage: execution.BudgetUsage,
 			BudgetLimit: execution.BudgetLimit,
 			Quality:     cloneQuality(execution.Quality),
-			At:          time.Now().UTC(),
+			At:          now,
 		})
 		if policyErr != nil {
 			if p.Options.FailClosed {
@@ -131,7 +132,7 @@ func (p *PolicyEngine) Poll(ctx context.Context, spec WorkerSpec) (*WorkItem, er
 			if decision.RetryAfter <= 0 {
 				decision.RetryAfter = p.Options.PolicyErrorRetry
 			}
-			if err := p.releaseClaim(ctx, item, NodePending, decision, time.Now().UTC().Add(decision.RetryAfter), "policy_delayed"); err != nil {
+			if err := p.releaseClaim(ctx, item, NodePending, decision, p.Engine.now().Add(decision.RetryAfter), "policy_delayed"); err != nil {
 				if errors.Is(err, ErrStaleTask) {
 					continue
 				}
@@ -161,7 +162,7 @@ func (p *PolicyEngine) Poll(ctx context.Context, spec WorkerSpec) (*WorkItem, er
 func (p *PolicyEngine) auditDecision(ctx context.Context, item *WorkItem, decision PolicyDecision, release bool) error {
 	_, err := p.Engine.mutate(ctx, item.Token.ExecutionID, func(execution *Execution) error {
 		if release {
-			if _, err := validateClaim(execution, item.Token, time.Now().UTC()); err != nil {
+			if _, err := validateClaim(execution, item.Token, p.Engine.now()); err != nil {
 				return err
 			}
 		}
@@ -177,7 +178,7 @@ func (p *PolicyEngine) auditDecision(ctx context.Context, item *WorkItem, decisi
 
 func (p *PolicyEngine) releaseClaim(ctx context.Context, item *WorkItem, status NodeStatus, decision PolicyDecision, notBefore time.Time, historyKind string) error {
 	_, err := p.Engine.mutate(ctx, item.Token.ExecutionID, func(execution *Execution) error {
-		if _, err := validateClaim(execution, item.Token, time.Now().UTC()); err != nil {
+		if _, err := validateClaim(execution, item.Token, p.Engine.now()); err != nil {
 			return err
 		}
 		delete(execution.ActiveTasks, item.Token.TaskID)
@@ -204,7 +205,7 @@ func (p *PolicyEngine) releaseClaim(ctx context.Context, item *WorkItem, status 
 
 func (p *PolicyEngine) denyClaim(ctx context.Context, item *WorkItem, decision PolicyDecision) error {
 	_, err := p.Engine.mutate(ctx, item.Token.ExecutionID, func(execution *Execution) error {
-		if _, err := validateClaim(execution, item.Token, time.Now().UTC()); err != nil {
+		if _, err := validateClaim(execution, item.Token, p.Engine.now()); err != nil {
 			return err
 		}
 		delete(execution.ActiveTasks, item.Token.TaskID)
@@ -213,7 +214,7 @@ func (p *PolicyEngine) denyClaim(ctx context.Context, item *WorkItem, decision P
 		if hasOutcomeTransition(p.Engine.plan, item.Node.ID, OutcomeRejected) {
 			runtime.Status = NodeCompleted
 			runtime.Outcome = OutcomeRejected
-			runtime.CompletedAt = time.Now().UTC()
+			runtime.CompletedAt = p.Engine.now()
 			activateNext(p.Engine.plan, execution, item.Node.ID, OutcomeRejected)
 			execution.Status = StatusRunning
 		} else {
@@ -233,6 +234,7 @@ func (p *PolicyEngine) denyClaim(ctx context.Context, item *WorkItem, decision P
 	})
 	return err
 }
+
 
 func (p *PolicyEngine) Resolve(ctx context.Context, executionID, nodeID string, allow bool, actor, reason string, patch map[string]any) (*Execution, error) {
 	return p.Engine.mutate(ctx, executionID, func(execution *Execution) error {

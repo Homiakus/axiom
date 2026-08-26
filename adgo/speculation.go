@@ -7,7 +7,10 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/Homiakus/axiom/internal/durabletime"
 )
+
 
 type ActivityVariant struct {
 	Name    string
@@ -21,6 +24,7 @@ type SpeculationPolicy struct {
 	HedgeDelay  time.Duration
 	MaxParallel int
 	MinQuality  float64
+	Clock       Clock
 }
 
 type variantResult struct {
@@ -28,6 +32,19 @@ type variantResult struct {
 	result   ActivityResult
 	err      error
 	duration time.Duration
+}
+
+func newSpeculativeTimer(clock Clock, d time.Duration) Timer {
+	if clock == nil {
+		return durabletime.SystemClock{}.NewTimer(d)
+	}
+	if tc, ok := clock.(durabletime.Clock); ok {
+		return tc.NewTimer(d)
+	}
+	if tc, ok := clock.(interface{ NewTimer(time.Duration) Timer }); ok {
+		return tc.NewTimer(d)
+	}
+	return durabletime.SystemClock{}.NewTimer(d)
 }
 
 // NewHedgedActivity starts the preferred variant first and progressively opens
@@ -64,10 +81,21 @@ func NewHedgedActivity(variants []ActivityVariant, policy SpeculationPolicy) (Ac
 		}
 		launch(variants[0])
 		next := 1
-		timer := time.NewTimer(policy.HedgeDelay)
-		defer timer.Stop()
+		timer := newSpeculativeTimer(policy.Clock, policy.HedgeDelay)
+		defer func() {
+			if timer != nil {
+				timer.Stop()
+			}
+		}()
 		all := make([]variantResult, 0, policy.MaxParallel)
 		winner := -1
+
+		resetHedgeTimer := func() {
+			if timer != nil {
+				timer.Stop()
+			}
+			timer = newSpeculativeTimer(policy.Clock, policy.HedgeDelay)
+		}
 
 		for completed < launched || (winner < 0 && next < policy.MaxParallel) {
 			select {
@@ -84,13 +112,13 @@ func NewHedgedActivity(variants []ActivityVariant, policy SpeculationPolicy) (Ac
 				if winner < 0 && completed == launched && next < policy.MaxParallel {
 					launch(variants[next])
 					next++
-					resetTimer(timer, policy.HedgeDelay)
+					resetHedgeTimer()
 				}
-			case <-timer.C:
+			case <-timer.C():
 				if winner < 0 && next < policy.MaxParallel {
 					launch(variants[next])
 					next++
-					resetTimer(timer, policy.HedgeDelay)
+					resetHedgeTimer()
 				}
 			}
 			if winner >= 0 && completed == launched {
@@ -103,6 +131,7 @@ func NewHedgedActivity(variants []ActivityVariant, policy SpeculationPolicy) (Ac
 		return chooseSpeculativeResult(all, policy.MinQuality)
 	}, nil
 }
+
 
 // NewEnsembleActivity executes all variants up to MaxParallel and chooses the
 // highest-quality successful result with deterministic name tie-breaking. Budget
@@ -211,12 +240,3 @@ func chooseSpeculativeResult(all []variantResult, minQuality float64) (ActivityR
 	return winner, nil
 }
 
-func resetTimer(timer *time.Timer, duration time.Duration) {
-	if !timer.Stop() {
-		select {
-		case <-timer.C:
-		default:
-		}
-	}
-	timer.Reset(duration)
-}

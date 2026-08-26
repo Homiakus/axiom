@@ -30,6 +30,7 @@ type RetentionPolicy struct {
 	Statuses    []ExecutionStatus
 	Limit       int
 	Archive     ArchiveFunc
+	Clock       Clock
 }
 
 type RetentionResult struct {
@@ -68,6 +69,10 @@ func CollectExecutions(ctx context.Context, store Store, policy RetentionPolicy)
 		}
 	}
 	now := time.Now().UTC()
+	if policy.Clock != nil {
+		now = policy.Clock.Now().UTC()
+	}
+
 	result := RetentionResult{}
 	for _, id := range ids {
 		if policy.Limit > 0 && len(result.Deleted) >= policy.Limit {

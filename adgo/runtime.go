@@ -206,7 +206,7 @@ func (r *Runtime) Step(ctx context.Context, executionID string) (StepResult, err
 		e, _ = r.store.Load(ctx, executionID)
 		return StepResult{ExecutionID: executionID, Status: e.Status, Progressed: true}, nil
 	}
-	if err := checkBudget(e, time.Now().UTC()); err != nil {
+	if err := checkBudget(e, r.now()); err != nil {
 		if err := r.compensate(ctx, e, StatusFailed, err.Error()); err != nil {
 			return StepResult{}, err
 		}
@@ -256,7 +256,7 @@ func (r *Runtime) Step(ctx context.Context, executionID string) (StepResult, err
 		}
 		return StepResult{ExecutionID: executionID, Status: StatusCompleted, Progressed: true}, nil
 	}
-	if len(waiting) > 0 || hasPendingTime(e) {
+	if len(waiting) > 0 || hasPendingTimeAt(e, r.now()) {
 		if e.Status != StatusWaiting && e.Status != StatusHuman {
 			_, err = r.commit(ctx, e, func(x *Execution) error {
 				x.Status = StatusWaiting
@@ -345,7 +345,7 @@ func (r *Runtime) ingest(ctx context.Context, e *Execution) (bool, error) {
 						} else if expected == "" || expected == ev.Type {
 							rt.Status = NodeCompleted
 							rt.Outcome = OutcomeCompleted
-							rt.CompletedAt = time.Now().UTC()
+							rt.CompletedAt = r.now()
 							delete(x.WaitingFor, target)
 							if r.plan.Nodes[target].Kind == NodeHuman {
 								x.Metrics.HumanInterventions++
@@ -375,7 +375,7 @@ func (r *Runtime) ingest(ctx context.Context, e *Execution) (bool, error) {
 }
 
 func (r *Runtime) recoverExpired(ctx context.Context, e *Execution) (bool, error) {
-	now := time.Now().UTC()
+	now := r.now()
 	expired := []string{}
 	for id, t := range e.ActiveTasks {
 		if t.Status == TaskRunning && !t.LeaseUntil.IsZero() && !t.LeaseUntil.After(now) {
@@ -458,7 +458,7 @@ func (r *Runtime) runInternal(ctx context.Context, e *Execution) (bool, error) {
 					if err != nil {
 						return err
 					}
-					if err := ApplyRepair(r.plan, x, rp); err != nil {
+					if err := ApplyRepairWithClock(r.plan, x, rp, r.now()); err != nil {
 						x.Status = StatusHuman
 						x.WaitingFor[id] = "HumanRepairDecision"
 						x.Nodes[id].Status = NodeWaiting
@@ -538,7 +538,7 @@ func (r *Runtime) readyInternal(e *Execution) []string {
 }
 
 func (r *Runtime) readyCandidates(ctx context.Context, e *Execution) ([]Candidate, []string, error) {
-	now := time.Now().UTC()
+	now := r.now()
 	var out []Candidate
 	waiting := []string{}
 	for id, n := range r.plan.Nodes {
@@ -596,7 +596,8 @@ func (r *Runtime) readyCandidates(ctx context.Context, e *Execution) ([]Candidat
 }
 
 func (r *Runtime) executeCandidates(ctx context.Context, e *Execution, selected []Candidate) ([]string, error) {
-	now := time.Now().UTC()
+	now := r.now()
+
 	list := make([]scheduledActivity, 0, len(selected))
 	for _, c := range selected {
 		n := c.Node
@@ -703,7 +704,7 @@ func (r *Runtime) applyActivityResultImpl(ctx context.Context, e *Execution, rr 
 			if rt.Outcome == "" {
 				rt.Outcome = OutcomeCompleted
 			}
-			rt.CompletedAt = time.Now().UTC()
+			rt.CompletedAt = r.now()
 			rt.LastError = ""
 			rt.LastFailure = ""
 			rt.Signature = rr.res.Signature
@@ -766,14 +767,14 @@ func (r *Runtime) applyActivityResultImpl(ctx context.Context, e *Execution, rr 
 		if delay <= 0 {
 			delay = backoff(policy, attempt, e.ID+node.ID)
 		}
-		if !rt.FirstAttemptAt.IsZero() && policy.MaxRetryDuration > 0 && time.Since(rt.FirstAttemptAt)+delay > policy.MaxRetryDuration {
+		if !rt.FirstAttemptAt.IsZero() && policy.MaxRetryDuration > 0 && r.now().Sub(rt.FirstAttemptAt)+delay > policy.MaxRetryDuration {
 			canRetry = false
 		}
 		if canRetry {
 			return r.commit(ctx, e, func(x *Execution) error {
 				nrt := x.Nodes[node.ID]
 				nrt.Status = NodePending
-				nrt.NotBefore = time.Now().UTC().Add(delay)
+				nrt.NotBefore = r.now().Add(delay)
 				nrt.LastError = rr.err.Error()
 				nrt.LastFailure = class
 				delete(x.ActiveTasks, task.ID)
@@ -782,7 +783,7 @@ func (r *Runtime) applyActivityResultImpl(ctx context.Context, e *Execution, rr 
 					x.Metrics.Timeouts++
 				}
 				if class == FailureRateLimit {
-					x.ThrottleUntil[task.Activity] = time.Now().UTC().Add(delay)
+					x.ThrottleUntil[task.Activity] = r.now().Add(delay)
 				}
 				appendHistory(x, "activity_retry", node.ID, "retry scheduled", map[string]any{"class": class, "after": delay.String(), "attempt": attempt})
 				return nil
@@ -799,7 +800,7 @@ func (r *Runtime) applyActivityResultImpl(ctx context.Context, e *Execution, rr 
 			if err != nil {
 				rp = RepairPlan{GateNode: node.ID, Roots: []string{node.ID}, AffectedNodes: []string{node.ID}, Reason: "activity-local repair", ExpectedCost: node.EstimatedCost, Risk: node.Risk}
 			}
-			if err := ApplyRepair(r.plan, x, rp); err != nil {
+			if err := ApplyRepairWithClock(r.plan, x, rp, r.now()); err != nil {
 				x.Status = StatusHuman
 				x.Nodes[node.ID].Status = NodeWaiting
 				x.WaitingFor[node.ID] = "HumanRepairDecision"
@@ -1074,13 +1075,17 @@ func goalsSatisfied(p *Plan, e *Execution) bool {
 	return active > 0 && unfinished == 0 && len(e.ActiveTasks) == 0
 }
 func hasPendingTime(e *Execution) bool {
+	return hasPendingTimeAt(e, time.Now().UTC())
+}
+func hasPendingTimeAt(e *Execution, now time.Time) bool {
 	for _, rt := range e.Nodes {
-		if rt.Status == NodeWaiting || (!rt.NotBefore.IsZero() && rt.NotBefore.After(time.Now().UTC())) {
+		if rt.Status == NodeWaiting || (!rt.NotBefore.IsZero() && rt.NotBefore.After(now)) {
 			return true
 		}
 	}
 	return false
 }
+
 func deadlockReason(p *Plan, e *Execution) string {
 	parts := []string{}
 	for id, rt := range e.Nodes {
