@@ -32,14 +32,17 @@
 - **STORE-005**: Golden Compatibility Fixtures (`testdata/compat/*`, `internal/durableserial/compat_test.go` verifying backward compatibility and error handling).
 - **STORE-006**: Expanded FileStore & Admission Multi-Process Subprocess Tests (`adgo/file_lock_subprocess_test.go` verifying competing committers, process death, stale recovery, and takeover isolation).
 
+#### Milestone M3 — Scaling & Contention Reduction (IN PROGRESS)
+- **SCALE-001**: Benchmark Current Core Pebble Transaction Contention (`internal/store/pebble/benchmark_contention_test.go` covering 1-32 concurrent workers, read/write/mixed/same-exec profiles, and latency percentiles).
+
 ---
 
 ## 2. Immediate Next Tasks — Milestone M3 (SCALE)
 
-### SCALE-001 — Benchmark current core Pebble transaction contention
-- **Objective**: Create micro-benchmarks measuring Pebble transaction contention under 1, 4, 16, 64 concurrent workers writing tasks/executions.
-- **Target Files**: `internal/store/pebble/benchmark_test.go`.
-- **Verification**: `go test -bench=. -benchmem ./internal/store/pebble/...`.
+### SCALE-002 — Measure double-serialization between Engine and Store
+- **Objective**: Determine whether Engine `storeMu` plus Pebble `s.mu` creates redundant contention, and write tests/profiles for execution-level isolation.
+- **Target Files**: `internal/runtime/engine_concurrency_test.go`, `internal/runtime/transaction.go`.
+- **Verification**: `go test -race ./internal/runtime/...`.
 
 ### SCALE-002 — Evaluate granular write paths for high-frequency task updates
 - **Objective**: Optimize ActivityTask lease renewals and heartbeats so they avoid full Execution rewriting where appropriate.

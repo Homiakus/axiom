@@ -573,11 +573,19 @@ Priority: **P1/P2.**
 
 ## SCALE-001 — Benchmark current core Pebble transaction contention
 
-Status: **TODO**
+Status: **DONE**
 
 ### Evidence
 
 `internal/store/pebble.Store.BeginTransaction` takes `s.mu` and keeps it until transaction `Commit/Rollback`. This serializes unrelated executions.
+
+### Implemented
+
+Added `internal/store/pebble/benchmark_contention_test.go` with benchmarks covering:
+- 1, 2, 4, 8, 16, 32 concurrent workers (write-heavy, read-heavy, mixed, same-execution);
+- direct non-transactional baseline comparison;
+- commit latency distribution metrics (p50, p95, p99 percentiles);
+- memory allocation profiles (`-benchmem`).
 
 ### Before changing code
 
