@@ -1,0 +1,19 @@
+{
+  "ID": "exec-compat-001",
+  "Domain": "orders",
+  "Status": "running",
+  "Version": 3,
+  "Context": {
+    "Order": {
+      "id": "ord-123",
+      "status": "pending",
+      "amount": 99.5
+    }
+  },
+  "Computed": {
+    "eligibleForDiscount": true
+  },
+  "Facts": {},
+  "CreatedAt": "2026-08-26T00:00:00Z",
+  "UpdatedAt": "2026-08-26T00:05:00Z"
+}

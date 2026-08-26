@@ -1,0 +1,9 @@
+{
+  "id": "sched-nightly-billing",
+  "planDigest": "sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069",
+  "every": 86400000000000,
+  "startAt": "2026-08-26T00:00:00Z",
+  "nextAt": "2026-08-27T00:00:00Z",
+  "enabled": true,
+  "version": 1
+}

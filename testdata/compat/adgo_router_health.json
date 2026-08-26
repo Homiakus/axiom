@@ -1,0 +1,8 @@
+{
+  "workerId": "worker-eu-west-1",
+  "successCount": 150,
+  "failureCount": 2,
+  "consecutiveFailures": 0,
+  "lastLatencyMs": 45,
+  "cooldownUntil": "2026-08-26T00:00:00Z"
+}

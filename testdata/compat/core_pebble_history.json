@@ -1,0 +1,9 @@
+{
+  "Seq": 1,
+  "Type": "ExecutionStarted",
+  "Payload": {
+    "domain": "orders",
+    "initiator": "user-42"
+  },
+  "CreatedAt": "2026-08-26T00:00:00Z"
+}

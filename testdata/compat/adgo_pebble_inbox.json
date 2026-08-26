@@ -1,0 +1,9 @@
+{
+  "id": "ev-webhook-456",
+  "type": "CreditReportReady",
+  "data": {
+    "score": 750,
+    "agency": "Equifax"
+  },
+  "at": "2026-08-26T00:02:30Z"
+}

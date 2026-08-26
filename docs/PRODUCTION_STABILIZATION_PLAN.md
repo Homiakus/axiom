@@ -506,7 +506,7 @@ Do not reuse the core marker key if the stores have different schemas.
 
 ## STORE-004 — Inventory every durable serialized surface
 
-Status: **TODO**
+Status: **DONE**
 
 Create a machine-reviewable inventory covering at least:
 
@@ -533,7 +533,7 @@ For each surface record:
 
 ## STORE-005 — Add golden compatibility fixtures
 
-Status: **TODO**
+Status: **DONE**
 
 Create `testdata/compat/` (or package-specific equivalents) containing previous supported serialized records.
 

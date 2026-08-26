@@ -1,0 +1,6 @@
+{
+  "EffectName": "NotifyCustomer",
+  "PayloadJSON": "{\"email\":\"alice@example.com\",\"message\":\"Order placed\"}",
+  "CreatedAt": "2026-08-26T00:00:00Z",
+  "DeduplicationID": "outbox-effect-dedup-001"
+}

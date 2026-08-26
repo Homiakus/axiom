@@ -1,0 +1,12 @@
+{
+  "retentionPolicy": {
+    "retainVersions": 100,
+    "maxAgeDays": 30
+  },
+  "repairPlan": {
+    "executionId": "adgo-repair-001",
+    "detectedVersion": 5,
+    "expectedVersion": 6,
+    "action": "reconcile_latest_pointer"
+  }
+}

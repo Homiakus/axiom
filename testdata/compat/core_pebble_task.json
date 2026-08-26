@@ -1,0 +1,21 @@
+{
+  "ID": "task-compat-001",
+  "ExecutionID": "exec-compat-001",
+  "RuleName": "ChargePayment",
+  "ActivityName": "ProcessPayment",
+  "Input": {
+    "amount": 99.5,
+    "currency": "USD"
+  },
+  "IdempotencyKey": "idem-key-123",
+  "Status": "pending",
+  "Attempt": 1,
+  "MaxAttempts": 3,
+  "LockedBy": "worker-1",
+  "LockedUntil": "2026-08-26T00:01:00Z",
+  "NextAttemptAt": "2026-08-26T00:00:30Z",
+  "Result": {},
+  "Error": "",
+  "CreatedAt": "2026-08-26T00:00:00Z",
+  "UpdatedAt": "2026-08-26T00:00:00Z"
+}

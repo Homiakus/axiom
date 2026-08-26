@@ -1,0 +1,8 @@
+{
+  "id": "ev-signal-001",
+  "type": "PaymentApproved",
+  "data": {
+    "transactionId": "tx-987"
+  },
+  "at": "2026-08-26T00:01:00Z"
+}

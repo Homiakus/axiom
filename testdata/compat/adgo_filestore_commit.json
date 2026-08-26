@@ -1,0 +1,19 @@
+{
+  "id": "adgo-exec-001",
+  "planId": "order-fulfillment",
+  "planVersion": "1.0.0",
+  "planDigest": "sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069",
+  "version": 5,
+  "status": "running",
+  "data": {
+    "orderId": "ORD-999",
+    "customer": "Alice"
+  },
+  "budget": {
+    "cost": 12.5,
+    "tokens": 450,
+    "latencyMs": 120
+  },
+  "createdAt": "2026-08-26T00:00:00Z",
+  "updatedAt": "2026-08-26T00:02:00Z"
+}
