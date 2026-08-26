@@ -52,7 +52,7 @@ var Registry = []ClockUsageEntry{
 		CallType:               "time.Now",
 		Category:               CategoryLeaseFencing,
 		RequiresClockInjection: true,
-		Rationale:              "Memory admission lease expiry check; target for TIME-002 injection",
+		Rationale:              "Memory admission lease expiry check; injected via WithMemoryAdmissionClock",
 	},
 	{
 		Package:                "adgo",
@@ -61,7 +61,7 @@ var Registry = []ClockUsageEntry{
 		CallType:               "time.Now",
 		Category:               CategoryLeaseFencing,
 		RequiresClockInjection: true,
-		Rationale:              "Rate limiter token bucket refill elapsed time; target for TIME-002",
+		Rationale:              "Rate limiter token bucket refill elapsed time; injected via WithMemoryAdmissionClock",
 	},
 	{
 		Package:                "adgo",
@@ -84,6 +84,15 @@ var Registry = []ClockUsageEntry{
 	{
 		Package:                "adgo",
 		File:                   "file_lock.go",
+		Function:               "withOwnedFileLock",
+		CallType:               "time.After",
+		Category:               CategoryOSFreshnessBoundary,
+		RequiresClockInjection: false,
+		Rationale:              "File lock acquisition timeout channel",
+	},
+	{
+		Package:                "adgo",
+		File:                   "file_lock.go",
 		Function:               "removeStaleFileLock",
 		CallType:               "time.Since",
 		Category:               CategoryOSFreshnessBoundary,
@@ -100,7 +109,324 @@ var Registry = []ClockUsageEntry{
 		Rationale:              "Background OS file mtime touch loop for active lock owner",
 	},
 
-	// --- adgo/runtime.go & execution ---
+	// --- adgo/awaitable.go ---
+	{
+		Package:                "adgo",
+		File:                   "awaitable.go",
+		Function:               "AwaitExecution",
+		CallType:               "time.Now",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "Local helper polling deadline for synchronous test/script awaits",
+	},
+
+	// --- adgo/cache.go ---
+	{
+		Package:                "adgo",
+		File:                   "cache.go",
+		Function:               "Cache",
+		CallType:               "time.Now",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "Cache entry timestamp and file lock freshness",
+	},
+	{
+		Package:                "adgo",
+		File:                   "cache.go",
+		Function:               "Cache",
+		CallType:               "time.Since",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "File cache lock staleness duration check",
+	},
+	{
+		Package:                "adgo",
+		File:                   "cache.go",
+		Function:               "Cache",
+		CallType:               "time.After",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "File cache lock acquisition timeout channel",
+	},
+
+	// --- adgo/clock.go ---
+	{
+		Package:                "adgo",
+		File:                   "clock.go",
+		Function:               "wallClock.Now",
+		CallType:               "time.Now",
+		Category:               CategoryDurableDecision,
+		RequiresClockInjection: true,
+		Rationale:              "Default process wall-clock fallback adapter for Clock interface",
+	},
+
+	// --- adgo/compensation_recovery.go ---
+	{
+		Package:                "adgo",
+		File:                   "compensation_recovery.go",
+		Function:               "CompensationRecovery",
+		CallType:               "time.Since",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "Compensation execution duration metric telemetry",
+	},
+
+	// --- adgo/control.go ---
+	{
+		Package:                "adgo",
+		File:                   "control.go",
+		Function:               "Control",
+		CallType:               "time.Now",
+		Category:               CategoryPersistedEventTimestamp,
+		RequiresClockInjection: false,
+		Rationale:              "Execution pause/resume request informational timestamp",
+	},
+
+	// --- adgo/diagnostics.go ---
+	{
+		Package:                "adgo",
+		File:                   "diagnostics.go",
+		Function:               "Diagnostics",
+		CallType:               "time.Now",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "External monitoring audit snapshot timestamp",
+	},
+
+	// --- adgo/engine.go ---
+	{
+		Package:                "adgo",
+		File:                   "engine.go",
+		Function:               "Engine.Advance",
+		CallType:               "time.Since",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "Execution wall-clock total duration metric calculation",
+	},
+	{
+		Package:                "adgo",
+		File:                   "engine.go",
+		Function:               "Engine.normalizeWorker",
+		CallType:               "time.Now",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "Worker ID seed timestamp generation",
+	},
+	{
+		Package:                "adgo",
+		File:                   "engine.go",
+		Function:               "Engine.executeWorkItem",
+		CallType:               "time.Now",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "Activity execution start time for duration telemetry",
+	},
+	{
+		Package:                "adgo",
+		File:                   "engine.go",
+		Function:               "Engine.executeWorkItem",
+		CallType:               "time.NewTicker",
+		Category:               CategoryLeaseFencing,
+		RequiresClockInjection: false,
+		Rationale:              "Worker background heartbeat ticker",
+	},
+	{
+		Package:                "adgo",
+		File:                   "engine.go",
+		Function:               "Engine.executeWorkItem",
+		CallType:               "time.Since",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "Activity execution elapsed duration for telemetry",
+	},
+	{
+		Package:                "adgo",
+		File:                   "engine.go",
+		Function:               "sleepContext",
+		CallType:               "time.NewTimer",
+		Category:               CategoryRetryScheduleDeadline,
+		RequiresClockInjection: false,
+		Rationale:              "Context-aware sleep helper timer for worker loops",
+	},
+
+	// --- adgo/explain.go ---
+	{
+		Package:                "adgo",
+		File:                   "explain.go",
+		Function:               "Explain",
+		CallType:               "time.Now",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "Workflow explanation generation timestamp",
+	},
+
+	// --- adgo/host.go ---
+	{
+		Package:                "adgo",
+		File:                   "host.go",
+		Function:               "Host.Start",
+		CallType:               "time.Now",
+		Category:               CategoryPersistedEventTimestamp,
+		RequiresClockInjection: false,
+		Rationale:              "Host execution created informational timestamp",
+	},
+
+	// --- adgo/http_worker.go ---
+	{
+		Package:                "adgo",
+		File:                   "http_worker.go",
+		Function:               "HTTPWorker",
+		CallType:               "time.Now",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "Remote worker HTTP polling request timestamp",
+	},
+	{
+		Package:                "adgo",
+		File:                   "http_worker.go",
+		Function:               "HTTPWorker",
+		CallType:               "time.NewTicker",
+		Category:               CategoryLeaseFencing,
+		RequiresClockInjection: false,
+		Rationale:              "Remote worker heartbeat ticker",
+	},
+	{
+		Package:                "adgo",
+		File:                   "http_worker.go",
+		Function:               "HTTPWorker",
+		CallType:               "time.Since",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "Remote worker HTTP handler latency telemetry",
+	},
+
+	// --- adgo/lifecycle.go ---
+	{
+		Package:                "adgo",
+		File:                   "lifecycle.go",
+		Function:               "Lifecycle",
+		CallType:               "time.Since",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "Workflow lifecycle duration metric calculation",
+	},
+
+	// --- adgo/local.go ---
+	{
+		Package:                "adgo",
+		File:                   "local.go",
+		Function:               "LocalRunner",
+		CallType:               "time.Now",
+		Category:               CategoryPersistedEventTimestamp,
+		RequiresClockInjection: false,
+		Rationale:              "Local single-process execution created timestamp",
+	},
+
+	// --- adgo/migration.go ---
+	{
+		Package:                "adgo",
+		File:                   "migration.go",
+		Function:               "Migration",
+		CallType:               "time.Now",
+		Category:               CategoryPersistedEventTimestamp,
+		RequiresClockInjection: false,
+		Rationale:              "Schema migration audit timestamp",
+	},
+
+	// --- adgo/monitor.go ---
+	{
+		Package:                "adgo",
+		File:                   "monitor.go",
+		Function:               "Monitor",
+		CallType:               "time.Now",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "Monitor observability loop timestamp",
+	},
+
+	// --- adgo/pebble_store.go ---
+	{
+		Package:                "adgo",
+		File:                   "pebble_store.go",
+		Function:               "PebbleStore.Commit",
+		CallType:               "time.Now",
+		Category:               CategoryPersistedEventTimestamp,
+		RequiresClockInjection: false,
+		Rationale:              "Informational UpdatedAt timestamp on persisted ADGO execution records",
+	},
+
+	// --- adgo/policy.go ---
+	{
+		Package:                "adgo",
+		File:                   "policy.go",
+		Function:               "PolicyDecider.Evaluate",
+		CallType:               "time.Now",
+		Category:               CategoryRetryScheduleDeadline,
+		RequiresClockInjection: true,
+		Rationale:              "Retry backoff deadline evaluation; injected via Engine clock (TIME-004)",
+	},
+
+	// --- adgo/repair.go ---
+	{
+		Package:                "adgo",
+		File:                   "repair.go",
+		Function:               "DependencyRepairPlanner.CheckStale",
+		CallType:               "time.Now",
+		Category:               CategoryLeaseFencing,
+		RequiresClockInjection: true,
+		Rationale:              "Stale execution lease detection threshold; injected via Clock (TIME-004)",
+	},
+
+	// --- adgo/retention.go ---
+	{
+		Package:                "adgo",
+		File:                   "retention.go",
+		Function:               "RetentionManager.Purge",
+		CallType:               "time.Now",
+		Category:               CategoryDurableDecision,
+		RequiresClockInjection: true,
+		Rationale:              "Retention window expiry threshold comparison; injected via RetentionPolicy.Clock (TIME-004)",
+	},
+
+	// --- adgo/router.go & router_store.go ---
+	{
+		Package:                "adgo",
+		File:                   "router.go",
+		Function:               "AdaptiveRouter",
+		CallType:               "time.Now",
+		Category:               CategoryRetryScheduleDeadline,
+		RequiresClockInjection: false,
+		Rationale:              "Provider failure cooldown timestamp",
+	},
+	{
+		Package:                "adgo",
+		File:                   "router_store.go",
+		Function:               "FileProviderHealthStore",
+		CallType:               "time.Now",
+		Category:               CategoryOSFreshnessBoundary,
+		RequiresClockInjection: false,
+		Rationale:              "Provider health file lock freshness timestamp",
+	},
+	{
+		Package:                "adgo",
+		File:                   "router_store.go",
+		Function:               "FileProviderHealthStore",
+		CallType:               "time.Since",
+		Category:               CategoryOSFreshnessBoundary,
+		RequiresClockInjection: false,
+		Rationale:              "Provider health file lock mtime staleness calculation",
+	},
+	{
+		Package:                "adgo",
+		File:                   "router_store.go",
+		Function:               "FileProviderHealthStore",
+		CallType:               "time.After",
+		Category:               CategoryOSFreshnessBoundary,
+		RequiresClockInjection: false,
+		Rationale:              "Provider health file lock wait timeout channel",
+	},
+
+	// --- adgo/runtime.go ---
 	{
 		Package:                "adgo",
 		File:                   "runtime.go",
@@ -138,16 +464,67 @@ var Registry = []ClockUsageEntry{
 		Rationale:              "Informational history entry timestamp",
 	},
 
-	// --- adgo/policy.go & retry/hedging ---
+	// --- adgo/schedule.go & scheduler.go ---
 	{
 		Package:                "adgo",
-		File:                   "policy.go",
-		Function:               "PolicyDecider.Evaluate",
+		File:                   "schedule.go",
+		Function:               "Schedule",
 		CallType:               "time.Now",
 		Category:               CategoryRetryScheduleDeadline,
-		RequiresClockInjection: true,
-		Rationale:              "Retry backoff deadline evaluation; target for TIME-003",
+		RequiresClockInjection: false,
+		Rationale:              "Cron schedule state update timestamp and file lock freshness",
 	},
+	{
+		Package:                "adgo",
+		File:                   "schedule.go",
+		Function:               "Schedule",
+		CallType:               "time.Since",
+		Category:               CategoryOSFreshnessBoundary,
+		RequiresClockInjection: false,
+		Rationale:              "Schedule file lock mtime staleness calculation",
+	},
+	{
+		Package:                "adgo",
+		File:                   "schedule.go",
+		Function:               "Schedule",
+		CallType:               "time.After",
+		Category:               CategoryOSFreshnessBoundary,
+		RequiresClockInjection: false,
+		Rationale:              "Schedule file lock wait timeout channel",
+	},
+	{
+		Package:                "adgo",
+		File:                   "scheduler.go",
+		Function:               "DefaultScheduler",
+		CallType:               "time.Now",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "Candidate prioritization score age calculation",
+	},
+
+	// --- adgo/service.go ---
+	{
+		Package:                "adgo",
+		File:                   "service.go",
+		Function:               "WorkerService.Drain",
+		CallType:               "time.NewTimer",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "Worker service drain timeout timer",
+	},
+
+	// --- adgo/signal_safe.go ---
+	{
+		Package:                "adgo",
+		File:                   "signal_safe.go",
+		Function:               "SignalSafe",
+		CallType:               "time.Now",
+		Category:               CategoryPersistedEventTimestamp,
+		RequiresClockInjection: false,
+		Rationale:              "Signal safe event arrival timestamp",
+	},
+
+	// --- adgo/speculation.go ---
 	{
 		Package:                "adgo",
 		File:                   "speculation.go",
@@ -155,27 +532,56 @@ var Registry = []ClockUsageEntry{
 		CallType:               "time.NewTimer",
 		Category:               CategoryRetryScheduleDeadline,
 		RequiresClockInjection: true,
-		Rationale:              "Speculative execution hedging delay timer",
+		Rationale:              "Speculative execution hedging delay timer; injected via SpeculationPolicy.Clock (TIME-004)",
+	},
+	{
+		Package:                "adgo",
+		File:                   "speculation.go",
+		Function:               "Speculation",
+		CallType:               "time.Now",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "Variant execution start timestamp for duration measurement",
+	},
+	{
+		Package:                "adgo",
+		File:                   "speculation.go",
+		Function:               "Speculation",
+		CallType:               "time.Since",
+		Category:               CategoryObservabilityElapsed,
+		RequiresClockInjection: false,
+		Rationale:              "Variant execution duration measurement for metrics",
 	},
 
-	// --- adgo/retention.go & repair.go ---
+	// --- adgo/store.go ---
 	{
 		Package:                "adgo",
-		File:                   "retention.go",
-		Function:               "RetentionManager.Purge",
+		File:                   "store.go",
+		Function:               "MemoryStore",
 		CallType:               "time.Now",
-		Category:               CategoryDurableDecision,
-		RequiresClockInjection: true,
-		Rationale:              "Retention window expiry threshold comparison",
+		Category:               CategoryPersistedEventTimestamp,
+		RequiresClockInjection: false,
+		Rationale:              "Informational UpdatedAt timestamp on in-memory execution records",
 	},
 	{
 		Package:                "adgo",
-		File:                   "repair.go",
-		Function:               "DependencyRepairPlanner.CheckStale",
+		File:                   "store.go",
+		Function:               "FileStore",
+		CallType:               "time.After",
+		Category:               CategoryOSFreshnessBoundary,
+		RequiresClockInjection: false,
+		Rationale:              "File store execution lock wait timeout channel",
+	},
+
+	// --- adgo/time_travel.go ---
+	{
+		Package:                "adgo",
+		File:                   "time_travel.go",
+		Function:               "TimeTravel",
 		CallType:               "time.Now",
-		Category:               CategoryLeaseFencing,
-		RequiresClockInjection: true,
-		Rationale:              "Stale execution lease detection threshold",
+		Category:               CategoryPersistedEventTimestamp,
+		RequiresClockInjection: false,
+		Rationale:              "Replay history checkpoint informational timestamp",
 	},
 
 	// --- internal/runtime (Core Engine) ---
@@ -195,7 +601,16 @@ var Registry = []ClockUsageEntry{
 		CallType:               "time.NewTimer",
 		Category:               CategoryRetryScheduleDeadline,
 		RequiresClockInjection: true,
-		Rationale:              "Retry scheduler sleep timer; target for TIME-003 Clock unification",
+		Rationale:              "Retry scheduler sleep timer; unified with Engine Clock (TIME-003)",
+	},
+	{
+		Package:                "runtime",
+		File:                   "retry_store.go",
+		Function:               "RetryStore",
+		CallType:               "time.Now",
+		Category:               CategoryPersistedEventTimestamp,
+		RequiresClockInjection: false,
+		Rationale:              "Retry task audit history timestamp",
 	},
 	{
 		Package:                "runtime",
@@ -205,6 +620,24 @@ var Registry = []ClockUsageEntry{
 		Category:               CategoryRetryScheduleDeadline,
 		RequiresClockInjection: false,
 		Rationale:              "Background task queue poll interval ticker",
+	},
+	{
+		Package:                "runtime",
+		File:                   "concurrency_store.go",
+		Function:               "ConcurrencyStore",
+		CallType:               "time.Now",
+		Category:               CategoryLeaseFencing,
+		RequiresClockInjection: false,
+		Rationale:              "Concurrency limiter lease expiration timestamp",
+	},
+	{
+		Package:                "runtime",
+		File:                   "execution_api.go",
+		Function:               "ExecutionAPI",
+		CallType:               "time.Now",
+		Category:               CategoryPersistedEventTimestamp,
+		RequiresClockInjection: false,
+		Rationale:              "Execution API operation timestamp",
 	},
 
 	// --- internal/store/pebble & memory ---

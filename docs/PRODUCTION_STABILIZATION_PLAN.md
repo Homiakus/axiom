@@ -400,7 +400,8 @@ Keep observability timestamps/system filesystem checks on real time when that is
 
 ## TIME-005 — Add architecture guard against semantic wall-clock regression
 
-Status: **TODO**
+Status: **DONE**
+
 
 Add a static/AST test that rejects new direct wall-clock calls in restricted orchestration files unless explicitly allowlisted with a reason.
 
