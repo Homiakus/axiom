@@ -31,7 +31,6 @@ package axiom
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"reflect"
@@ -43,6 +42,7 @@ import (
 	"github.com/Homiakus/axiom/internal/diag"
 	runtimepkg "github.com/Homiakus/axiom/internal/runtime"
 	"github.com/Homiakus/axiom/internal/store/memory"
+	"github.com/Homiakus/axiom/internal/typedconv"
 	pebblestore "github.com/Homiakus/axiom/internal/store/pebble"
 	"github.com/Homiakus/axiom/internal/triz"
 )
@@ -254,20 +254,42 @@ func ActTyped[In any, Out any](name string, fn func(ctx context.Context, input I
 		return optionError(err)
 	}
 
+	inConv, err := typedconv.CompileInput[In]()
+	if err != nil {
+		return optionError(Errors{{
+			Code:    "AX507",
+			Kind:    "config",
+			Entity:  name,
+			Message: fmt.Sprintf("typed activity input compilation for %s failed: %v", name, err),
+			Hint:    "Verify the input struct or map type definition.",
+		}})
+	}
+
+	outConv, err := typedconv.CompileOutput[Out]()
+	if err != nil {
+		return optionError(Errors{{
+			Code:    "AX507",
+			Kind:    "config",
+			Entity:  name,
+			Message: fmt.Sprintf("typed activity output compilation for %s failed: %v", name, err),
+			Hint:    "Verify the output struct or map type definition.",
+		}})
+	}
+
 	return Act(name, func(ctx context.Context, input Input) (Output, error) {
-		data, err := json.Marshal(input)
+		typedIn, err := inConv(input)
 		if err != nil {
-			return nil, fmt.Errorf("axiom: marshal activity input for %s: %w", name, err)
-		}
-		var typedIn In
-		if err := json.Unmarshal(data, &typedIn); err != nil {
 			return nil, fmt.Errorf("axiom: decode activity input for %s: %w", name, err)
 		}
 		typedOut, err := fn(ctx, typedIn)
 		if err != nil {
 			return nil, err
 		}
-		return structToOutput(typedOut), nil
+		out, err := outConv(typedOut)
+		if err != nil {
+			return nil, fmt.Errorf("axiom: encode activity output for %s: %w", name, err)
+		}
+		return out, nil
 	})
 }
 

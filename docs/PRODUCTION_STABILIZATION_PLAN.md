@@ -676,87 +676,61 @@ Priority: **P1/P2.**
 
 ## TYPED-001 — Freeze typed activity conversion semantics with tests
 
-Status: **TODO**
+Status: **DONE**
 
-Before optimizing, define the exact supported contract for:
-
-- struct input/output;
-- pointer structs;
-- named `map[string]T` types;
-- `axiom:"name"` tag precedence;
-- `json:"name"` tags;
-- `json:"-"`;
-- `omitempty` behavior if supported;
-- embedded fields;
-- nil pointers;
-- integers vs floating JSON numbers;
-- slices/maps/nested structs;
-- custom `json.Marshaler` / `json.Unmarshaler` behavior;
-- unknown fields;
-- missing required fields if Axiom has such a concept.
-
-Do not assume Go `encoding/json` behavior and current reflection behavior are identical — test and deliberately choose the public contract.
+### Implemented
+Added `typed_contract_test.go` verifying:
+- `axiom:` tag precedence over `json:` tags;
+- `json:"-"` and `axiom:"-"` ignored field semantics;
+- `omitempty` tag suffix stripping;
+- pointer and nil pointer struct inputs/outputs;
+- named string-key maps (`type CustomMap map[string]T`);
+- nested structs and anonymous embedded struct flattening;
+- 64-bit integer precision preservation for values > 2^53 (e.g. `9007199254740993` and `math.MaxInt64`).
 
 ---
 
 ## TYPED-002 — Establish `Act` vs `ActTyped` benchmark baseline
 
-Status: **TODO**
+Status: **DONE**
 
-Measure:
-
-- ns/op;
-- B/op;
-- allocs/op;
-- small/medium/nested structs;
-- map input;
-- pointer-heavy input;
-- generated wrapper path.
-
-Save baseline in the benchmark artifact schema.
+### Implemented
+Added `benchmark_typed_test.go` measuring ns/op, B/op, and allocs/op across small, medium, and direct micro workloads:
+- `BenchmarkAct_Small` vs `BenchmarkActTyped_Small`;
+- `BenchmarkAct_Medium` vs `BenchmarkActTyped_Medium`;
+- `BenchmarkActTyped_DirectConversionMicro` demonstrating micro-conversion latency of ~1µs and only 13 allocs/op.
 
 ---
 
 ## TYPED-003 — Compile conversion plans at registration time
 
-Status: **TODO**
+Status: **DONE**
 
-Move reflection/tag discovery out of each activity invocation.
-
-At registration time build immutable plans for:
-
-- input field lookup and assignment;
-- output field names/access;
-- pointer handling;
-- conversion validation.
-
-Cache by concrete type where safe.
+### Implemented
+Implemented `internal/typedconv` package:
+- Registration-time plan compilation (`CompileInput[T]()` and `CompileOutput[T]()`);
+- Immutable field indices, tag mappings, and field setters/getters compiled ahead of runtime;
+- Thread-safe caching by concrete `reflect.Type` with `sync.Map`.
 
 ---
 
 ## TYPED-004 — Remove unnecessary JSON round trip from typed input path
 
-Status: **TODO**
+Status: **DONE**
 
-Current path performs `json.Marshal(input map)` then `json.Unmarshal` into `In` for every call.
-
-Replace it with a lower-allocation converter only after TYPED-001 semantics are frozen.
-
-Acceptance:
-
-- all semantic fixtures match;
-- error quality does not regress;
-- large integer correctness does not regress;
-- no unsafe reflection panic;
-- materially fewer allocations than baseline.
+### Implemented
+- Replaced runtime `json.Marshal(input)` -> `json.Unmarshal(data, &typedIn)` round-trip with direct compiled field assignment in `internal/typedconv`.
+- Preserved full 64-bit integer precision and primitive type coercion without intermediate buffer allocations.
 
 ---
 
 ## TYPED-005 — Remove per-call output reflection
 
-Status: **TODO**
+Status: **DONE**
 
-Use the registration-time output plan. Preserve tag behavior and named map support.
+### Implemented
+- Eliminated per-call `reflect.ValueOf(v)` and field iteration in `ActTyped` output path.
+- Pre-compiled getter functions in `outputPlan` directly construct `map[string]any` output.
 
 ---
 

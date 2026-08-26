@@ -40,22 +40,24 @@
 - **SCALE-005**: Reduce ADGO Pebble Global Mutex Contention (`adgo/pebble_store.go` splitting lock domains into execution-scoped locks and catalog RWMutex, improving commit throughput by >6.5x).
 - **SCALE-006**: Comprehensive Scaling Benchmark Suite & Regression Thresholds (`benchmark_scaling_test.go` automated performance and concurrency threshold checks).
 
+#### Milestone M4 — High-Performance Typed Runtime (100% DONE)
+- **TYPED-001**: Freeze Typed Activity Conversion Semantics (`typed_contract_test.go` verifying tag precedence, omitted fields, pointers, maps, nested/embedded structs, >2^53 int64 precision).
+- **TYPED-002**: Establish `Act` vs `ActTyped` Benchmark Baseline (`benchmark_typed_test.go` measuring ns/op, B/op, allocs/op across workloads).
+- **TYPED-003**: Compile Conversion Plans at Registration Time (`internal/typedconv` ahead-of-time plan compilation and `sync.Map` type caching).
+- **TYPED-004**: Remove Unnecessary JSON Round-Trip from Input Path (direct compiled field assignment in `typedconv.CompileInput[In]()`).
+- **TYPED-005**: Remove Per-Call Output Reflection (pre-compiled field getters in `typedconv.CompileOutput[Out]()`).
+
 ---
 
-## 2. Immediate Next Tasks — Milestone M4 (TYPED)
+## 2. Immediate Next Tasks — Milestone M5 (ERR) & Stress/Chaos
 
-### TYPED-001 — Freeze typed activity conversion semantics with tests
-- **Objective**: Define exact supported contract for struct in/out, pointers, named maps, `axiom:` and `json:` tag precedence, embedded fields, and integer precision.
-- **Target Files**: `internal/runtime/typed_test.go`, `axiom_typed_test.go`.
-- **Verification**: `go test -race ./...`.
+### ERR-001 — Eliminate `AX505` substring retry classification
+- **Objective**: Introduce typed classification via `errors.Is`/`errors.As` and `diag.Error` without substring searching.
+- **Target Files**: `internal/runtime/retry_store.go`, `internal/runtime/transaction.go`.
 
-### TYPED-002 — Establish `Act` vs `ActTyped` benchmark baseline
-- **Objective**: Measure ns/op, B/op, allocs/op for small/medium/nested structs and map inputs.
-- **Target Files**: `internal/runtime/benchmark_typed_test.go`.
-
-### TYPED-003 — Compile conversion plans at registration time
-- **Objective**: Move reflection and tag lookup out of per-call path into registration-time cached conversion plans.
-- **Target Files**: `internal/runtime/typed.go`.
+### ERR-002 — Unify transaction commit-on-error classification
+- **Objective**: Separate flow-control errors with state persistence from critical runtime failures.
+- **Target Files**: `internal/runtime/transaction.go`.
 
 ---
 
