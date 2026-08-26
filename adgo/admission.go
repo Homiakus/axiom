@@ -67,13 +67,36 @@ type admissionState struct {
 	InFlight   map[string]time.Time `json:"inFlight,omitempty"`
 }
 
+type MemoryAdmissionOption func(*MemoryAdmissionController)
+
+// WithMemoryAdmissionClock configures the Clock used by MemoryAdmissionController.
+func WithMemoryAdmissionClock(clock Clock) MemoryAdmissionOption {
+	return func(c *MemoryAdmissionController) {
+		if clock != nil {
+			c.clock = clock
+		}
+	}
+}
+
 type MemoryAdmissionController struct {
 	mu     sync.Mutex
 	states map[string]*admissionState
+	clock  Clock
 }
 
-func NewMemoryAdmissionController() *MemoryAdmissionController {
-	return &MemoryAdmissionController{states: map[string]*admissionState{}}
+func NewMemoryAdmissionController(opts ...MemoryAdmissionOption) *MemoryAdmissionController {
+	c := &MemoryAdmissionController{states: map[string]*admissionState{}}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
+
+func (c *MemoryAdmissionController) now() time.Time {
+	if c.clock == nil {
+		return time.Now().UTC()
+	}
+	return c.clock.Now().UTC()
 }
 
 func (c *MemoryAdmissionController) Acquire(_ context.Context, key string, policy AdmissionPolicy, ttl time.Duration) (AdmissionLease, error) {
@@ -84,7 +107,7 @@ func (c *MemoryAdmissionController) Acquire(_ context.Context, key string, polic
 		state = &admissionState{Key: key, InFlight: map[string]time.Time{}}
 		c.states[key] = state
 	}
-	return acquireAdmission(state, key, policy, ttl, time.Now().UTC())
+	return acquireAdmission(state, key, policy, ttl, c.now())
 }
 
 func (c *MemoryAdmissionController) Heartbeat(_ context.Context, lease AdmissionLease, ttl time.Duration) (AdmissionLease, error) {
@@ -94,7 +117,7 @@ func (c *MemoryAdmissionController) Heartbeat(_ context.Context, lease Admission
 	if state == nil {
 		return AdmissionLease{}, ErrStaleTask
 	}
-	return heartbeatAdmission(state, lease, ttl, time.Now().UTC())
+	return heartbeatAdmission(state, lease, ttl, c.now())
 }
 
 func (c *MemoryAdmissionController) Release(_ context.Context, lease AdmissionLease) error {
@@ -114,17 +137,38 @@ func (c *MemoryAdmissionController) Snapshot(_ context.Context, key string) (Adm
 	if state == nil {
 		return AdmissionSnapshot{Key: key}, nil
 	}
-	purgeAdmission(state, time.Now().UTC())
+	purgeAdmission(state, c.now())
 	return AdmissionSnapshot{Key: key, InFlight: len(state.InFlight), Tokens: state.Tokens, LastRefill: state.LastRefill}, nil
+}
+
+type FileAdmissionOption func(*FileAdmissionController)
+
+// WithFileAdmissionClock configures the Clock used by FileAdmissionController.
+func WithFileAdmissionClock(clock Clock) FileAdmissionOption {
+	return func(c *FileAdmissionController) {
+		if clock != nil {
+			c.clock = clock
+		}
+	}
+}
+
+// WithFileAdmissionLockStaleAfter configures the stale lock reclamation timeout.
+func WithFileAdmissionLockStaleAfter(d time.Duration) FileAdmissionOption {
+	return func(c *FileAdmissionController) {
+		if d > 0 {
+			c.lockStaleAfter = d
+		}
+	}
 }
 
 type FileAdmissionController struct {
 	root           string
 	mu             sync.Mutex
 	lockStaleAfter time.Duration
+	clock          Clock
 }
 
-func NewFileAdmissionController(root string) (*FileAdmissionController, error) {
+func NewFileAdmissionController(root string, opts ...FileAdmissionOption) (*FileAdmissionController, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("adgo: admission store root is required")
 	}
@@ -134,7 +178,18 @@ func NewFileAdmissionController(root string) (*FileAdmissionController, error) {
 	if err := os.MkdirAll(filepath.Join(root, "locks"), 0o755); err != nil {
 		return nil, err
 	}
-	return &FileAdmissionController{root: root, lockStaleAfter: 30 * time.Second}, nil
+	c := &FileAdmissionController{root: root, lockStaleAfter: 30 * time.Second}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c, nil
+}
+
+func (c *FileAdmissionController) now() time.Time {
+	if c.clock == nil {
+		return time.Now().UTC()
+	}
+	return c.clock.Now().UTC()
 }
 
 func (c *FileAdmissionController) path(key string) string {
@@ -151,7 +206,7 @@ func (c *FileAdmissionController) Acquire(ctx context.Context, key string, polic
 		if err != nil {
 			return err
 		}
-		lease, err = acquireAdmission(state, key, policy, ttl, time.Now().UTC())
+		lease, err = acquireAdmission(state, key, policy, ttl, c.now())
 		if err != nil {
 			if persistErr := c.write(state); persistErr != nil {
 				return persistErr
@@ -172,7 +227,7 @@ func (c *FileAdmissionController) Heartbeat(ctx context.Context, lease Admission
 		if err != nil {
 			return err
 		}
-		next, err = heartbeatAdmission(state, lease, ttl, time.Now().UTC())
+		next, err = heartbeatAdmission(state, lease, ttl, c.now())
 		if err != nil {
 			return err
 		}
@@ -203,7 +258,7 @@ func (c *FileAdmissionController) Snapshot(ctx context.Context, key string) (Adm
 		if err != nil {
 			return err
 		}
-		purgeAdmission(state, time.Now().UTC())
+		purgeAdmission(state, c.now())
 		snapshot = AdmissionSnapshot{Key: key, InFlight: len(state.InFlight), Tokens: state.Tokens, LastRefill: state.LastRefill}
 		return c.write(state)
 	})

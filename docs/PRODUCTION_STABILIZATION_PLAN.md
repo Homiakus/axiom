@@ -321,7 +321,7 @@ Persist the allowlist/classification in a small architecture-check source file o
 
 ## TIME-002 — Inject time into Admission controllers
 
-Status: **TODO**
+Status: **DONE**
 
 ### Evidence
 
