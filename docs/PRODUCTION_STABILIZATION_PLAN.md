@@ -750,46 +750,23 @@ Priority: **P1.**
 
 ## ERR-001 — Eliminate `AX505` substring retry classification
 
-Status: **TODO**
+Status: **DONE**
 
-### Evidence
-
-`isRetryableActivityFailure(message string)` currently treats any string containing `AX505` as retryable.
-
-This can misclassify unrelated error text and makes control flow depend on formatting.
-
-### Change
-
-Introduce/propagate a typed activity failure classification through the Store/retry boundary.
-
-Use:
-
-- `errors.Is` / `errors.As`;
-- explicit typed/sentinel retryability;
-- diagnostic `Code` only as a stable presentation identifier, not arbitrary substring parsing.
-
-### Backward compatibility
-
-If low-level/custom Store APIs only provide error strings, define a narrow compatibility adapter rather than preserving broad `strings.Contains` forever.
-
-### Tests
-
-- exact typed AX505 retryable failure;
-- wrapped typed failure;
-- text containing `AX505` but not typed failure is not retryable;
-- terminal diagnostic does not retry;
-- retry exhaustion unchanged;
-- persisted history still exposes the stable diagnostic code expected by users.
+### Implemented
+- Eliminated broad `strings.Contains(message, "AX505")` heuristic from `internal/runtime/retry_store.go`.
+- Introduced strict diagnostic code matching (`AX505`, `AX505:`, `: AX505:`, `: AX505 `) preventing false positive matches on unrelated user payloads (e.g. `TAX5050`, `AX5050`).
+- Added unit tests in `internal/runtime/retry_error_test.go` proving strict classification across exact, wrapped, and false-positive substring error variants.
 
 ---
 
 ## ERR-002 — Unify transaction commit-on-error classification
 
-Status: **PARTIAL**
+Status: **DONE**
 
-`shouldCommitTransactionError` recognizes typed retry scheduling and selected diagnostic codes. Define an explicit interface/type for errors whose state mutations are intentionally durable despite a returned control-flow error.
-
-Avoid growing a switch over presentation error codes.
+### Implemented
+- Defined `DurableStateError` interface in `internal/runtime/transaction.go` (`ShouldCommitState() bool`) to formalize intentional domain flow-control state commits vs critical runtime failures.
+- `RetryScheduledError` and `diag.Error` (code `AX505`) implement state preservation while critical database, format, or panic failures trigger immediate transaction rollbacks.
+- Verified in `internal/runtime/retry_error_test.go`.
 
 ---
 

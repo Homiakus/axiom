@@ -7,23 +7,40 @@ import (
 	"github.com/Homiakus/axiom/internal/diag"
 )
 
+// DurableStateError is implemented by domain or flow-control errors whose state changes
+// have been staged in the transaction and must be committed to the store even though
+// an error is returned to the caller.
+type DurableStateError interface {
+	error
+	ShouldCommitState() bool
+}
+
 // shouldCommitTransactionError identifies domain failures whose state changes
 // have already been written to the transaction and must remain durable even
 // though a control-flow error is returned to the caller.
 func shouldCommitTransactionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if dse, ok := err.(DurableStateError); ok && dse.ShouldCommitState() {
+		return true
+	}
+	var dsePtr DurableStateError
+	if errors.As(err, &dsePtr) && dsePtr != nil && dsePtr.ShouldCommitState() {
+		return true
+	}
 	if _, ok := retryScheduled(err); ok {
 		return true
 	}
 	var diagnostic *diag.Error
-	if !errors.As(err, &diagnostic) || diagnostic == nil {
-		return false
+	if errors.As(err, &diagnostic) && diagnostic != nil {
+		return diagnostic.Code == "AX505"
 	}
-	switch diagnostic.Code {
-	case "AX505": // terminal activity handler failure after task/history/state were updated
-		return true
-	default:
-		return false
+	var diagVal diag.Error
+	if errors.As(err, &diagVal) {
+		return diagVal.Code == "AX505"
 	}
+	return false
 }
 
 func (e *Engine) withStoreTransaction(ctx context.Context, fn func(*Engine) error) error {

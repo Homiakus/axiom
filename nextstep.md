@@ -47,17 +47,21 @@
 - **TYPED-004**: Remove Unnecessary JSON Round-Trip from Input Path (direct compiled field assignment in `typedconv.CompileInput[In]()`).
 - **TYPED-005**: Remove Per-Call Output Reflection (pre-compiled field getters in `typedconv.CompileOutput[Out]()`).
 
+#### Milestone M5 — Typed Error Taxonomy & Classification (100% DONE)
+- **ERR-001**: Eliminate `AX505` Substring Retry Classification (`internal/runtime/retry_store.go` strict prefix/delimiter matching).
+- **ERR-002**: Unify Transaction Commit-On-Error Classification (`internal/runtime/transaction.go` `DurableStateError` contract preserving domain flow-control state mutations).
+
 ---
 
-## 2. Immediate Next Tasks — Milestone M5 (ERR) & Stress/Chaos
+## 2. Immediate Next Tasks — Comprehensive Stress & Chaos Testing Framework
 
-### ERR-001 — Eliminate `AX505` substring retry classification
-- **Objective**: Introduce typed classification via `errors.Is`/`errors.As` and `diag.Error` without substring searching.
-- **Target Files**: `internal/runtime/retry_store.go`, `internal/runtime/transaction.go`.
-
-### ERR-002 — Unify transaction commit-on-error classification
-- **Objective**: Separate flow-control errors with state persistence from critical runtime failures.
-- **Target Files**: `internal/runtime/transaction.go`.
+### Stress & Chaos Testing (Failpoints & Edge Cases)
+- **Crash & Recovery Chaos**: Abrupt stoppage/panic between BeginTransaction and Commit; Pebble & FileStore clean state & lock safety; Flow outbox recovery.
+- **I/O Failpoints & Partial Disk Failures**: Injected failpoints on metadata, sequence, WAL/batch commit.
+- **High Concurrency & Contention Stress**: 100+ goroutines, 1000+ IDs, Start/Signal/Patch/Commit/Inbox, 0 data races, 0 deadlocks.
+- **Split-Brain & Stale Lock Takeover**: Worker lease loss and fencing tests.
+- **Poison Pills & Malformed Data**: Corrupted bytes fail closed without database wiping.
+- **Context Cancellation Boundaries**: Immediate ctx.Err() pre-checks and non-interruptible atomic commits.
 
 ---
 

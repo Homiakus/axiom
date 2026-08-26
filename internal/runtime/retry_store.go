@@ -50,6 +50,8 @@ func (e *RetryScheduledError) Error() string {
 
 func (e *RetryScheduledError) Unwrap() error { return ErrRetryScheduled }
 
+func (e *RetryScheduledError) ShouldCommitState() bool { return true }
+
 func retryScheduled(err error) (*RetryScheduledError, bool) {
 	var retry *RetryScheduledError
 	if !errors.As(err, &retry) || retry == nil {
@@ -266,7 +268,13 @@ func cloneRetryTask(task *ActivityTask) *ActivityTask {
 }
 
 func isRetryableActivityFailure(message string) bool {
-	return strings.HasPrefix(message, "AX505:") || message == "AX505" || strings.Contains(message, "AX505")
+	if message == "AX505" || strings.HasPrefix(message, "AX505:") || strings.HasPrefix(message, "AX505 ") {
+		return true
+	}
+	if strings.Contains(message, ": AX505:") || strings.Contains(message, ": AX505 ") || strings.HasSuffix(message, ": AX505") {
+		return true
+	}
+	return false
 }
 
 func retryDelay(module *compiler.Module, activityName string, attempt int) time.Duration {
