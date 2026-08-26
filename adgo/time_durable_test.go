@@ -3,12 +3,12 @@ package adgo
 import (
 	"context"
 	"errors"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Homiakus/axiom/internal/durabletime"
 )
+
 
 func TestPolicyEngineDeterministicClock(t *testing.T) {
 	start := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -84,14 +84,15 @@ func TestHedgedActivityDeterministicClock(t *testing.T) {
 	start := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	clock := durabletime.NewManualClock(start)
 
-	var v1Launched, v2Launched atomic.Bool
+	v1Started := make(chan struct{})
+	v2Started := make(chan struct{})
 	v1Done := make(chan struct{})
 
 	variants := []ActivityVariant{
 		{
 			Name: "slow-primary",
 			Handler: func(ctx context.Context, _ ActivityRequest) (ActivityResult, error) {
-				v1Launched.Store(true)
+				close(v1Started)
 				select {
 				case <-ctx.Done():
 					return ActivityResult{}, ctx.Err()
@@ -103,7 +104,7 @@ func TestHedgedActivityDeterministicClock(t *testing.T) {
 		{
 			Name: "fast-hedge",
 			Handler: func(_ context.Context, _ ActivityRequest) (ActivityResult, error) {
-				v2Launched.Store(true)
+				close(v2Started)
 				return ActivityResult{
 					Facts:   map[string]any{"v": 2},
 					Quality: QualityVector{"accuracy": 1.0},
@@ -134,18 +135,18 @@ func TestHedgedActivityDeterministicClock(t *testing.T) {
 		resultCh <- res
 	}()
 
-	// Before clock advance: primary is launched, hedge is not yet launched
-	for i := 0; i < 50; i++ {
-		if v1Launched.Load() {
-			break
-		}
-		time.Sleep(2 * time.Millisecond)
+	// Wait until primary variant is actively executing
+	select {
+	case <-v1Started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for primary variant to start")
 	}
-	if !v1Launched.Load() {
-		t.Fatal("primary variant did not launch")
-	}
-	if v2Launched.Load() {
+
+	// Verify hedge variant has not started yet
+	select {
+	case <-v2Started:
 		t.Fatal("hedge variant launched before hedge delay")
+	default:
 	}
 
 	// Advance clock by 5s to trigger hedge
@@ -155,7 +156,9 @@ func TestHedgedActivityDeterministicClock(t *testing.T) {
 
 	select {
 	case res := <-resultCh:
-		if !v2Launched.Load() {
+		select {
+		case <-v2Started:
+		default:
 			t.Fatal("hedge variant was not launched")
 		}
 		if res.Facts["v"] != 2 {
@@ -167,6 +170,7 @@ func TestHedgedActivityDeterministicClock(t *testing.T) {
 		t.Fatal("timed out waiting for hedged activity result")
 	}
 }
+
 
 func TestRetentionCollectExecutionsDeterministicClock(t *testing.T) {
 	start := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
