@@ -57,7 +57,10 @@ func (s *PebbleStore) writeOptions() *pebbledb.WriteOptions {
 	return pebbledb.NoSync
 }
 
-func (s *PebbleStore) Create(_ context.Context, execution *Execution) error {
+func (s *PebbleStore) Create(ctx context.Context, execution *Execution) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if execution == nil || execution.ID == "" {
 		return fmt.Errorf("adgo: execution is required")
 	}
@@ -83,7 +86,10 @@ func (s *PebbleStore) Create(_ context.Context, execution *Execution) error {
 	return batch.Commit(s.writeOptions())
 }
 
-func (s *PebbleStore) Load(_ context.Context, id string) (*Execution, error) {
+func (s *PebbleStore) Load(ctx context.Context, id string) (*Execution, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.loadUnlocked(id)
@@ -106,7 +112,10 @@ func (s *PebbleStore) loadUnlocked(id string) (*Execution, error) {
 	return &execution, nil
 }
 
-func (s *PebbleStore) Commit(_ context.Context, id string, expected uint64, mutate func(*Execution) error) (*Execution, error) {
+func (s *PebbleStore) Commit(ctx context.Context, id string, expected uint64, mutate func(*Execution) error) (*Execution, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	current, err := s.loadUnlocked(id)
@@ -147,7 +156,10 @@ func (s *PebbleStore) writeExecutionBatch(batch *pebbledb.Batch, execution *Exec
 	return batch.Set(pebbleLatestKey(execution.ID), data, nil)
 }
 
-func (s *PebbleStore) PutInbox(_ context.Context, id string, event Event) error {
+func (s *PebbleStore) PutInbox(ctx context.Context, id string, event Event) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err := s.loadUnlocked(id); err != nil {
@@ -173,7 +185,10 @@ func (s *PebbleStore) PutInbox(_ context.Context, id string, event Event) error 
 	return s.db.Set(key, data, s.writeOptions())
 }
 
-func (s *PebbleStore) ListInbox(_ context.Context, id string) ([]Event, error) {
+func (s *PebbleStore) ListInbox(ctx context.Context, id string) ([]Event, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err := s.loadUnlocked(id); err != nil {
@@ -200,7 +215,10 @@ func (s *PebbleStore) ListInbox(_ context.Context, id string) ([]Event, error) {
 	return out, nil
 }
 
-func (s *PebbleStore) AckInbox(_ context.Context, id string, ids []string) error {
+func (s *PebbleStore) AckInbox(ctx context.Context, id string, ids []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	batch := s.db.NewBatch()
@@ -213,7 +231,10 @@ func (s *PebbleStore) AckInbox(_ context.Context, id string, ids []string) error
 	return batch.Commit(s.writeOptions())
 }
 
-func (s *PebbleStore) ListExecutionIDs(_ context.Context) ([]string, error) {
+func (s *PebbleStore) ListExecutionIDs(ctx context.Context) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	prefix := []byte("adgo/c/")
@@ -233,7 +254,10 @@ func (s *PebbleStore) ListExecutionIDs(_ context.Context) ([]string, error) {
 	return ids, nil
 }
 
-func (s *PebbleStore) ListVersions(_ context.Context, id string) ([]*Execution, error) {
+func (s *PebbleStore) ListVersions(ctx context.Context, id string) ([]*Execution, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err := s.loadUnlocked(id); err != nil {

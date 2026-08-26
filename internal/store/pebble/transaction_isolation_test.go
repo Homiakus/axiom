@@ -126,3 +126,52 @@ func TestTransactionSaveExecutionDoesNotMutateCaller(t *testing.T) {
 		t.Fatalf("staged context value = %v, want 2", got)
 	}
 }
+
+func TestTransactionContextCancellation(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	bgCtx := context.Background()
+	canceledCtx, cancel := context.WithCancel(bgCtx)
+	cancel()
+
+	// BeginTransaction with canceled context must fail fast
+	if _, err := store.BeginTransaction(canceledCtx); err != context.Canceled {
+		t.Fatalf("BeginTransaction(canceled) err = %v, want context.Canceled", err)
+	}
+
+	// Begin a transaction normally, then test tx operations with canceled context
+	tx, err := store.BeginTransaction(bgCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+
+	exec := &runtime.Execution{
+		ID:        "tx-cancel-test",
+		Domain:    "test",
+		Version:   1,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	if err := tx.CreateExecution(canceledCtx, exec); err != context.Canceled {
+		t.Fatalf("tx.CreateExecution(canceled) err = %v, want context.Canceled", err)
+	}
+	if _, err := tx.GetExecution(canceledCtx, "tx-cancel-test"); err != context.Canceled {
+		t.Fatalf("tx.GetExecution(canceled) err = %v, want context.Canceled", err)
+	}
+	if err := tx.SaveExecution(canceledCtx, exec); err != context.Canceled {
+		t.Fatalf("tx.SaveExecution(canceled) err = %v, want context.Canceled", err)
+	}
+	if err := tx.AppendHistory(canceledCtx, "tx-cancel-test", "event", map[string]any{}); err != context.Canceled {
+		t.Fatalf("tx.AppendHistory(canceled) err = %v, want context.Canceled", err)
+	}
+	if _, err := tx.ListHistory(canceledCtx, "tx-cancel-test"); err != context.Canceled {
+		t.Fatalf("tx.ListHistory(canceled) err = %v, want context.Canceled", err)
+	}
+}
+

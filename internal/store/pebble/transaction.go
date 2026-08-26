@@ -21,7 +21,9 @@ type txStore struct {
 }
 
 func (s *Store) BeginTransaction(ctx context.Context) (runtime.StoreTransaction, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	return &txStore{
 		parent:     s,
@@ -53,7 +55,9 @@ func (tx *txStore) Rollback() error {
 }
 
 func (tx *txStore) CreateExecution(ctx context.Context, execution *runtime.Execution) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if _, ok := tx.executions[execution.ID]; ok {
 		return fmt.Errorf("execution already exists: %s", execution.ID)
 	}
@@ -68,7 +72,9 @@ func (tx *txStore) CreateExecution(ctx context.Context, execution *runtime.Execu
 }
 
 func (tx *txStore) GetExecution(ctx context.Context, id string) (*runtime.Execution, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if execution, ok := tx.executions[id]; ok {
 		return cloneExecution(execution), nil
 	}
@@ -80,7 +86,9 @@ func (tx *txStore) GetExecution(ctx context.Context, id string) (*runtime.Execut
 }
 
 func (tx *txStore) SaveExecution(ctx context.Context, execution *runtime.Execution) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if _, ok := tx.executions[execution.ID]; !ok {
 		if exists, err := tx.parent.exists(execKey(execution.ID)); err != nil {
 			return err
@@ -96,7 +104,9 @@ func (tx *txStore) SaveExecution(ctx context.Context, execution *runtime.Executi
 }
 
 func (tx *txStore) AppendHistory(ctx context.Context, executionID string, entryType string, payload map[string]any) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	seq, err := tx.nextHistorySeq(executionID)
 	if err != nil {
 		return err
@@ -124,7 +134,9 @@ func (tx *txStore) AppendHistory(ctx context.Context, executionID string, entryT
 }
 
 func (tx *txStore) ListHistory(ctx context.Context, executionID string) ([]runtime.HistoryEntry, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	history, err := tx.parent.listHistoryLocked(executionID)
 	if err != nil {
 		return nil, err
@@ -136,14 +148,18 @@ func (tx *txStore) ListHistory(ctx context.Context, executionID string) ([]runti
 }
 
 func (tx *txStore) EnqueueTask(ctx context.Context, task *runtime.ActivityTask) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	next := cloneTask(task)
 	tx.tasks[next.ID] = next
 	return tx.parent.writeTask(tx.batch, next)
 }
 
 func (tx *txStore) ListTasks(ctx context.Context, executionID string) ([]*runtime.ActivityTask, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return tx.listTasksMerged(executionID)
 }
 
@@ -178,7 +194,9 @@ func (tx *txStore) PollTask(ctx context.Context, executionID string) (*runtime.A
 }
 
 func (tx *txStore) PollTaskWithLease(ctx context.Context, executionID string, workerID string, leaseTTL time.Duration) (*runtime.ActivityTask, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if workerID == "" {
 		workerID = tx.parent.owner
 	}
@@ -206,7 +224,9 @@ func (tx *txStore) PollTaskWithLease(ctx context.Context, executionID string, wo
 }
 
 func (tx *txStore) HeartbeatTask(ctx context.Context, taskID string, workerID string) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	task, err := tx.getTaskLocked(taskID)
 	if err != nil {
 		return err
@@ -224,6 +244,9 @@ func (tx *txStore) HeartbeatTask(ctx context.Context, taskID string, workerID st
 }
 
 func (tx *txStore) RecoverExpiredLeases(ctx context.Context, executionID string, leaseTTL time.Duration) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if leaseTTL <= 0 {
 		leaseTTL = tx.parent.leaseTTL
 	}
@@ -261,7 +284,9 @@ func (tx *txStore) RecoverExpiredLeases(ctx context.Context, executionID string,
 }
 
 func (tx *txStore) CompleteTask(ctx context.Context, taskID string, result map[string]any) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	task, err := tx.getTaskLocked(taskID)
 	if err != nil {
 		return err
@@ -277,7 +302,9 @@ func (tx *txStore) CompleteTask(ctx context.Context, taskID string, result map[s
 }
 
 func (tx *txStore) FailTask(ctx context.Context, taskID string, errorMessage string) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	task, err := tx.getTaskLocked(taskID)
 	if err != nil {
 		return err
@@ -292,7 +319,9 @@ func (tx *txStore) FailTask(ctx context.Context, taskID string, errorMessage str
 }
 
 func (tx *txStore) UpdateTask(ctx context.Context, task *runtime.ActivityTask) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if _, ok := tx.tasks[task.ID]; !ok {
 		if exists, err := tx.parent.exists(taskKey(task.ExecutionID, task.ID)); err != nil {
 			return err
@@ -306,17 +335,21 @@ func (tx *txStore) UpdateTask(ctx context.Context, task *runtime.ActivityTask) e
 }
 
 func (tx *txStore) FindTask(ctx context.Context, executionID string, ruleName string, activityName string, idempotencyKey string) (*runtime.ActivityTask, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for _, task := range tx.tasks {
 		if task.ExecutionID == executionID && task.RuleName == ruleName && task.ActivityName == activityName && task.IdempotencyKey == idempotencyKey {
 			return cloneTask(task), nil
 		}
 	}
-	_ = ctx
 	return tx.parent.findTaskLocked(executionID, ruleName, activityName, idempotencyKey)
 }
 
 func (tx *txStore) NextTaskSeq(ctx context.Context, executionID string) (int, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	next, err := tx.parent.nextTaskSeqLocked(executionID)
 	if err != nil {
 		return 0, err

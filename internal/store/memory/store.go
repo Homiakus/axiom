@@ -34,7 +34,9 @@ func NewStore() *Store {
 // The in-memory store does not use context for cancellation; operations are
 // instantaneous under a mutex.
 func (s *Store) CreateExecution(ctx context.Context, execution *runtime.Execution) error {
-	_ = ctx // in-memory store does not need context
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.executions[execution.ID]; ok {
@@ -45,7 +47,9 @@ func (s *Store) CreateExecution(ctx context.Context, execution *runtime.Executio
 }
 
 func (s *Store) GetExecution(ctx context.Context, id string) (*runtime.Execution, error) {
-	_ = ctx // in-memory store does not need context
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	execution, ok := s.executions[id]
@@ -56,7 +60,9 @@ func (s *Store) GetExecution(ctx context.Context, id string) (*runtime.Execution
 }
 
 func (s *Store) SaveExecution(ctx context.Context, execution *runtime.Execution) error {
-	_ = ctx // in-memory store does not need context
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.executions[execution.ID]; !ok {
@@ -70,7 +76,9 @@ func (s *Store) SaveExecution(ctx context.Context, execution *runtime.Execution)
 }
 
 func (s *Store) AppendHistory(ctx context.Context, executionID string, entryType string, payload map[string]any) error {
-	_ = ctx // in-memory store does not need context
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	seq := len(s.history[executionID]) + 1
@@ -84,7 +92,9 @@ func (s *Store) AppendHistory(ctx context.Context, executionID string, entryType
 }
 
 func (s *Store) ListHistory(ctx context.Context, executionID string) ([]runtime.HistoryEntry, error) {
-	_ = ctx // in-memory store does not need context
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	values := s.history[executionID]
@@ -97,7 +107,9 @@ func (s *Store) ListHistory(ctx context.Context, executionID string) ([]runtime.
 }
 
 func (s *Store) EnqueueTask(ctx context.Context, task *runtime.ActivityTask) error {
-	_ = ctx // in-memory store does not need context
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := cloneTask(task)
@@ -107,7 +119,9 @@ func (s *Store) EnqueueTask(ctx context.Context, task *runtime.ActivityTask) err
 }
 
 func (s *Store) ListTasks(ctx context.Context, executionID string) ([]*runtime.ActivityTask, error) {
-	_ = ctx // in-memory store does not need context
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	values := s.tasks[executionID]
@@ -123,7 +137,9 @@ func (s *Store) PollTask(ctx context.Context, executionID string) (*runtime.Acti
 }
 
 func (s *Store) PollTaskWithLease(ctx context.Context, executionID string, workerID string, leaseTTL time.Duration) (*runtime.ActivityTask, error) {
-	_ = ctx // in-memory store does not need context
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if workerID == "" {
@@ -159,7 +175,9 @@ func (s *Store) PollTaskWithLease(ctx context.Context, executionID string, worke
 }
 
 func (s *Store) UpdateTask(ctx context.Context, task *runtime.ActivityTask) error {
-	_ = ctx // in-memory store does not need context
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	values := s.tasks[task.ExecutionID]
@@ -175,7 +193,9 @@ func (s *Store) UpdateTask(ctx context.Context, task *runtime.ActivityTask) erro
 }
 
 func (s *Store) HeartbeatTask(ctx context.Context, taskID string, workerID string) error {
-	_ = ctx // in-memory store does not need context
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	task := s.taskByID[taskID]
@@ -193,7 +213,9 @@ func (s *Store) HeartbeatTask(ctx context.Context, taskID string, workerID strin
 }
 
 func (s *Store) RecoverExpiredLeases(ctx context.Context, executionID string, leaseTTL time.Duration) (int, error) {
-	_ = ctx // in-memory store does not need context
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC()
@@ -223,7 +245,9 @@ func (s *Store) RecoverExpiredLeases(ctx context.Context, executionID string, le
 }
 
 func (s *Store) CompleteTask(ctx context.Context, taskID string, result map[string]any) error {
-	_ = ctx // in-memory store does not need context
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	task := s.taskByID[taskID]
@@ -240,7 +264,9 @@ func (s *Store) CompleteTask(ctx context.Context, taskID string, result map[stri
 }
 
 func (s *Store) FailTask(ctx context.Context, taskID string, errorMessage string) error {
-	_ = ctx // in-memory store does not need context
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	task := s.taskByID[taskID]
@@ -256,7 +282,9 @@ func (s *Store) FailTask(ctx context.Context, taskID string, errorMessage string
 }
 
 func (s *Store) FindTask(ctx context.Context, executionID string, ruleName string, activityName string, idempotencyKey string) (*runtime.ActivityTask, error) {
-	_ = ctx // in-memory store does not need context
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	task := s.taskIndex[executionID][taskIndexKey(ruleName, activityName, idempotencyKey)]
@@ -264,7 +292,9 @@ func (s *Store) FindTask(ctx context.Context, executionID string, ruleName strin
 }
 
 func (s *Store) NextTaskSeq(ctx context.Context, executionID string) (int, error) {
-	_ = ctx // in-memory store does not need context
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.tasks[executionID]) + 1, nil

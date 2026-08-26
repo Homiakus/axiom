@@ -365,6 +365,85 @@ func RunADGOStoreConformanceSuite(t *testing.T, tester StoreTester) {
 			t.Fatalf("after second ack, inbox not empty: %+v", inbox)
 		}
 	})
+
+	t.Run("ContextCancellation_OperationsHonorPreCancelledContext", func(t *testing.T) {
+		store, cleanup := newStore(t)
+		defer cleanup()
+		bgCtx := context.Background()
+
+		exec := newTestExecution("exec-ctx-cancel", 1)
+		if err := store.Create(bgCtx, exec); err != nil {
+			t.Fatalf("setup Create failed: %v", err)
+		}
+
+		canceledCtx, cancel := context.WithCancel(bgCtx)
+		cancel()
+
+		// 1. Create with canceled context
+		newExec := newTestExecution("exec-ctx-cancel-2", 1)
+		if err := store.Create(canceledCtx, newExec); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Create(canceled) err = %v; want %v", err, context.Canceled)
+		}
+		if _, err := store.Load(bgCtx, "exec-ctx-cancel-2"); !errors.Is(err, ErrExecutionNotFound) {
+			t.Fatalf("Load after canceled Create: err = %v; want %v", err, ErrExecutionNotFound)
+		}
+
+		// 2. Load with canceled context
+		if _, err := store.Load(canceledCtx, "exec-ctx-cancel"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Load(canceled) err = %v; want %v", err, context.Canceled)
+		}
+
+		// 3. Commit with canceled context
+		mutateCalled := false
+		if _, err := store.Commit(canceledCtx, "exec-ctx-cancel", 1, func(e *Execution) error {
+			mutateCalled = true
+			return nil
+		}); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Commit(canceled) err = %v; want %v", err, context.Canceled)
+		}
+		if mutateCalled {
+			t.Fatal("Commit mutate callback was called despite canceled context")
+		}
+		loaded, err := store.Load(bgCtx, "exec-ctx-cancel")
+		if err != nil {
+			t.Fatalf("Load failed: %v", err)
+		}
+		if loaded.Version != 1 {
+			t.Fatalf("version advanced after canceled Commit: %d", loaded.Version)
+		}
+
+		// 4. PutInbox with canceled context
+		if err := store.PutInbox(canceledCtx, "exec-ctx-cancel", Event{ID: "ev-cancel", Type: "Signal"}); !errors.Is(err, context.Canceled) {
+			t.Fatalf("PutInbox(canceled) err = %v; want %v", err, context.Canceled)
+		}
+		inbox, err := store.ListInbox(bgCtx, "exec-ctx-cancel")
+		if err != nil {
+			t.Fatalf("ListInbox failed: %v", err)
+		}
+		if len(inbox) != 0 {
+			t.Fatalf("PutInbox persisted event under canceled context: %+v", inbox)
+		}
+
+		// 5. ListInbox with canceled context
+		if _, err := store.ListInbox(canceledCtx, "exec-ctx-cancel"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("ListInbox(canceled) err = %v; want %v", err, context.Canceled)
+		}
+
+		// 6. AckInbox with canceled context
+		if err := store.PutInbox(bgCtx, "exec-ctx-cancel", Event{ID: "ev-1", Type: "Signal"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.AckInbox(canceledCtx, "exec-ctx-cancel", []string{"ev-1"}); !errors.Is(err, context.Canceled) {
+			t.Fatalf("AckInbox(canceled) err = %v; want %v", err, context.Canceled)
+		}
+		inbox, err = store.ListInbox(bgCtx, "exec-ctx-cancel")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(inbox) != 1 {
+			t.Fatalf("AckInbox under canceled context mutated inbox: %+v", inbox)
+		}
+	})
 }
 
 func newTestExecution(id string, version uint64) *Execution {

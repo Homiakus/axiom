@@ -126,7 +126,10 @@ func NewMemoryFlowStore() *MemoryFlowStore {
 
 func (s *MemoryFlowStore) key(flow, id string) string { return flow + "\x00" + id }
 
-func (s *MemoryFlowStore) Load(_ context.Context, flow, id string) ([]byte, []FlowHistoryEntry, bool, error) {
+func (s *MemoryFlowStore) Load(ctx context.Context, flow, id string) ([]byte, []FlowHistoryEntry, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, false, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	value, ok := s.records[s.key(flow, id)]
@@ -136,7 +139,10 @@ func (s *MemoryFlowStore) Load(_ context.Context, flow, id string) ([]byte, []Fl
 	return append([]byte(nil), value.state...), append([]FlowHistoryEntry(nil), value.history...), true, nil
 }
 
-func (s *MemoryFlowStore) Save(_ context.Context, flow, id string, state []byte, history []FlowHistoryEntry) error {
+func (s *MemoryFlowStore) Save(ctx context.Context, flow, id string, state []byte, history []FlowHistoryEntry) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.records[s.key(flow, id)] = memoryFlowRecord{
@@ -146,7 +152,10 @@ func (s *MemoryFlowStore) Save(_ context.Context, flow, id string, state []byte,
 	return nil
 }
 
-func (s *MemoryFlowStore) LoadState(_ context.Context, flow, id string) ([]byte, int, bool, error) {
+func (s *MemoryFlowStore) LoadState(ctx context.Context, flow, id string) ([]byte, int, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, false, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	value, ok := s.records[s.key(flow, id)]
@@ -156,7 +165,10 @@ func (s *MemoryFlowStore) LoadState(_ context.Context, flow, id string) ([]byte,
 	return append([]byte(nil), value.state...), len(value.history), true, nil
 }
 
-func (s *MemoryFlowStore) SaveStateAndAppend(_ context.Context, flow, id string, state []byte, entries []FlowHistoryEntry) error {
+func (s *MemoryFlowStore) SaveStateAndAppend(ctx context.Context, flow, id string, state []byte, entries []FlowHistoryEntry) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := s.key(flow, id)
@@ -167,7 +179,10 @@ func (s *MemoryFlowStore) SaveStateAndAppend(_ context.Context, flow, id string,
 	return nil
 }
 
-func (s *MemoryFlowStore) LoadHistory(_ context.Context, flow, id string) ([]FlowHistoryEntry, error) {
+func (s *MemoryFlowStore) LoadHistory(ctx context.Context, flow, id string) ([]FlowHistoryEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	value := s.records[s.key(flow, id)]

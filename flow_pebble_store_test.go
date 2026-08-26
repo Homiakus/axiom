@@ -238,3 +238,31 @@ func TestPebbleFlowStoreHonorsCancelledContextBeforeWrite(t *testing.T) {
 		t.Fatal("cancelled write persisted state")
 	}
 }
+
+func TestMemoryFlowStoreHonorsCancelledContext(t *testing.T) {
+	store := NewMemoryFlowStore()
+	bgCtx := context.Background()
+	if err := store.Save(bgCtx, "flow", "item-1", []byte(`{"state":1}`), []FlowHistoryEntry{{Sequence: 1, Type: "Init"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	canceledCtx, cancel := context.WithCancel(bgCtx)
+	cancel()
+
+	if _, _, _, err := store.Load(canceledCtx, "flow", "item-1"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Load(canceled) err = %v, want context.Canceled", err)
+	}
+	if err := store.Save(canceledCtx, "flow", "item-2", []byte(`{}`), nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Save(canceled) err = %v, want context.Canceled", err)
+	}
+	if _, _, _, err := store.LoadState(canceledCtx, "flow", "item-1"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("LoadState(canceled) err = %v, want context.Canceled", err)
+	}
+	if err := store.SaveStateAndAppend(canceledCtx, "flow", "item-1", []byte(`{}`), nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("SaveStateAndAppend(canceled) err = %v, want context.Canceled", err)
+	}
+	if _, err := store.LoadHistory(canceledCtx, "flow", "item-1"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("LoadHistory(canceled) err = %v, want context.Canceled", err)
+	}
+}
+

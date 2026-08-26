@@ -34,7 +34,10 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{exec: map[string]*Execution{}, inbox: map[string]map[string]Event{}}
 }
 
-func (s *MemoryStore) Create(_ context.Context, e *Execution) error {
+func (s *MemoryStore) Create(ctx context.Context, e *Execution) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.exec[e.ID]; ok {
@@ -47,7 +50,10 @@ func (s *MemoryStore) Create(_ context.Context, e *Execution) error {
 	s.exec[e.ID] = c
 	return nil
 }
-func (s *MemoryStore) Load(_ context.Context, id string) (*Execution, error) {
+func (s *MemoryStore) Load(ctx context.Context, id string) (*Execution, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.exec[id]
@@ -56,7 +62,10 @@ func (s *MemoryStore) Load(_ context.Context, id string) (*Execution, error) {
 	}
 	return cloneExecution(e)
 }
-func (s *MemoryStore) Commit(_ context.Context, id string, expected uint64, mutate func(*Execution) error) (*Execution, error) {
+func (s *MemoryStore) Commit(ctx context.Context, id string, expected uint64, mutate func(*Execution) error) (*Execution, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cur, ok := s.exec[id]
@@ -82,7 +91,10 @@ func (s *MemoryStore) Commit(_ context.Context, id string, expected uint64, muta
 	s.exec[id] = next
 	return res, nil
 }
-func (s *MemoryStore) PutInbox(_ context.Context, id string, e Event) error {
+func (s *MemoryStore) PutInbox(ctx context.Context, id string, e Event) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.exec[id]; !ok {
@@ -99,7 +111,10 @@ func (s *MemoryStore) PutInbox(_ context.Context, id string, e Event) error {
 	}
 	return nil
 }
-func (s *MemoryStore) ListInbox(_ context.Context, id string) ([]Event, error) {
+func (s *MemoryStore) ListInbox(ctx context.Context, id string) ([]Event, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.exec[id]; !ok {
@@ -112,7 +127,10 @@ func (s *MemoryStore) ListInbox(_ context.Context, id string) ([]Event, error) {
 	sortEvents(out)
 	return out, nil
 }
-func (s *MemoryStore) AckInbox(_ context.Context, id string, ids []string) error {
+func (s *MemoryStore) AckInbox(ctx context.Context, id string, ids []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, eid := range ids {
@@ -151,6 +169,9 @@ func (s *FileStore) commitsDir(id string) string { return filepath.Join(s.execut
 func (s *FileStore) inboxDir(id string) string   { return filepath.Join(s.executionDir(id), "inbox") }
 
 func (s *FileStore) Create(ctx context.Context, e *Execution) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.withExecutionLock(ctx, e.ID, func() error {
@@ -170,7 +191,10 @@ func (s *FileStore) Create(ctx context.Context, e *Execution) error {
 	})
 }
 
-func (s *FileStore) Load(_ context.Context, id string) (*Execution, error) {
+func (s *FileStore) Load(ctx context.Context, id string) (*Execution, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.loadUnlocked(id)
@@ -205,6 +229,9 @@ func (s *FileStore) loadUnlocked(id string) (*Execution, error) {
 	return &e, nil
 }
 func (s *FileStore) Commit(ctx context.Context, id string, expected uint64, mutate func(*Execution) error) (*Execution, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var result *Execution
@@ -247,6 +274,9 @@ func (s *FileStore) writeCommit(e *Execution) error {
 	return atomicWrite(filepath.Join(dir, name), data)
 }
 func (s *FileStore) PutInbox(ctx context.Context, id string, e Event) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.withExecutionLock(ctx, id, func() error {
@@ -278,7 +308,10 @@ func (s *FileStore) PutInbox(ctx context.Context, id string, e Event) error {
 	})
 }
 
-func (s *FileStore) ListInbox(_ context.Context, id string) ([]Event, error) {
+func (s *FileStore) ListInbox(ctx context.Context, id string) ([]Event, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entries, err := os.ReadDir(s.inboxDir(id))
@@ -310,6 +343,9 @@ func (s *FileStore) ListInbox(_ context.Context, id string) ([]Event, error) {
 	return out, nil
 }
 func (s *FileStore) AckInbox(ctx context.Context, id string, ids []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.withExecutionLock(ctx, id, func() error {
@@ -324,6 +360,9 @@ func (s *FileStore) AckInbox(ctx context.Context, id string, ids []string) error
 }
 
 func (s *FileStore) withExecutionLock(ctx context.Context, id string, fn func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	locksDir := filepath.Join(s.root, "locks")
 	path := filepath.Join(locksDir, EncodeDurableName(id)+".lock")
 	owner, err := newFileLockOwner()

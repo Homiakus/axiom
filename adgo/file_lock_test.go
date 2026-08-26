@@ -1,6 +1,7 @@
 package adgo
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -95,3 +96,41 @@ func TestRemoveStaleFileLockKeepsFreshOwner(t *testing.T) {
 		t.Fatalf("owner=%q want owner-fresh", record.Owner)
 	}
 }
+
+func TestFileStoreLockWaitCancellation(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFileStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	exec := newTestExecution("exec-lock-wait-cancel", 1)
+	if err := store.Create(context.Background(), exec); err != nil {
+		t.Fatal(err)
+	}
+
+	// Lock the execution manually to simulate contention
+	locksDir := filepath.Join(dir, "locks")
+	lockPath := filepath.Join(locksDir, EncodeDurableName("exec-lock-wait-cancel")+".lock")
+	writeLockForTest(t, lockPath, "blocking-owner")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err = store.Commit(ctx, "exec-lock-wait-cancel", 1, func(e *Execution) error {
+		return nil
+	})
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Fatalf("Commit during lock contention err = %v; want context deadline exceeded or canceled", err)
+	}
+
+	// Verify the original lock held by blocking-owner was not deleted or corrupted
+	record, err := readFileLockRecord(lockPath)
+	if err != nil {
+		t.Fatalf("blocking lock was damaged by canceled caller: %v", err)
+	}
+	if record.Owner != "blocking-owner" {
+		t.Fatalf("blocking lock owner changed: got %q, want blocking-owner", record.Owner)
+	}
+}
+

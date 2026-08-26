@@ -133,7 +133,9 @@ func (s *Store) flushLoop() {
 }
 
 func (s *Store) CreateExecution(ctx context.Context, execution *runtime.Execution) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if exists, err := s.exists(execKey(execution.ID)); err != nil {
@@ -150,7 +152,9 @@ func (s *Store) CreateExecution(ctx context.Context, execution *runtime.Executio
 }
 
 func (s *Store) GetExecution(ctx context.Context, id string) (*runtime.Execution, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.getExecutionLocked(id)
@@ -168,7 +172,9 @@ func (s *Store) getExecutionLocked(id string) (*runtime.Execution, error) {
 }
 
 func (s *Store) SaveExecution(ctx context.Context, execution *runtime.Execution) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if exists, err := s.exists(execKey(execution.ID)); err != nil {
@@ -188,7 +194,9 @@ func (s *Store) SaveExecution(ctx context.Context, execution *runtime.Execution)
 }
 
 func (s *Store) AppendHistory(ctx context.Context, executionID string, entryType string, payload map[string]any) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	seq, err := s.nextHistorySeq(executionID)
@@ -213,7 +221,9 @@ func (s *Store) AppendHistory(ctx context.Context, executionID string, entryType
 }
 
 func (s *Store) ListHistory(ctx context.Context, executionID string) ([]runtime.HistoryEntry, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.listHistoryLocked(executionID)
@@ -237,7 +247,9 @@ func (s *Store) listHistoryLocked(executionID string) ([]runtime.HistoryEntry, e
 }
 
 func (s *Store) EnqueueTask(ctx context.Context, task *runtime.ActivityTask) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := cloneTask(task)
@@ -250,7 +262,9 @@ func (s *Store) EnqueueTask(ctx context.Context, task *runtime.ActivityTask) err
 }
 
 func (s *Store) ListTasks(ctx context.Context, executionID string) ([]*runtime.ActivityTask, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	iter, err := s.db.NewIter(&pebbledb.IterOptions{LowerBound: []byte(taskPrefix(executionID)), UpperBound: []byte(taskPrefixEnd(executionID))})
@@ -286,7 +300,9 @@ func (s *Store) PollTaskWithLease(ctx context.Context, executionID string, worke
 }
 
 func (s *Store) UpdateTask(ctx context.Context, task *runtime.ActivityTask) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if exists, err := s.exists(taskKey(task.ExecutionID, task.ID)); err != nil {
@@ -303,7 +319,9 @@ func (s *Store) UpdateTask(ctx context.Context, task *runtime.ActivityTask) erro
 }
 
 func (s *Store) HeartbeatTask(ctx context.Context, taskID string, workerID string) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	task, err := s.getTaskByIDLocked(taskID)
@@ -327,7 +345,9 @@ func (s *Store) HeartbeatTask(ctx context.Context, taskID string, workerID strin
 }
 
 func (s *Store) CompleteTask(ctx context.Context, taskID string, result map[string]any) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	task, err := s.getTaskByIDLocked(taskID)
@@ -349,7 +369,9 @@ func (s *Store) CompleteTask(ctx context.Context, taskID string, result map[stri
 }
 
 func (s *Store) FailTask(ctx context.Context, taskID string, errorMessage string) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	task, err := s.getTaskByIDLocked(taskID)
@@ -370,7 +392,9 @@ func (s *Store) FailTask(ctx context.Context, taskID string, errorMessage string
 }
 
 func (s *Store) FindTask(ctx context.Context, executionID string, ruleName string, activityName string, idempotencyKey string) (*runtime.ActivityTask, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.findTaskLocked(executionID, ruleName, activityName, idempotencyKey)
@@ -395,7 +419,9 @@ func (s *Store) findTaskLocked(executionID string, ruleName string, activityName
 }
 
 func (s *Store) NextTaskSeq(ctx context.Context, executionID string) (int, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.nextTaskSeqLocked(executionID)
@@ -415,7 +441,9 @@ func (s *Store) nextTaskSeqLocked(executionID string) (int, error) {
 var errNoTask = errors.New("no pending task")
 
 func (s *Store) LeaseTask(ctx context.Context, executionID string, owner string, ttl time.Duration) (*runtime.ActivityTask, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if owner == "" {
@@ -451,7 +479,9 @@ func (s *Store) LeaseTask(ctx context.Context, executionID string, owner string,
 }
 
 func (s *Store) RecoverExpiredLeases(ctx context.Context, executionID string, ttl time.Duration) (int, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if ttl <= 0 {

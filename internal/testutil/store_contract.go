@@ -235,6 +235,61 @@ func RunStoreContract(t *testing.T, factory StoreFactory) {
 			t.Fatalf("heartbeat from owner failed: %v", err)
 		}
 	})
+
+	t.Run("operations honor pre-canceled context", func(t *testing.T) {
+		store := fresh(t)
+		bgCtx := context.Background()
+		exec := contractExecution("exec-ctx")
+		if err := store.CreateExecution(bgCtx, exec); err != nil {
+			t.Fatal(err)
+		}
+
+		canceledCtx, cancel := context.WithCancel(bgCtx)
+		cancel()
+
+		if err := store.CreateExecution(canceledCtx, contractExecution("exec-ctx-2")); !errors.Is(err, context.Canceled) {
+			t.Fatalf("CreateExecution(canceled) err = %v; want %v", err, context.Canceled)
+		}
+		if _, err := store.GetExecution(canceledCtx, "exec-ctx"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("GetExecution(canceled) err = %v; want %v", err, context.Canceled)
+		}
+		if err := store.SaveExecution(canceledCtx, exec); !errors.Is(err, context.Canceled) {
+			t.Fatalf("SaveExecution(canceled) err = %v; want %v", err, context.Canceled)
+		}
+		if err := store.AppendHistory(canceledCtx, "exec-ctx", "event", map[string]any{"k": "v"}); !errors.Is(err, context.Canceled) {
+			t.Fatalf("AppendHistory(canceled) err = %v; want %v", err, context.Canceled)
+		}
+		if _, err := store.ListHistory(canceledCtx, "exec-ctx"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("ListHistory(canceled) err = %v; want %v", err, context.Canceled)
+		}
+
+		now := time.Now().UTC()
+		task := &runtime.ActivityTask{ID: "exec-ctx:1", ExecutionID: "exec-ctx", Status: runtime.TaskPending, CreatedAt: now, UpdatedAt: now}
+		if err := store.EnqueueTask(canceledCtx, task); !errors.Is(err, context.Canceled) {
+			t.Fatalf("EnqueueTask(canceled) err = %v; want %v", err, context.Canceled)
+		}
+		if _, err := store.ListTasks(canceledCtx, "exec-ctx"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("ListTasks(canceled) err = %v; want %v", err, context.Canceled)
+		}
+		if _, err := store.PollTaskWithLease(canceledCtx, "exec-ctx", "worker", time.Minute); !errors.Is(err, context.Canceled) {
+			t.Fatalf("PollTaskWithLease(canceled) err = %v; want %v", err, context.Canceled)
+		}
+		if err := store.UpdateTask(canceledCtx, task); !errors.Is(err, context.Canceled) {
+			t.Fatalf("UpdateTask(canceled) err = %v; want %v", err, context.Canceled)
+		}
+		if err := store.HeartbeatTask(canceledCtx, "exec-ctx:1", "worker"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("HeartbeatTask(canceled) err = %v; want %v", err, context.Canceled)
+		}
+		if _, err := store.RecoverExpiredLeases(canceledCtx, "exec-ctx", time.Minute); !errors.Is(err, context.Canceled) {
+			t.Fatalf("RecoverExpiredLeases(canceled) err = %v; want %v", err, context.Canceled)
+		}
+		if err := store.CompleteTask(canceledCtx, "exec-ctx:1", map[string]any{"ok": true}); !errors.Is(err, context.Canceled) {
+			t.Fatalf("CompleteTask(canceled) err = %v; want %v", err, context.Canceled)
+		}
+		if err := store.FailTask(canceledCtx, "exec-ctx:1", "error"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("FailTask(canceled) err = %v; want %v", err, context.Canceled)
+		}
+	})
 }
 
 func contractExecution(id string) *runtime.Execution {

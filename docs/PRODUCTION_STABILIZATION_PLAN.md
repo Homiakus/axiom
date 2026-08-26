@@ -452,7 +452,7 @@ Do not paper over backend differences; represent optional capabilities explicitl
 
 ## STORE-002 — Define context-cancellation semantics for store operations
 
-Status: **TODO**
+Status: **DONE**
 
 ### Evidence
 
@@ -470,6 +470,7 @@ Document which operations are:
 Then enforce the contract consistently across Memory/File/Pebble and Flow stores.
 
 Do not add mid-commit cancellation that can violate atomicity.
+
 
 ---
 
