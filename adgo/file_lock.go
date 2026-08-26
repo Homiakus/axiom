@@ -1,12 +1,14 @@
 package adgo
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +49,93 @@ func readFileLockRecord(path string) (fileLockRecord, error) {
 		return fileLockRecord{Owner: "legacy:" + legacy}, nil
 	}
 	return fileLockRecord{}, errors.New("adgo: malformed file-store lock record")
+}
+
+// withOwnedFileLock executes fn while filename is held by a unique ownership
+// token. The token is checked on release and a heartbeat keeps long-running
+// live owners from being reclaimed as stale. All file-backed coordination
+// primitives should use this helper instead of implementing anonymous lock-file
+// removal independently.
+func withOwnedFileLock(ctx context.Context, locksDir, filename string, staleAfter time.Duration, fn func() error) error {
+	if err := os.MkdirAll(locksDir, 0o755); err != nil {
+		return err
+	}
+	path := filepath.Join(locksDir, filename)
+	owner, err := newFileLockOwner()
+	if err != nil {
+		return err
+	}
+	for {
+		file, openErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if openErr == nil {
+			record := fileLockRecord{Owner: owner, AcquiredAt: time.Now().UTC()}
+			if err := writeFileLockRecord(file, record); err != nil {
+				_ = file.Close()
+				_ = os.Remove(path)
+				return err
+			}
+			if err := file.Sync(); err != nil {
+				_ = file.Close()
+				_ = releaseFileLock(path, owner)
+				return err
+			}
+			if err := syncDir(locksDir); err != nil {
+				_ = file.Close()
+				_ = releaseFileLock(path, owner)
+				return err
+			}
+
+			heartbeat := startFileLockHeartbeat(file, path, owner, staleAfter)
+			cleaned := false
+			cleanup := func() error {
+				heartbeatErr := heartbeat.Stop()
+				closeErr := file.Close()
+				releaseErr := releaseFileLock(path, owner)
+				syncErr := syncDir(locksDir)
+				if heartbeatErr != nil {
+					return heartbeatErr
+				}
+				if closeErr != nil {
+					return closeErr
+				}
+				if releaseErr != nil {
+					return releaseErr
+				}
+				return syncErr
+			}
+			defer func() {
+				if !cleaned {
+					_ = cleanup()
+				}
+			}()
+
+			fnErr := fn()
+			cleanupErr := cleanup()
+			cleaned = true
+			if fnErr != nil {
+				return fnErr
+			}
+			return cleanupErr
+		}
+		if !errors.Is(openErr, fs.ErrExist) {
+			return openErr
+		}
+		removed, staleErr := removeStaleFileLock(path, staleAfter)
+		if staleErr != nil {
+			return staleErr
+		}
+		if removed {
+			if err := syncDir(locksDir); err != nil {
+				return err
+			}
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }
 
 // releaseFileLock removes a lock only while the path still belongs to owner.
