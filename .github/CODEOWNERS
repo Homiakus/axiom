@@ -1,0 +1,25 @@
+# Default code owner for all files in the repository
+* @Homiakus
+
+# Core runtime & public API
+/axiom.go @Homiakus
+/model/** @Homiakus
+/table/** @Homiakus
+/axm/** @Homiakus
+/diagram/** @Homiakus
+/internal/runtime/** @Homiakus
+/internal/compiler/** @Homiakus
+/internal/lang/** @Homiakus
+
+# Storage & persistence
+/internal/store/** @Homiakus
+/store/** @Homiakus
+
+# ADGO runtime & flow
+/adgo/** @Homiakus
+
+# CI/CD and workflows
+/.github/** @Homiakus
+
+# Documentation, specifications, and architecture plans
+/docs/** @Homiakus

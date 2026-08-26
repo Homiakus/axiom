@@ -1334,9 +1334,9 @@ Priority: **P1/P2.**
 
 ## GOV-001 — Add CODEOWNERS
 
-Status: **TODO**
+Status: **DONE**
 
-See P0-004.
+Added `.github/CODEOWNERS` defining ownership across core runtime, stores, ADGO, workflows, and documentation.
 
 ---
 
