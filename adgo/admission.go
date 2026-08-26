@@ -242,29 +242,8 @@ func (c *FileAdmissionController) write(state *admissionState) error {
 func (c *FileAdmissionController) withLock(ctx context.Context, key string, fn func() error) error {
 	locks := filepath.Join(c.root, "locks")
 	sum := sha256.Sum256([]byte(key))
-	path := filepath.Join(locks, "admission-"+hex.EncodeToString(sum[:12])+".lock")
-	for {
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-		if err == nil {
-			_, _ = fmt.Fprintf(file, "%d\n", time.Now().UTC().UnixNano())
-			_ = file.Sync()
-			_ = file.Close()
-			defer func() { _ = os.Remove(path); _ = syncDir(locks) }()
-			return fn()
-		}
-		if !errors.Is(err, fs.ErrExist) {
-			return err
-		}
-		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > c.lockStaleAfter {
-			_ = os.Remove(path)
-			continue
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
+	name := "admission-" + hex.EncodeToString(sum[:12]) + ".lock"
+	return withOwnedFileLock(ctx, locks, name, c.lockStaleAfter, fn)
 }
 
 func acquireAdmission(state *admissionState, key string, policy AdmissionPolicy, ttl time.Duration, now time.Time) (AdmissionLease, error) {
