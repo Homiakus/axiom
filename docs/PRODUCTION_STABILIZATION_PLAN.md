@@ -195,7 +195,7 @@ The rule is easy to find and consistent with CI behavior.
 
 ## P0-003 — Correct public Pebble codec documentation
 
-Status: **TODO**
+Status: **DONE**
 
 ### Evidence
 

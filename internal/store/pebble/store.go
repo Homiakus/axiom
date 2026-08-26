@@ -62,19 +62,23 @@ func WithSyncEvery(interval time.Duration) Option {
 		}
 	}
 }
-
+// WithJSONCodec configures the store to use JSON encoding for value records (default).
 func WithJSONCodec() Option {
 	return func(s *Store) {
 		s.codec = codecJSON
 	}
 }
 
+// WithGobCodec configures the store to use Gob encoding for value records (opt-in).
 func WithGobCodec() Option {
 	return func(s *Store) {
 		s.codec = codecGob
 	}
 }
 
+// Open opens a Pebble-backed durable store. By default, JSON encoding is used.
+// It verifies the persisted schema version ("1") and codec marker in store metadata,
+// failing fast if a conflict or unsupported schema is detected.
 func Open(path string, opts ...Option) (*Store, error) {
 	db, err := pebbledb.Open(path, &pebbledb.Options{})
 	if err != nil {

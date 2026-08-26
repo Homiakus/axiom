@@ -172,14 +172,17 @@ var PebbleNoSync = pebblestore.WithNoSync
 // PebbleSyncEvery batches syncs at the given interval.
 var PebbleSyncEvery = pebblestore.WithSyncEvery
 
-// PebbleJSONCodec uses JSON instead of Gob for encoding.
+// PebbleJSONCodec uses JSON for encoding records (default).
 var PebbleJSONCodec = pebblestore.WithJSONCodec
 
-// PebbleGobCodec uses Gob encoding (default).
+// PebbleGobCodec uses Gob encoding (opt-in alternative codec).
 var PebbleGobCodec = pebblestore.WithGobCodec
 
-// OpenPebble opens a Pebble-backed durable store. Fail-fast: returns error
-// immediately if the store cannot be opened.
+// OpenPebble opens a Pebble-backed durable store using JSON encoding by default.
+// The store's schema version and selected codec are persisted in metadata.
+// Reopening an existing store with a conflicting codec or an unsupported schema
+// version fails fast with an error. Legacy unmarked stores are automatically
+// detected and adopted on open. See docs/runtime-semantics.md for full details.
 //
 //	store, err := axiom.OpenPebble("data/axiom", axiom.PebbleNoSync())
 //	engine := app.MustNew(axiom.WithStore(store))
