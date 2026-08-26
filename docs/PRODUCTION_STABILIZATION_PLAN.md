@@ -618,20 +618,15 @@ Core Engine also owns `storeMu` around transactional execution paths while it ha
 
 ## SCALE-003 — Design conflict/isolation model before replacing global mutex
 
-Status: **TODO**
+Status: **DONE**
 
-Write a short design note containing:
-
-- transaction read snapshot semantics;
-- sequence allocation strategy;
-- same-execution conflict handling;
-- cross-execution independence;
-- task dedup/index consistency;
-- commit atomicity;
-- retry/CAS policy;
-- rollback behavior.
-
-Possible implementations may include execution-scoped/striped locking, Pebble indexed batches/snapshots, or optimistic CAS. Choose only after benchmarks and contracts exist.
+Documented in [`docs/TRANSACTION_ISOLATION_DESIGN.md`](docs/TRANSACTION_ISOLATION_DESIGN.md):
+- Read snapshot and Read-Your-Own-Writes staging semantics;
+- Execution-partitioned sequence allocation (`hseq/<execID>`, `tseq/<execID>`);
+- Same-execution synchronization via `executionLocks` and CAS versioning;
+- Cross-execution independence with namespaced key paths;
+- Atomic multi-entity batch commits and rollback guarantees;
+- Refactoring plan for fine-grained locking in SCALE-004 / SCALE-005.
 
 ---
 

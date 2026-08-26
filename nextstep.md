@@ -35,15 +35,16 @@
 #### Milestone M3 — Scaling & Contention Reduction (IN PROGRESS)
 - **SCALE-001**: Benchmark Current Core Pebble Transaction Contention (`internal/store/pebble/benchmark_contention_test.go` covering 1-32 concurrent workers, read/write/mixed/same-exec profiles, and latency percentiles).
 - **SCALE-002**: Measure Double-Serialization Between Engine and Store (`internal/runtime/engine_concurrency_test.go` verifying executionLocks isolation and concurrency benchmarks).
+- **SCALE-003**: Design Conflict/Isolation Model Before Replacing Global Mutex (`docs/TRANSACTION_ISOLATION_DESIGN.md` documenting snapshot semantics, sequence allocation, and cross-execution independence).
 
 ---
 
 ## 2. Immediate Next Tasks — Milestone M3 (SCALE)
 
-### SCALE-003 — Design conflict/isolation model before replacing global mutex
-- **Objective**: Document snapshot read semantics, sequence allocation, same-execution conflict handling, cross-execution independence, commit atomicity, and rollback behavior in `docs/TRANSACTION_ISOLATION_DESIGN.md`.
-- **Target Files**: `docs/TRANSACTION_ISOLATION_DESIGN.md`.
-- **Verification**: Consistency check with Store conformance tests.
+### SCALE-004 — Refactor core Pebble transaction locking
+- **Objective**: Refactor PebbleStore to remove transaction-lifetime global mutex holding, using execution-scoped operations while preserving 100% store contracts.
+- **Target Files**: `internal/store/pebble/store.go`, `internal/store/pebble/transaction.go`.
+- **Verification**: `go test -race ./internal/store/pebble/...` and `TestPebbleStoreContract`.
 
 ### SCALE-003 — MemoryStore lock granularity evaluation
 - **Objective**: Evaluate per-execution sharded mutexes / sync.Map vs global lock to eliminate goroutine lock contention on high-throughput in-memory execution engines.
