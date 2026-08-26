@@ -106,9 +106,9 @@ func ApplyRepair(p *Plan, e *Execution, r RepairPlan) error {
 }
 
 func ApplyRepairWithClock(p *Plan, e *Execution, r RepairPlan, now time.Time) error {
-
 	for _, root := range r.Roots {
 		n := p.Nodes[root]
+
 		b := n.Loop
 		if b == nil {
 			return fmt.Errorf("adgo: repair root %s has no loop bound", root)
