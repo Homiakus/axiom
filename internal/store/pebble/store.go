@@ -90,6 +90,10 @@ func Open(path string, opts ...Option) (*Store, error) {
 	for _, opt := range opts {
 		opt(store)
 	}
+	if err := store.ensureStoreFormat(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if store.flushEvery > 0 {
 		store.stopFlush = make(chan struct{})
 		store.flushDone = make(chan struct{})
