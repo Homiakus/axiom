@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Homiakus/axiom/internal/syncx"
 	pebbledb "github.com/cockroachdb/pebble"
 )
 
@@ -23,10 +24,11 @@ func WithPebbleNoSync() PebbleStoreOption {
 // PebbleStore is a high-throughput local durable backend. Every execution
 // commit is stored twice in one atomic batch: immutable version snapshot + latest
 // pointer value. Inbox events and execution catalog entries share the same DB.
-// Pebble itself owns the process-level database lock, while Store CAS is guarded
-// by the execution Version under the store mutex.
+// Pebble itself owns the process-level database lock, while Store operations are guarded
+// by fine-grained per-execution locks and a catalog RWMutex to eliminate contention.
 type PebbleStore struct {
-	mu         sync.Mutex
+	execLocks  *syncx.KeyedLocker
+	catalogMu  sync.RWMutex
 	db         *pebbledb.DB
 	syncWrites bool
 }
@@ -36,7 +38,11 @@ func OpenPebbleStore(path string, options ...PebbleStoreOption) (*PebbleStore, e
 	if err != nil {
 		return nil, err
 	}
-	store := &PebbleStore{db: db, syncWrites: true}
+	store := &PebbleStore{
+		db:         db,
+		syncWrites: true,
+		execLocks:  syncx.NewKeyedLocker(),
+	}
 	for _, option := range options {
 		option(store)
 	}
@@ -68,8 +74,9 @@ func (s *PebbleStore) Create(ctx context.Context, execution *Execution) error {
 	if execution == nil || execution.ID == "" {
 		return fmt.Errorf("adgo: execution is required")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.execLocks.Lock(execution.ID)
+	defer unlock()
+
 	if _, err := s.loadUnlocked(execution.ID); err == nil {
 		return ErrExecutionExists
 	} else if !errors.Is(err, ErrExecutionNotFound) {
@@ -94,8 +101,8 @@ func (s *PebbleStore) Load(ctx context.Context, id string) (*Execution, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.execLocks.Lock(id)
+	defer unlock()
 	return s.loadUnlocked(id)
 }
 
@@ -120,8 +127,9 @@ func (s *PebbleStore) Commit(ctx context.Context, id string, expected uint64, mu
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.execLocks.Lock(id)
+	defer unlock()
+
 	current, err := s.loadUnlocked(id)
 	if err != nil {
 		return nil, err
@@ -164,8 +172,9 @@ func (s *PebbleStore) PutInbox(ctx context.Context, id string, event Event) erro
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.execLocks.Lock(id)
+	defer unlock()
+
 	if _, err := s.loadUnlocked(id); err != nil {
 		return err
 	}
@@ -193,8 +202,9 @@ func (s *PebbleStore) ListInbox(ctx context.Context, id string) ([]Event, error)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.execLocks.Lock(id)
+	defer unlock()
+
 	if _, err := s.loadUnlocked(id); err != nil {
 		return nil, err
 	}
@@ -223,8 +233,9 @@ func (s *PebbleStore) AckInbox(ctx context.Context, id string, ids []string) err
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.execLocks.Lock(id)
+	defer unlock()
+
 	batch := s.db.NewBatch()
 	defer batch.Close()
 	for _, eventID := range ids {
@@ -239,8 +250,9 @@ func (s *PebbleStore) ListExecutionIDs(ctx context.Context) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.catalogMu.RLock()
+	defer s.catalogMu.RUnlock()
+
 	prefix := []byte("adgo/c/")
 	iter, err := s.db.NewIter(&pebbledb.IterOptions{LowerBound: prefix, UpperBound: prefixEnd(prefix)})
 	if err != nil {
@@ -262,8 +274,9 @@ func (s *PebbleStore) ListVersions(ctx context.Context, id string) ([]*Execution
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.execLocks.Lock(id)
+	defer unlock()
+
 	if _, err := s.loadUnlocked(id); err != nil {
 		return nil, err
 	}

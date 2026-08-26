@@ -167,8 +167,8 @@ func (s *FileStore) PruneVersions(ctx context.Context, id string, keepLast int) 
 }
 
 func (s *PebbleStore) DeleteExecution(_ context.Context, id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.execLocks.Lock(id)
+	defer unlock()
 	if _, err := s.loadUnlocked(id); err != nil {
 		return err
 	}
@@ -188,8 +188,8 @@ func (s *PebbleStore) PruneVersions(_ context.Context, id string, keepLast int) 
 	if keepLast < 1 {
 		return 0, fmt.Errorf("adgo: keepLast must be >= 1")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.execLocks.Lock(id)
+	defer unlock()
 	if _, err := s.loadUnlocked(id); err != nil {
 		return 0, err
 	}
