@@ -272,7 +272,7 @@ The initial time work fixed the most visible flakes, but the codebase still cont
 
 ## TIME-001 — Build a checked clock-usage inventory
 
-Status: **TODO**
+Status: **DONE**
 
 ### Scope
 
