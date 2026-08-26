@@ -122,7 +122,8 @@ Priority: **P0; no unrelated feature or performance work until complete.**
 
 ## P0-001 — Fix Windows portability of admission lock replacement regression
 
-Status: **P0 BLOCKER**
+Status: **DONE**
+Implementation commit: `9f51ae6ecbb0328c86214cd2f20ba473b67b8b0a`
 
 ### Evidence
 
@@ -173,7 +174,7 @@ Required GitHub matrix: Linux + Windows + macOS all green.
 
 ## P0-002 — Make red-main recovery an explicit merge invariant
 
-Status: **TODO**
+Status: **DONE**
 
 ### Change
 
@@ -184,7 +185,7 @@ Add a concise repository rule/documentation entry stating:
 - the next commit after a red baseline should either fix the failure or revert the introducing change;
 - no test may be disabled merely to restore the badge.
 
-This may live in `CONTRIBUTING.md` and be referenced from this plan.
+This is documented in `CONTRIBUTING.md` and enforced as a mandatory execution rule.
 
 ### Acceptance
 
@@ -1183,9 +1184,10 @@ Priority: **P1/P2.**
 
 ## CI-001 — Restore cross-platform green baseline
 
-Status: **P0 BLOCKER**
+Status: **DONE**
+Implementation commit: `9f51ae6ecbb0328c86214cd2f20ba473b67b8b0a`
 
-Same as P0-001. Current Windows failure must be repaired first.
+Same as P0-001. Cross-platform CI matrix (Linux, Windows, macOS) is verified green.
 
 ---
 
