@@ -354,7 +354,7 @@ All of these decisions must use one clock source:
 
 ## TIME-003 — Unify retry deadline and retry waiting clocks
 
-Status: **PARTIAL**
+Status: **DONE**
 
 ### Evidence
 

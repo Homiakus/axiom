@@ -355,14 +355,12 @@ func drainUntilIdle(ctx context.Context, engine *Engine, executionID string) err
 		if wait <= 0 {
 			continue
 		}
-		timer := time.NewTimer(wait)
+		timer := engine.newTimer(wait)
 		select {
 		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
+			timer.Stop()
 			return ctx.Err()
-		case <-timer.C:
+		case <-timer.C():
 		}
 	}
 }

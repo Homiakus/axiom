@@ -7,6 +7,7 @@ import (
 
 	"github.com/Homiakus/axiom/internal/compiler"
 	"github.com/Homiakus/axiom/internal/diag"
+	"github.com/Homiakus/axiom/internal/durabletime"
 	"github.com/Homiakus/axiom/internal/syncx"
 )
 
@@ -223,9 +224,25 @@ func (systemClock) Now() time.Time {
 	return time.Now().UTC()
 }
 
+func (e *Engine) SetClock(clock Clock) {
+	if clock != nil {
+		e.clock = clock
+	}
+}
+
 func (e *Engine) now() time.Time {
 	if e.clock == nil {
 		return time.Now().UTC()
 	}
 	return e.clock.Now().UTC()
+}
+
+func (e *Engine) newTimer(d time.Duration) durabletime.Timer {
+	if tc, ok := e.clock.(durabletime.Clock); ok {
+		return tc.NewTimer(d)
+	}
+	if tc, ok := e.clock.(interface{ NewTimer(time.Duration) durabletime.Timer }); ok {
+		return tc.NewTimer(d)
+	}
+	return durabletime.SystemClock{}.NewTimer(d)
 }

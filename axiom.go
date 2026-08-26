@@ -37,6 +37,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Homiakus/axiom/internal/compiler"
 	"github.com/Homiakus/axiom/internal/diag"
@@ -129,7 +130,10 @@ type App struct {
 	Module *Module
 }
 
-// ── Engine options ────────────────────────────────────────────────────────
+// Clock is the minimal semantic time source required for deterministic testing and simulation.
+type Clock interface {
+	Now() time.Time
+}
 
 type engineConfig struct {
 	store      Store
@@ -137,11 +141,23 @@ type engineConfig struct {
 	strictFast bool
 	production bool
 	traceLevel TraceLevel
+	clock      Clock
 }
 
 // Option configures an Engine before it is built.
 // Options are validated at Build/New time (fail-fast).
 type Option func(*engineConfig) error
+
+// WithClock sets a custom semantic Clock for deterministic time and timers.
+func WithClock(clock Clock) Option {
+	return func(c *engineConfig) error {
+		if clock == nil {
+			return Errors{{Code: "AX500", Kind: "config", Message: "clock must not be nil", Hint: "Pass a valid Clock implementation or omit WithClock."}}
+		}
+		c.clock = clock
+		return nil
+	}
+}
 
 // ── Store options ─────────────────────────────────────────────────────────
 
@@ -603,6 +619,9 @@ func New(module *Module, opts ...Option) (*Engine, error) {
 	}
 
 	engine := runtimepkg.NewEngine(module, cfg.store, toRuntimeActivities(cfg.activities))
+	if cfg.clock != nil {
+		engine.SetClock(cfg.clock)
+	}
 
 	if cfg.strictFast {
 		if err := engine.EnableStrictFastRuntime(); err != nil {
