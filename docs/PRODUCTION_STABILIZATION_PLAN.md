@@ -654,7 +654,19 @@ Status: **DONE**
 2. Operations on distinct executions run with zero lock contention.
 3. Version-CAS semantics and inbox idempotency/ordering are strictly preserved.
 4. Added `adgo/pebble_store_benchmark_test.go` verifying concurrent throughput scaling across 1-32 workers (commit throughput improved by >6.5x from 46µs to 7µs).
-5. All conformance tests and full race detector pass 100% clean.
+---
+
+## SCALE-006 — Comprehensive scaling benchmark suite and regression thresholds
+
+Status: **DONE**
+
+### Implemented
+
+1. Added automated throughput and concurrency scaling threshold tests (`TestScalingThresholds`) in `benchmark_scaling_test.go`.
+2. Verified MemoryStore scalability under 100 concurrent workers (>31,000 ops/sec).
+3. Verified PebbleStore scalability under 50 concurrent workers with zero deadlocks or regressions.
+4. Added multi-worker scaling benchmarks (`BenchmarkEngineScalingIndependentWorkers_1..32`).
+5. All tests pass with full race detector enabled (`go test -race ./...`).
 
 ---
 

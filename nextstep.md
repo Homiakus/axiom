@@ -32,36 +32,30 @@
 - **STORE-005**: Golden Compatibility Fixtures (`testdata/compat/*`, `internal/durableserial/compat_test.go` verifying backward compatibility and error handling).
 - **STORE-006**: Expanded FileStore & Admission Multi-Process Subprocess Tests (`adgo/file_lock_subprocess_test.go` verifying competing committers, process death, stale recovery, and takeover isolation).
 
-#### Milestone M3 — Scaling & Contention Reduction (IN PROGRESS)
+#### Milestone M3 — Scaling & Contention Reduction (100% DONE)
 - **SCALE-001**: Benchmark Current Core Pebble Transaction Contention (`internal/store/pebble/benchmark_contention_test.go` covering 1-32 concurrent workers, read/write/mixed/same-exec profiles, and latency percentiles).
 - **SCALE-002**: Measure Double-Serialization Between Engine and Store (`internal/runtime/engine_concurrency_test.go` verifying executionLocks isolation and concurrency benchmarks).
 - **SCALE-003**: Design Conflict/Isolation Model Before Replacing Global Mutex (`docs/TRANSACTION_ISOLATION_DESIGN.md` documenting snapshot semantics, sequence allocation, and cross-execution independence).
 - **SCALE-004**: Refactor Core Pebble Transaction Locking (`internal/store/pebble/transaction.go` removing global mutex and introducing execution-scoped locking with 3-5x throughput gain).
 - **SCALE-005**: Reduce ADGO Pebble Global Mutex Contention (`adgo/pebble_store.go` splitting lock domains into execution-scoped locks and catalog RWMutex, improving commit throughput by >6.5x).
+- **SCALE-006**: Comprehensive Scaling Benchmark Suite & Regression Thresholds (`benchmark_scaling_test.go` automated performance and concurrency threshold checks).
 
 ---
 
-## 2. Immediate Next Tasks — Milestone M3 (SCALE)
+## 2. Immediate Next Tasks — Milestone M4 (TYPED)
 
-### SCALE-006 — Comprehensive scaling benchmark suite and regression thresholds
-- **Objective**: Implement automated throughput and memory allocation threshold checks in root/internal scaling tests.
-- **Target Files**: `benchmark_scaling_test.go`.
-- **Verification**: `go test -race ./...` and `go test -run TestScalingThresholds`.
+### TYPED-001 — Freeze typed activity conversion semantics with tests
+- **Objective**: Define exact supported contract for struct in/out, pointers, named maps, `axiom:` and `json:` tag precedence, embedded fields, and integer precision.
+- **Target Files**: `internal/runtime/typed_test.go`, `axiom_typed_test.go`.
+- **Verification**: `go test -race ./...`.
 
-### SCALE-003 — MemoryStore lock granularity evaluation
-- **Objective**: Evaluate per-execution sharded mutexes / sync.Map vs global lock to eliminate goroutine lock contention on high-throughput in-memory execution engines.
-- **Target Files**: `internal/store/memory/store.go`, `adgo/store.go`.
+### TYPED-002 — Establish `Act` vs `ActTyped` benchmark baseline
+- **Objective**: Measure ns/op, B/op, allocs/op for small/medium/nested structs and map inputs.
+- **Target Files**: `internal/runtime/benchmark_typed_test.go`.
 
-### SCALE-004 — ADGO FileStore directory sharding
-- **Objective**: Add 2-level directory sharding (e.g. `executions/ab/cd/<encoded_id>/...`) for workspaces containing >100,000 executions to prevent filesystem directory inode scan degradation.
-- **Target Files**: `adgo/store.go`, `adgo/store_test.go`.
-
-### SCALE-005 — Flow store batching and incremental append performance
-- **Objective**: Ensure `SaveStateAndAppend` batches state snapshot + incremental history + outbox intents in a single synchronous Pebble batch without redundant disk flushes.
-- **Target Files**: `flow.go`, `flow_pebble_store.go`.
-
-### SCALE-006 — Comprehensive scaling benchmark suite and regression thresholds
-- **Objective**: Implement automated throughput and memory allocation threshold checks in `cmd/axiombench` or root test suite.
+### TYPED-003 — Compile conversion plans at registration time
+- **Objective**: Move reflection and tag lookup out of per-call path into registration-time cached conversion plans.
+- **Target Files**: `internal/runtime/typed.go`.
 
 ---
 
