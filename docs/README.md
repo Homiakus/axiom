@@ -18,6 +18,7 @@
 
 - [Архитектура](../ARCHITECTURE.md)
 - [Runtime-семантика и текущие ограничения](runtime-semantics.md)
+- [Durable Flow effects: outbox, recovery и exactly-once boundary](flow-durability.md)
 - [Концептуальная модель CRFG](axiom-crfg.md)
 - [Go-first architecture](go-first-architecture.md)
 
@@ -40,13 +41,15 @@
 
 | Документ | Статус |
 |---|---|
-| `README.md` | Подтверждён public API и CI commands |
+| `README.md` | Public API overview и quick start |
 | `api-guide.md` | Рекомендуемый путь выбора frontend и runtime API |
+| `runtime-semantics.md` | Declarative Engine runtime contract и failure boundaries |
+| `flow-durability.md` | Канонический контракт durable Flow outbox/recovery |
 | `versioning.md` | Политика pre-v1 совместимости, release gate и workflow публикации |
 | `CHANGELOG.md` | Текущий публичный release history / planned changes |
 | `releases/v0.1.0.md` | Release notes первого versioned baseline |
 | `ARCHITECTURE.md` | Подтверждён текущим code path; ограничения указаны явно |
-| `DEVELOPMENT.md` | Основан на `.github/workflows/test.yml` |
+| `DEVELOPMENT.md` | Локальная разработка и проверки, согласованные с `.github/workflows/ci.yml` |
 | `axiom-file-specification.md` | Описывает реализованный parser/compiler/runtime contract v0.1.0 |
 | `axiomgen.md` | Описывает текущий `cmd/axiomgen` |
 | `go-first-architecture.md` | Краткий обзор; подробный выбор API вынесен в `api-guide.md` |
