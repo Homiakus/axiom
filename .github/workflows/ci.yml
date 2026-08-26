@@ -184,15 +184,61 @@ jobs:
           set -euo pipefail
           mkdir -p bin test-artifacts
           go build -o bin/axiomgen ./cmd/axiomgen
-          generated="$(mktemp -d)"
+
+          generated="internal/generatedverify"
+          rm -rf "$generated"
+          mkdir -p "$generated"
           trap 'rm -rf "$generated"' EXIT
+
           ./bin/axiomgen \
             --file examples/axiom-files/welcome.axm \
             --out "$generated" \
-            --package generated \
+            --package generatedverify \
             > test-artifacts/axiomgen-result.json
           test -s test-artifacts/axiomgen-result.json
           test -n "$(find "$generated" -maxdepth 1 -type f -print -quit)"
+
+          cat > "$generated/runtime_test.go" <<'EOF'
+          package generatedverify
+
+          import (
+              "context"
+              "testing"
+
+              "github.com/Homiakus/axiom"
+          )
+
+          type verifyActivities struct{}
+
+          func (verifyActivities) SendWelcomeEmail(_ context.Context, input SendWelcomeEmailInput) (SendWelcomeEmailOutput, error) {
+              if input.UserId == nil || *input.UserId != "u1" || input.Email == nil || *input.Email != "user@example.com" {
+                  return SendWelcomeEmailOutput{}, axiom.Error{Code: "TEST", Message: "bad generated input"}
+              }
+              return SendWelcomeEmailOutput{Sent: true}, nil
+          }
+
+          func TestGeneratedWrapperRuntime(t *testing.T) {
+              ctx := context.Background()
+              engine, err := NewWelcome(verifyActivities{})
+              if err != nil {
+                  t.Fatalf("NewWelcome() error = %v", err)
+              }
+              if err := engine.Start(ctx, "generated-ci", nil); err != nil {
+                  t.Fatalf("Start() error = %v", err)
+              }
+              if err := engine.Signal(ctx, "generated-ci", "UserRegistered", axiom.Input{
+                  "userId": "u1",
+                  "email": "user@example.com",
+              }); err != nil {
+                  t.Fatalf("Signal() error = %v", err)
+              }
+              if err := engine.RunUntilIdle(ctx, "generated-ci"); err != nil {
+                  t.Fatalf("RunUntilIdle() error = %v", err)
+              }
+          }
+          EOF
+
+          go test -mod=readonly ./internal/generatedverify
 
   consumer-test:
     name: Downstream Consumer Isolation
