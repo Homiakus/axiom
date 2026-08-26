@@ -1,2300 +1,1637 @@
 # Axiom Production Stabilization & Architecture Hardening Plan
 
-Status: proposed executable roadmap  
-Scope: `axiom` core + `adgo` + storage + CI/CD + performance + security + documentation  
+Status: **active executable roadmap — re-audited 2026-08-26**  
+Scope: `axiom` core + `adgo` + Flow + storage + CI/CD + performance + security + compatibility + operations  
 Target branch: `main`  
-Baseline audit: current architecture review of Axiom/ADGO, including current nightly/race behavior, durable timer semantics, storage contracts, FileStore locking, Pebble contention, Flow effect durability, typed activity encoding, benchmark gates, compatibility policy, and release governance.
+Audit baseline: `ee0b2910db2d89cfbe3c9b2aee7f4c626082189b`  
+Supersedes: the original production stabilization roadmap created at `97d490f90679bf277451c579f8a6ae12658c5529`.
+
+This document is the single execution plan for post-audit stabilization. It deliberately separates already-completed work from remaining work so future agents do not repeat migrations, weaken new invariants, or optimize code before correctness gates are green.
 
 ---
 
-## 0. Purpose and execution rules
+# 0. Status legend and mandatory execution protocol
 
-This plan converts the current audit findings into an implementation sequence that can be executed atomically. Every task below is intentionally small enough to be implemented, reviewed, tested, and reverted independently.
+## Status legend
 
-### 0.1 Mandatory rules for every implementation task
+- **DONE** — implemented and backed by tests/CI evidence.
+- **PARTIAL** — useful implementation exists, but the production invariant is not fully closed.
+- **TODO** — not implemented or not verified.
+- **P0 BLOCKER** — must be resolved before feature/performance work continues.
+- **EXTERNAL** — repository setting or external operation that cannot be completed by a normal source-code commit alone.
 
-For every task marked `A-*`, `B-*`, `C-*`, etc.:
+## Mandatory protocol for every task
 
-1. Make one logically isolated code change.
-2. Add or update tests in the same commit.
-3. Run the narrow package tests first.
-4. Run repository-wide tests before merge.
-5. For concurrency/runtime/storage changes, run the race detector.
-6. For hot-path changes, run allocation/benchmark checks.
-7. Update docs when behavior or public API changes.
-8. Do not weaken an existing invariant to make a test pass.
-9. Prefer deterministic tests over sleeps/retries.
-10. Every change must preserve backward compatibility unless the task explicitly declares a breaking change.
+1. Fetch the latest `main` HEAD before making any change.
+2. If `main` CI is red, work only on the root cause of the red gate or on documentation describing that blocker. Do not start unrelated feature work.
+3. One atomic task = one logical commit. Tests belong in the same commit whenever practical.
+4. Run the narrowest relevant tests first.
+5. For runtime/storage/concurrency changes, run the package under `-race`, then `go test -race ./...`.
+6. For cross-platform behavior, verify Linux, Windows, and macOS. Never hide a portability bug with an unconditional OS skip merely to make CI green.
+7. For hot-path changes, capture before/after benchmark and allocation measurements.
+8. For persisted-state changes, add compatibility fixtures and reopen/migration tests before changing write format.
+9. For public API changes, add compatibility tests and migration notes before changing behavior.
+10. Never weaken an existing invariant, timeout, race gate, security rule, or test to make a task pass.
+11. Prefer deterministic clocks/failpoints over millisecond sleeps.
+12. Inspect the GitHub Actions result after each push. If a job fails, read the exact failing job log before the next commit.
+13. Update this plan when a task changes status. Record the implementing commit SHA beside the task or in the progress log.
+14. Direct pushes to `main` are currently possible because branch protection is disabled. After governance hardening requires pull requests, follow the protected-branch workflow instead of bypassing it.
 
-### 0.2 Global Definition of Done
+## Global Definition of Done
 
-A stabilization milestone is complete only when all of the following are true:
+Axiom is considered production-hardened for the scope of this plan only when all of the following are true:
 
-- `go test ./...` passes on Linux, Windows, and macOS.
-- `go test -race ./...` passes on Linux and macOS.
-- no time-dependent orchestration test relies on millisecond `time.Sleep` for correctness;
-- all store implementations pass one shared contract suite;
-- FileStore lock ownership cannot be lost by stale-lock cleanup;
-- `main` requires CI and race gates;
-- performance checks detect material regressions rather than only catastrophic regressions;
-- public durability/transactionality guarantees are explicitly encoded in capabilities;
-- serialized-state and plan compatibility rules are documented;
-- release/versioning policy exists and is executable;
-- current architecture docs match runtime behavior.
+- `go test ./...` passes on Linux, Windows, and macOS;
+- `go test -race ./...` passes on Linux and repeated nightly race runs remain green;
+- `main` is protected by required checks and cannot silently accept a red commit;
+- semantic orchestration time comes from explicit clock dependencies rather than mixed wall/logical time;
+- all production stores have explicit behavioral, durability, ordering, context, and persisted-format contracts;
+- FileStore/admission locking has portable ownership/fencing tests, including subprocess recovery where applicable;
+- durable Flow effects have crash-boundary/failpoint coverage and an operationally inspectable outbox;
+- persisted formats have explicit schema/version handling and golden backward-compatibility fixtures;
+- public API compatibility is mechanically checked;
+- material performance regressions are detected relative to a reviewed baseline;
+- global security suppressions are eliminated or reduced to documented local exceptions;
+- release tooling and release documentation describe the same frozen-SHA process;
+- at least one reproducible GitHub Release is published through the hardened release pipeline;
+- operations documentation covers corruption, stale leases, lock recovery, outbox backlog, migration, rollback, and degraded readiness.
 
 ---
 
-# Phase A — Deterministic time and timer semantics
+# 1. Re-audit result at baseline `ee0b291`
 
-Priority: **P0**  
-Goal: make durable timers, retries, leases, schedules, retention, routing cooldowns, and tests deterministic.
+## 1.1 Current gate state
 
-## A-001 — Inventory all direct wall-clock usage
+| Area | State | Re-audit finding |
+|---|---|---|
+| Linux unit tests | DONE | Current baseline passes. |
+| macOS unit tests | DONE | Current baseline passes. |
+| Windows unit tests | **P0 BLOCKER** | `TestFileAdmissionLockCleanupDoesNotDeleteReplacementOwner` fails because Windows refuses to unlink a lock file while its handle is open. |
+| Full race gate | DONE | `go test -race -v ./...` is in main CI and passed on the audited baseline. |
+| Nightly repeated race | DONE | Nightly runs `go test -race ./... -count=3` on Linux/macOS. |
+| Module hygiene | DONE | `go mod tidy` + diff gate exists. |
+| Codegen runtime verification | DONE | Generated wrapper is compiled/run inside the repository module without nested dependency resolution. |
+| Security workflow | PARTIAL | Pinned tools/actions and scans are present, but gosec still excludes a broad global rule set. |
+| Branch protection | **EXTERNAL / P0 process risk** | `main` is not protected and has no required status checks. |
+| Core store contracts | DONE | Shared Memory/Pebble direct/transaction contract suite exists and passes. |
+| ADGO Store contract | PARTIAL | Rich backend tests exist, but no single reusable behavioral conformance harness covers Memory/File/Pebble consistently. |
+| Core Pebble persisted identity | DONE | Schema+codec marker, legacy adoption and mismatch/future/partial-marker tests exist. |
+| ADGO Pebble persisted identity | TODO | JSON records are durable, but no equivalent explicit schema/version marker is opened/validated. |
+| FileStore lock ownership | DONE/PARTIAL | Owner token, heartbeat and ownership-aware release exist; admission regression test exposed a Windows portability gap in the test/takeover model. |
+| Durable Flow outbox | DONE/PARTIAL | Transactional state+outbox and synchronous Pebble Flow store exist; broader failpoint/operational/backpressure work remains. |
+| Durability capability | DONE | Production mode distinguishes synchronous durability and rejects NoSync/buffered modes. |
+| Deterministic time | PARTIAL | Durable timers/retry deadlines use injected clocks, but multiple ADGO decisions and retry waiting still mix wall and semantic time. |
+| Deterministic task order | DONE | Canonical transactional task ordering tests exist. |
+| `ActTyped` performance | TODO | Input still uses `json.Marshal -> json.Unmarshal` per call and output reflection runs per invocation. |
+| Pebble transaction scalability | TODO | A global Store mutex is held from `BeginTransaction` through `Commit/Rollback`. |
+| Error taxonomy | PARTIAL | Typed retry marker exists, but retryability still recognizes `AX505` via string inspection. |
+| Release workflow | PARTIAL | Cross-build, SBOM and checksums exist; frozen-release-branch policy and workflow behavior disagree. |
+| Published releases | TODO | No GitHub Release exists at the audit baseline. |
+| Public API compatibility automation | TODO | No API manifest/apidiff-style merge gate was found. |
+| CODEOWNERS | TODO | No active CODEOWNERS file was found. |
 
-### Files/packages
+## 1.2 Completed stabilization work that must not be reimplemented
 
-Search at minimum:
+The following work from the original roadmap is already present and should be treated as an invariant:
 
-- `adgo/runtime.go`
-- `adgo/engine.go`
-- `adgo/schedule.go`
-- `adgo/scheduler.go`
-- `adgo/policy.go`
-- `adgo/admission.go`
-- `adgo/router.go`
-- `adgo/router_store.go`
-- `adgo/repair.go`
-- `adgo/retention.go`
-- `adgo/store.go`
-- `adgo/pebble_store.go`
-- `internal/runtime/types.go`
-- `internal/runtime/retry_store.go`
-- `internal/store/memory/store.go`
-- `internal/store/pebble/store.go`
-- `internal/store/pebble/transaction.go`
+- deterministic durable clock primitives: `e09fe698909108df3784755e23ecd58342caa3b8`;
+- ADGO runtime clock option and durable timer migration: `da26e8a...`, `139331b...`, `0ca7d03...`;
+- core retry clock unification: `4c7674d875a1adf65d01bba00c57a4b169071eca`;
+- full repository race gate: `58fadee49072f008e405b8ea316b594c658d1e90`;
+- repeated nightly race: `e2cc370d2371fb7ee2de9a9b0832dcc932378174`;
+- Pebble transactional ownership/copy fixes and deterministic task view: `1ba9b2c...`, `d2bebec...`;
+- shared core Store contract suite: `3677213466d1020e1d08a6245bafe2807ed4c1c8`;
+- ownership-aware FileStore lock and heartbeat: `7b6df33...`, `f7aece2...`, `a9290a6...`;
+- explicit production durability capability: `2696c718dbbf869296965993950665ea8c00bc7a`;
+- pinned security scanners/actions and pin guard: `d202075...`, `4f5874f...`;
+- durable Flow outbox boundary: `3b381cfc8ab2118ff1c48b84c8031fcf8d51a4ce`;
+- race-safe/offline codegen tests and generated runtime verification: `0d41727...`, `1c54c1b...`;
+- synchronous Pebble durable Flow store: `f8a8295148d96b0b710eac6302d66dd6386862f4`;
+- tighter allocation ceilings: `c30e0bd88fecfe5188f479450caf7115ced98b15`;
+- canonical durable Flow documentation: `fe9a44e...`, `034ec5f...`;
+- ownership-aware admission locks: `aebc695...`, `fba33aa...`;
+- core Pebble persisted-format identity and compatibility tests: `05374d2...`, `2013211...`, `ee0b291...`.
 
-### Change
+Do not replace these mechanisms with weaker alternatives while implementing remaining tasks.
 
-Create an inventory table in a temporary implementation note or commit description containing every use of:
+---
 
-- `time.Now`
-- `time.Sleep`
-- `time.NewTimer`
-- `time.NewTicker`
-- `time.After`
-- `time.Since`
+# 2. P0 — Restore a trustworthy green `main`
 
-Classify each usage as:
+Priority: **P0; no unrelated feature or performance work until complete.**
 
-- semantic workflow time;
-- lease/coordination time;
-- observability timestamp only;
-- test-only timing;
-- storage metadata timestamp.
+## P0-001 — Fix Windows portability of admission lock replacement regression
+
+Status: **P0 BLOCKER**
+
+### Evidence
+
+Current Windows CI fails in:
+
+`adgo/admission_lock_test.go` → `TestFileAdmissionLockCleanupDoesNotDeleteReplacementOwner`
+
+The test removes/replaces a lock path while the first owner still has an open file handle. POSIX permits unlinking an open inode; Windows normally refuses with a sharing violation.
+
+### Required change
+
+Do not solve this by skipping the test on Windows.
+
+Separate the invariants being tested:
+
+1. **ownership-aware release** — an owner token A must not delete a path containing owner token B;
+2. **stale takeover** — a stale/dead owner can eventually be reclaimed;
+3. **live-owner safety** — a still-open/live owner must not be stolen;
+4. **portable filesystem semantics** — tests must not require POSIX unlink-of-open-file behavior when Axiom claims Windows support.
+
+Preferred test structure:
+
+- test compare-before-release directly with owner A token against a replacement B record without retaining A's open file handle;
+- test stale recovery after simulating process death by closing the old handle first;
+- retain a POSIX-specific test only if it verifies an explicitly POSIX-only takeover window and is documented as such;
+- preserve the existing generic `releaseFileLock` replacement-owner invariant;
+- add an admission-specific integration test proving `withFileLock` uses the shared ownership primitive.
 
 ### Tests
-
-No behavioral change yet.
-
-### Acceptance
-
-No direct wall-clock use in orchestration-critical code remains unclassified.
-
----
-
-## A-002 — Introduce common clock primitives
-
-### New package
-
-Create:
-
-`internal/durabletime/`
-
-Suggested files:
-
-- `clock.go`
-- `system.go`
-- `manual.go`
-- `timer.go`
-- `clock_test.go`
-
-### API
-
-Define a minimal clock contract similar to:
-
-```go
-type Clock interface {
-    Now() time.Time
-    NewTimer(time.Duration) Timer
-}
-
-type Timer interface {
-    C() <-chan time.Time
-    Stop() bool
-}
-```
-
-Optional only if needed by scheduler code:
-
-```go
-type Ticker interface {
-    C() <-chan time.Time
-    Stop()
-}
-```
-
-Do not over-generalize the API before real callers require it.
-
-### ManualClock invariants
-
-- starts at explicitly supplied time;
-- `Advance` is synchronous;
-- timers fire deterministically when the logical deadline is crossed;
-- equal-deadline timers fire in stable creation order;
-- `Stop` has deterministic semantics;
-- advancing time never sleeps;
-- safe under concurrent use.
-
-### Tests
-
-Add table/property tests for:
-
-- timer before deadline does not fire;
-- timer at exact deadline fires;
-- multiple timers ordered deterministically;
-- canceled timer never fires;
-- concurrent readers of `Now`;
-- monotonic `Advance`;
-- reject/handle negative advance explicitly.
-
-### Acceptance
-
-`internal/durabletime` is independently race-clean.
-
----
-
-## A-003 — Inject Clock into ADGO Runtime
-
-### Files
-
-- `adgo/runtime.go`
-- `adgo/types.go` if option/config type belongs there
-- new `adgo/clock.go` only if a public option is required
-
-### Change
-
-Add clock to Runtime construction/configuration. Preserve current public behavior by defaulting to system clock.
-
-Preferred API:
-
-```go
-func WithClock(clock Clock) RuntimeOption
-```
-
-If exposing internal clock type publicly is undesirable, define the smallest public interface in `adgo` and adapt internally.
-
-Replace orchestration-semantic `time.Now()` calls with `rt.clock.Now()`.
-
-### Tests
-
-Add tests proving:
-
-- Start timestamps are derived from injected clock;
-- wait deadline is deterministic;
-- advancing manual clock changes eligibility without sleeping;
-- zero/negative duration wait has explicit documented behavior.
-
-### Acceptance
-
-Core runtime wait semantics need no wall-clock sleeps in tests.
-
----
-
-## A-004 — Rewrite `TestDurableTimerResumes`
-
-### File
-
-- `adgo/runtime_test.go`
-
-### Current problem
-
-The test uses approximately 5 ms wait + 7 ms sleep and flakes under race instrumentation.
-
-### Change
-
-Replace real time with `ManualClock`:
-
-1. start execution;
-2. run once;
-3. assert `StatusWaiting`;
-4. advance logical clock to deadline minus epsilon;
-5. run and assert still waiting;
-6. advance to exact deadline;
-7. run and assert completed.
-
-### Acceptance
-
-Run:
 
 ```bash
-go test -race ./adgo -run TestDurableTimerResumes -count=100
-```
-
-Expected: 100/100 pass.
-
----
-
-## A-005 — Inject Clock into ADGO Engine
-
-### Files
-
-- `adgo/engine.go`
-- `adgo/production.go`
-- `adgo/host.go` if engine construction propagates there
-
-### Change
-
-Ensure coordinator, worker leases, heartbeat deadlines, fencing, retries, human timeout state, and durable timer decisions use the configured clock consistently.
-
-Do not use injected semantic clock for raw benchmark elapsed-time measurements unless intended.
-
-### Tests
-
-- worker lease expiration exactly at deadline;
-- heartbeat extends lease deterministically;
-- zombie worker rejected after logical expiry;
-- no early expiry before deadline;
-- restart/reload semantics remain equivalent.
-
-### Acceptance
-
-No worker-fencing test depends on `time.Sleep` for correctness.
-
----
-
-## A-006 — Convert retry/backoff to injected clock
-
-### Files
-
-- `internal/runtime/retry_store.go`
-- Axiom runtime constructor/config path
-
-### Change
-
-The existing core `Engine` already has a clock field, but retryStore currently uses direct wall clock. Pass the same clock into retryStore.
-
-Make retry scheduling use exactly one time source.
-
-### Tests
-
-- fixed backoff exact deadline;
-- exponential backoff sequence;
-- max cap;
-- retry not visible before deadline;
-- retry visible exactly on deadline;
-- engine replacement preserves durable retry deadline.
-
-### Acceptance
-
-No mixed clock domains inside a single Engine.
-
----
-
-## A-007 — Convert schedules, admission, routing, retention, repair deadlines
-
-### Files
-
-- `adgo/schedule.go`
-- `adgo/scheduler.go`
-- `adgo/admission.go`
-- `adgo/router.go`
-- `adgo/router_store.go`
-- `adgo/retention.go`
-- `adgo/repair.go`
-
-### Change
-
-Replace semantic wall-clock access with shared clock dependency.
-
-### Tests
-
-Add deterministic tests for:
-
-- schedule firing at exact boundary;
-- no duplicate firing across restart;
-- token refill;
-- permit expiry;
-- circuit breaker open/half-open timing;
-- router cooldown;
-- retention cutoff;
-- repair max-duration budget.
-
-### Acceptance
-
-A grep for direct wall-clock calls in ADGO runtime-critical code returns only reviewed exceptions.
-
----
-
-## A-008 — Add time abstraction policy test
-
-### New test
-
-Create an architecture/static guard test or script that flags new direct `time.Now`, `time.Sleep`, `time.After`, `time.NewTimer` calls in restricted packages, with an allowlist for legitimate system-boundary code.
-
-Possible location:
-
-- `internal/archtest/time_test.go`
-- or `scripts/check_time_usage.go`
-
-### Acceptance
-
-A future contributor cannot silently reintroduce non-deterministic time into orchestration code.
-
----
-
-# Phase B — Make full race safety a merge gate
-
-Priority: **P0**
-
-## B-001 — Expand main race job to ADGO
-
-### File
-
-- `.github/workflows/ci.yml`
-
-### Change
-
-Replace the limited critical-package race command with:
-
-```bash
+go test ./adgo -run 'TestFileAdmissionLock|TestReleaseFileLock|TestRemoveStaleFileLock' -count=100
+go test -race ./adgo -run 'TestFileAdmissionLock|TestReleaseFileLock|TestRemoveStaleFileLock' -count=20
+go test ./...
 go test -race ./...
 ```
 
-on Linux.
-
-Keep Windows normal tests but do not require race there if unsupported/too costly.
+Required GitHub matrix: Linux + Windows + macOS all green.
 
 ### Acceptance
 
-Main CI must fail on the current flaky timer implementation and pass after Phase A.
+- Windows unit job passes;
+- no OS skip hides the ownership invariant;
+- CI Completion Gate is green;
+- security and module-checksum remain green.
 
 ---
 
-## B-002 — Add repeated concurrency suite
+## P0-002 — Make red-main recovery an explicit merge invariant
 
-### File
-
-- `.github/workflows/nightly.yml`
+Status: **TODO**
 
 ### Change
 
-Add:
+Add a concise repository rule/documentation entry stating:
 
-```bash
-go test -race ./... -count=3
-```
+- a red `main` blocks unrelated implementation work;
+- a failing cross-platform job is treated as a production regression, even when Linux/race are green;
+- the next commit after a red baseline should either fix the failure or revert the introducing change;
+- no test may be disabled merely to restore the badge.
 
-or a targeted `-count=10` for concurrency-heavy packages if runtime cost is too high.
-
-### Packages
-
-At minimum:
-
-- `./adgo`
-- `./internal/runtime/...`
-- `./internal/store/...`
-- `./internal/syncx/...`
+This may live in `CONTRIBUTING.md` and be referenced from this plan.
 
 ### Acceptance
 
-Nightly race is a stress gate, not the first place basic ADGO race compatibility is checked.
+The rule is easy to find and consistent with CI behavior.
 
 ---
 
-## B-003 — Add race-specific test classification
+## P0-003 — Correct public Pebble codec documentation
+
+Status: **TODO**
+
+### Evidence
+
+`internal/store/pebble.Open` defaults to JSON, while public comments in `axiom.go` still state:
+
+- `PebbleJSONCodec uses JSON instead of Gob`;
+- `PebbleGobCodec uses Gob encoding (default)`.
+
+The new persisted-format marker makes this documentation error operationally important.
 
 ### Change
 
-Tag/name concurrency tests consistently:
+Update public documentation so it states:
 
-- `TestRace*`
-- `TestLease*`
-- `TestConcurrent*`
-- `TestFencing*`
+- JSON is the default codec;
+- Gob is opt-in;
+- the selected codec is persisted into store metadata;
+- reopening with a different codec fails fast;
+- legacy unmarked stores are adopted only after format detection;
+- mixed/ambiguous/future formats fail closed.
 
-Add CI step that can run them independently for fast diagnosis.
+Update `store/pebble` package docs and runtime/storage documentation as needed. Keep one canonical detailed compatibility section and link to it from shorter API comments.
 
-### Acceptance
+### Tests
 
-When a race gate fails, logs clearly identify whether failure is data race, timing semantic failure, or assertion failure.
+- documentation/examples compile;
+- any doctest/example commands remain valid;
+- code search finds no remaining claim that Gob is the default.
 
 ---
 
-# Phase C — FileStore lock correctness
+## P0-004 — Protect `main` with required checks
 
-Priority: **P0/P1**
+Status: **EXTERNAL**
 
-## C-001 — Formalize FileStore lock invariants
+### Current state
 
-### File
+`main` is unprotected and GitHub reports no required checks.
 
-Create:
+### Required repository settings
 
-- `adgo/FILESTORE_LOCKING.md`
+At minimum require:
+
+- CI Completion Gate;
+- security workflow or equivalent required security checks;
+- module consistency/checksum gate;
+- pull request before merge once the team is ready to stop direct pushes;
+- no force pushes;
+- no branch deletion;
+- resolved review conversations;
+- administrators should not silently bypass required checks for ordinary changes.
+
+### Source-controlled companion changes
+
+Add `.github/CODEOWNERS` for at least:
+
+- runtime/core API;
+- `internal/store/**`;
+- `adgo/**`;
+- `.github/workflows/**`;
+- persisted-format/compatibility fixtures.
+
+### Acceptance
+
+GitHub branch metadata reports protection/rules enabled and required check names exactly match active workflow jobs.
+
+---
+
+# 3. TIME — Finish deterministic semantic-time separation
+
+Priority: **P1 after P0 green.**
+
+The initial time work fixed the most visible flakes, but the codebase still contains many direct `time.Now()` calls. Not every direct wall-clock call is wrong. The goal is to classify every call and remove only those that influence durable decisions.
+
+## TIME-001 — Build a checked clock-usage inventory
+
+Status: **TODO**
+
+### Scope
+
+Audit all direct uses of:
+
+- `time.Now`;
+- `time.NewTimer`;
+- `time.NewTicker`;
+- `time.After`;
+- `time.Since`;
+- `time.Sleep`.
+
+At minimum classify callers in:
+
+- `adgo/admission.go`;
+- `adgo/policy.go`;
+- `adgo/schedule.go` / scheduler code;
+- `adgo/router*.go`;
+- `adgo/retention.go`;
+- `adgo/repair.go`;
+- `adgo/cache.go`;
+- `adgo/speculation.go`;
+- `adgo/awaitable.go`;
+- `adgo/engine.go`;
+- `adgo/runtime.go`;
+- `adgo/store.go` / `pebble_store.go`;
+- `internal/runtime/retry_store.go`;
+- core Memory/Pebble stores;
+- `flow.go` / outbox code.
+
+### Classification
+
+Each use must be one of:
+
+1. durable decision time;
+2. lease/fencing time;
+3. retry/schedule deadline time;
+4. persisted event timestamp only;
+5. observability/benchmark elapsed time;
+6. OS/filesystem freshness boundary;
+7. test-only wait.
+
+Persist the allowlist/classification in a small architecture-check source file or generated/static check, not only in a one-time audit note.
+
+---
+
+## TIME-002 — Inject time into Admission controllers
+
+Status: **TODO**
+
+### Evidence
+
+Memory/File admission controllers still evaluate acquire/heartbeat/refill/purge deadlines using direct wall clock.
+
+### Change
+
+Introduce a backward-compatible clock option/constructor path. Do not break existing `NewMemoryAdmissionController()` / `NewFileAdmissionController(...)` call sites.
+
+All of these decisions must use one clock source:
+
+- permit expiration;
+- token refill;
+- heartbeat extension;
+- purge;
+- retry-after calculation;
+- snapshot cleanup.
+
+### Tests
+
+- exact deadline boundary;
+- no early permit expiration;
+- token refill at exact logical interval;
+- heartbeat extension;
+- deterministic rate-limit retry-after;
+- restart/file persistence equivalence where applicable;
+- no sleeps.
+
+---
+
+## TIME-003 — Unify retry deadline and retry waiting clocks
+
+Status: **PARTIAL**
+
+### Evidence
+
+Retry due calculation uses the injected Engine clock, but `drainUntilIdle` still waits via `time.NewTimer(wait)`.
+
+### Change
+
+Use a timer-capable clock consistently. Reuse/adapt `internal/durabletime.Clock`, which already provides `Now()` and `NewTimer()`.
+
+Avoid creating incompatible duplicate clock abstractions between:
+
+- `internal/durabletime`;
+- core runtime;
+- ADGO public clock options.
+
+Do not expose an internal package type through public API. Define/adapt the smallest stable interfaces at package boundaries.
+
+### Tests
+
+A ManualClock must be able to advance a durable retry from scheduled to runnable without wall-clock waiting.
+
+---
+
+## TIME-004 — Convert remaining durable decision paths
+
+Status: **TODO**
+
+After TIME-001 classification, migrate only semantic calls, including where applicable:
+
+- schedule firing and dedup boundaries;
+- policy delay/circuit windows;
+- router cooldown/health decay;
+- retention cutoff decisions;
+- repair duration budgets;
+- cache TTL when cache affects orchestration decisions;
+- speculative execution deadlines;
+- awaitable/human timeout decisions.
+
+Keep observability timestamps/system filesystem checks on real time when that is the correct boundary.
+
+---
+
+## TIME-005 — Add architecture guard against semantic wall-clock regression
+
+Status: **TODO**
+
+Add a static/AST test that rejects new direct wall-clock calls in restricted orchestration files unless explicitly allowlisted with a reason.
+
+### Acceptance
+
+A future contributor cannot silently reintroduce `time.Now()` into a durable decision path.
+
+---
+
+# 4. STORE — Complete persistence contracts and schema safety
+
+Priority: **P1.**
+
+## STORE-001 — Add a reusable ADGO Store conformance suite
+
+Status: **TODO/PARTIAL**
+
+Core Store already has a reusable contract harness. ADGO has many good targeted tests but no equivalent single backend contract.
+
+### Backends
+
+Run one shared suite against:
+
+- `MemoryStore`;
+- `FileStore`;
+- `PebbleStore`.
 
 ### Required invariants
 
-1. only lock owner may release the lock;
-2. stale recovery cannot delete a lock acquired by a newer owner;
-3. a crashed owner can eventually be recovered;
-4. two live owners cannot both enter the same execution critical section;
-5. context cancellation aborts wait safely;
-6. lock identity is unique per acquisition, not only per process;
-7. filesystem restart/reopen preserves safe behavior.
-
-### Acceptance
-
-Implementation tasks below are tested against these invariants.
-
----
-
-## C-002 — Replace anonymous lock file with ownership record
-
-### File
-
-- `adgo/store.go`
-
-### Change
-
-Write structured lock ownership data containing at least:
-
-```text
-owner_token
-created_at
-heartbeat_at
-```
-
-Optionally:
-
-```text
-pid
-hostname
-process_start_id
-```
-
-Ownership token must be cryptographically/randomly unique enough to avoid accidental reuse.
-
-### Acceptance
-
-Unlock requires matching token.
-
----
-
-## C-003 — Implement compare-before-release
-
-### File
-
-- `adgo/store.go`
-
-### Change
-
-Before removing the lock file:
-
-1. read current ownership record;
-2. verify token equals caller token;
-3. remove only if still owned;
-4. sync lock directory.
-
-If ownership changed, do not delete.
-
-### Tests
-
-Simulate:
-
-- owner A acquires;
-- lock replaced/recovered by B;
-- A executes deferred release;
-- verify B lock still exists.
-
-### Acceptance
-
-The stale-owner-deletes-new-owner bug is impossible.
-
----
-
-## C-004 — Add lock heartbeat or renewable lease
-
-### Change
-
-For long critical sections, update heartbeat before stale threshold.
-
-Keep implementation simple. If all critical sections are intentionally short, alternatively redesign stale reclamation to use an ownership generation protocol rather than heartbeat.
-
-### Tests
-
-- long-running live owner is not stolen;
-- truly dead/stale owner is recoverable;
-- heartbeat failure surfaces explicitly.
-
----
-
-## C-005 — Add FileStore multi-process adversarial tests
-
-### New tests
-
-Prefer subprocess-based tests rather than goroutines only.
-
-Scenarios:
-
-1. two processes commit same execution;
-2. one process dies while holding lock;
-3. stale recovery happens;
-4. old process cleanup cannot remove new lock;
-5. 10+ concurrent committers preserve monotonic versions;
-6. inbox event dedup survives contention;
-7. context cancellation does not leak lock files.
-
-### Acceptance
-
-Run repeatedly under CI on Linux.
-
----
-
-## C-006 — Narrow FileStore production claim
-
-### Files
-
-- `ADGO.md`
-- `adgo/README.md`
-- `adgo/OPERATIONS.md`
-
-### Change
-
-Until multi-process protocol is fully hardened, document FileStore as single-host/shared-filesystem constrained backend rather than generic distributed storage.
-
-Explicitly recommend SQL/KV implementation for multi-host production without shared POSIX-like semantics.
-
----
-
-# Phase D — Unified Store contract suites
-
-Priority: **P1**
-
-## D-001 — Define Core Store behavioral contract
-
-### New file
-
-- `internal/runtime/store_contract.go` or test-only package contract helper
-
-Document:
-
-- ownership/copy semantics;
-- version increment behavior;
-- history ordering;
-- task ordering;
-- idempotency behavior;
-- lease behavior;
-- error behavior;
-- transaction visibility;
-- rollback behavior;
-- context semantics.
-
-Do not change interface yet.
-
----
-
-## D-002 — Create Core Store contract test harness
-
-### New test package
-
-Suggested:
-
-- `internal/store/storetest/`
-
-Factory API roughly:
-
-```go
-type Factory interface {
-    New(t *testing.T) runtime.Store
-}
-```
-
-If transactional capability exists, run additional tests automatically.
-
-### Required tests
-
-- Create/Get isolation;
-- Save isolation;
-- returned object mutation does not mutate store;
-- input object mutation after save does not mutate store;
-- Version monotonicity;
-- AppendHistory sequence monotonicity;
-- ListHistory deterministic ordering;
-- task insert/update isolation;
-- lease claim behavior;
-- heartbeat ownership;
-- expired lease recovery;
-- completion/failure terminal state;
-- idempotency lookup;
-- missing IDs;
-- transaction rollback invisibility;
-- transaction commit visibility.
-
----
-
-## D-003 — Run contract suite against Memory Store
-
-### File
-
-- `internal/store/memory/store_test.go`
-
-Add factory hookup to shared contract suite.
-
-### Acceptance
-
-MemoryStore becomes reference semantics.
-
----
-
-## D-004 — Run contract suite against Pebble Store
-
-### File
-
-- `internal/store/pebble/store_test.go`
-
-Use `t.TempDir()`.
-
-### Acceptance
-
-Every generic Store invariant matches MemoryStore.
-
----
-
-## D-005 — Add transaction-specific contract tests
-
-### File
-
-- `internal/store/pebble/transaction_test.go`
-
-Test:
-
-- uncommitted writes invisible externally;
-- visible inside same tx;
-- commit atomically exposes all writes;
-- rollback exposes none;
-- caller input objects are not mutated;
-- repeated `Commit` / `Rollback` behavior is documented;
-- sequence allocation remains deterministic.
-
----
-
-## D-006 — Fix `txStore.SaveExecution` pointer mutation
-
-### File
-
-- `internal/store/pebble/transaction.go`
-
-### Change
-
-Replace direct aliasing:
-
-```go
-next := execution
-```
-
-with a proper deep clone using same semantics as regular Pebble/Memory stores.
-
-Do the same for any transaction-local method that stores caller-owned pointers.
-
-### Tests
-
-1. Save caller object.
-2. Verify caller Version/UpdatedAt unchanged unless contract explicitly says otherwise.
-3. Mutate caller object after Save.
-4. Verify transaction-local stored state unaffected.
-
----
-
-## D-007 — Create ADGO Store contract harness
-
-### Existing/new files
-
-- extend `adgo/store_contract_test.go`
-- add helper file if needed: `adgo/storetest_test.go`
-
-Run the same logical contract against:
-
-- `MemoryStore`
-- `FileStore`
-- `PebbleStore`
-
-### Invariants
-
-- Create uniqueness;
-- Load copy isolation;
-- Commit CAS;
-- version monotonicity;
+- create/load copy isolation;
+- CAS version conflict behavior;
 - mutation callback atomicity;
-- mutation callback error leaves no state change;
-- inbox dedup;
-- inbox ordering;
-- AckInbox idempotency;
-- restart durability where applicable;
-- version history capabilities where applicable.
+- failed clone/encode causes no partial commit;
+- inbox deduplication;
+- inbox deterministic order;
+- ack idempotency;
+- catalog consistency;
+- immutable historical versions where supported;
+- context cancellation behavior;
+- durability declaration where supported;
+- restart/reopen equivalence;
+- invalid/corrupt state error behavior.
+
+Do not paper over backend differences; represent optional capabilities explicitly.
 
 ---
 
-# Phase E — Deterministic task and event ordering
+## STORE-002 — Define context-cancellation semantics for store operations
 
-Priority: **P1**
+Status: **TODO**
 
-## E-001 — Define canonical task ordering
+### Evidence
 
-### Design
-
-Choose one canonical tuple, preferably:
-
-```text
-TaskSequence → TaskID
-```
-
-Avoid wall-clock timestamp as primary ordering key when a deterministic sequence exists.
-
-Document invariant.
-
----
-
-## E-002 — Remove map-order dependence in Pebble transaction task lists
-
-### File
-
-- `internal/store/pebble/transaction.go`
+Several store methods currently accept `context.Context` but intentionally ignore it, including `BeginTransaction` and many Pebble operations.
 
 ### Change
 
-Sort `ListTasks` output canonically before return.
+Document which operations are:
 
-### Tests
+- cancellable before starting;
+- non-interruptible once a local atomic commit begins;
+- expected to return `ctx.Err()` before any write;
+- allowed to finish a commit after cancellation for durability safety.
 
-Insert identical task set in randomized order 100+ times and assert byte/logical equality of resulting task order.
+Then enforce the contract consistently across Memory/File/Pebble and Flow stores.
+
+Do not add mid-commit cancellation that can violate atomicity.
 
 ---
 
-## E-003 — Make `nextPendingTask` deterministic
+## STORE-003 — Add ADGO Pebble persisted-format identity
 
-### File
+Status: **TODO**
 
-- `internal/store/pebble/transaction.go`
+### Evidence
+
+Core Pebble now pins schema+codec. `adgo/PebbleStore` persists JSON execution/inbox/catalog/version records but does not have an equivalent explicit format marker.
 
 ### Change
 
-Do not select first eligible item from a Go map. Select minimum by canonical ordering.
+Introduce an ADGO-specific store-format envelope/marker with:
+
+- schema version;
+- format identity;
+- migration policy;
+- fail-fast future-schema behavior.
+
+Do not reuse the core marker key if the stores have different schemas.
 
 ### Tests
 
-Randomized insertion order must produce the same selected task.
+- new empty store marker;
+- reopen same version;
+- reject future version;
+- partial marker fail closed;
+- legacy unmarked adoption only after validation;
+- corruption does not silently become a new empty store.
 
 ---
 
-## E-004 — Audit ADGO map iteration that can affect execution decisions
+## STORE-004 — Inventory every durable serialized surface
 
-### Packages
+Status: **TODO**
 
-Search all ADGO code for `range` over maps where iteration affects:
+Create a machine-reviewable inventory covering at least:
 
-- winner selection;
-- scheduling;
-- repair roots;
-- provider routing tie-break;
-- child creation;
-- diagnostics order;
-- serialization/digest input.
+- core Pebble execution/task/history records;
+- ADGO FileStore execution commits/inbox;
+- ADGO Pebble execution/version/inbox/catalog records;
+- Flow Pebble state/history/outbox records;
+- schedules;
+- router health state;
+- admission state;
+- retention/repair metadata;
+- artifacts/manifests where durable compatibility matters.
 
-### Change
+For each surface record:
 
-Sort keys or use explicit deterministic tie-breaks.
-
-### Tests
-
-Add randomized construction-order property tests.
-
----
-
-# Phase F — Durable effect semantics for `Flow`
-
-Priority: **P1**
-
-## F-001 — Document current Flow effect guarantee precisely
-
-### Files
-
-- `README.md`
-- package docs around `Flow`
-
-State explicitly:
-
-- reducer state is saved after effects;
-- external effect may succeed even if state save fails afterward;
-- therefore Flow effects require idempotent handlers or an external dedup strategy;
-- use ADGO for stronger durable external-effect orchestration.
+- owner package;
+- encoding;
+- current schema/version field;
+- compatibility promise;
+- migration path;
+- golden fixture location.
 
 ---
 
-## F-002 — Add crash-window regression test
+## STORE-005 — Add golden compatibility fixtures
 
-### File
+Status: **TODO**
 
-- `flow_test.go`
+Create `testdata/compat/` (or package-specific equivalents) containing previous supported serialized records.
 
-Create a test store that intentionally fails after the effect handler succeeds but before state persistence.
+Tests must prove:
 
-Prove current behavior explicitly.
-
-This test is initially documentation-as-test, not yet a fix.
-
----
-
-## F-003 — Design `DurableFlow` / outbox capability
-
-### Design document
-
-Create:
-
-- `docs/DURABLE_FLOW_DESIGN.md`
-
-Evaluate two designs:
-
-### Option 1
-
-`DurableFlowStore` atomically stores:
-
-- new state;
-- event history;
-- pending effect commands.
-
-A worker executes pending effects later.
-
-### Option 2
-
-Reuse a low-level durable task primitive shared with Axiom runtime/ADGO.
-
-Prefer Option 2 only after durable-kernel extraction makes reuse clean.
-
-### Required properties
-
-- at-least-once effect delivery;
-- deterministic idempotency key;
-- no external effect before durable intent commit;
-- replay does not re-run completed effects;
-- recovery resumes pending effects.
+- current code reads the supported previous form;
+- unsupported future versions fail with explicit errors;
+- migration preserves identity/order/version;
+- reserialization does not silently discard unknown critical data;
+- PlanDigest/module identity constraints remain enforced.
 
 ---
 
-## F-004 — Implement durable outbox capability without breaking existing Flow
+## STORE-006 — Expand FileStore/admission subprocess tests
 
-### Rule
+Status: **PARTIAL**
 
-Existing `Flow` remains backward compatible.
+Add true multi-process tests for:
 
-Add a new opt-in API, e.g.:
+1. competing committers;
+2. process death while holding a lock;
+3. stale recovery after process death;
+4. owner A cleanup never removes B lock;
+5. 10+ concurrent committers preserve monotonic versions;
+6. inbox dedup under contention;
+7. cancellation leaves no lock leak;
+8. admission lock recovery follows the same ownership rules;
+9. Windows and POSIX behavior are both represented without relying on unsupported unlink semantics.
 
-```go
-OpenDurableFlow(...)
-```
-
-or an explicit store capability that switches semantics only when configured.
-
-### Tests
-
-Crash injection at each boundary:
-
-1. before state commit;
-2. after state commit, before effect;
-3. during effect;
-4. after effect, before acknowledgement;
-5. after acknowledgement.
-
-Verify no lost effect and idempotent redelivery behavior.
+Nightly is the preferred place for the heavier variants.
 
 ---
 
-# Phase G — Extract a shared Durable Kernel
+# 5. SCALE — Remove serialization bottlenecks only after store contracts are green
 
-Priority: **P1/P2**  
-Goal: remove duplicated critical semantics while preserving distinct Axiom and ADGO execution models.
+Priority: **P1/P2.**
 
-## G-001 — Inventory duplicated primitives
+## SCALE-001 — Benchmark current core Pebble transaction contention
 
-Compare Axiom Core and ADGO implementations of:
+Status: **TODO**
 
-- clock/time;
-- version/CAS;
-- lease;
-- worker identity;
-- fencing;
-- retry/backoff;
-- deterministic IDs;
-- transaction capability;
-- durable event/task state;
-- codec/copy semantics.
+### Evidence
 
-Produce a duplication map before moving code.
+`internal/store/pebble.Store.BeginTransaction` takes `s.mu` and keeps it until transaction `Commit/Rollback`. This serializes unrelated executions.
 
----
+### Before changing code
 
-## G-002 — Create `internal/durable` package
+Add benchmarks for:
 
-Suggested initial files:
+- 1, 2, 4, 8, 16, 32 concurrent independent executions;
+- read-heavy vs write-heavy transactions;
+- same execution vs different execution IDs;
+- commit latency percentiles;
+- allocations;
+- mutex/block profiles.
 
-- `version.go`
-- `lease.go`
-- `retry.go`
-- `identity.go`
-- `capability.go`
-
-Do not move high-level Execution structs into this package.
-
-### Principle
-
-`internal/durable` contains primitives, not workflow semantics.
+Capture baseline artifacts.
 
 ---
 
-## G-003 — Move common retry/backoff math
+## SCALE-002 — Measure double-serialization between Engine and Store
 
-Extract pure deterministic retry calculation from:
+Status: **TODO**
 
-- Axiom runtime;
-- ADGO policy/retry logic where compatible.
+Core Engine also owns `storeMu` around transactional execution paths while it has per-execution locking.
 
-### Tests
+Determine with profiling whether:
 
-Property tests:
+- `executionLocks` already provide sufficient same-execution serialization;
+- `storeMu` serializes unrelated executions unnecessarily;
+- Store transaction isolation depends on that outer lock.
 
-- delay monotonic until cap;
-- never negative;
-- respects max;
-- deterministic for same inputs;
-- overflow safe.
+Write correctness tests before removing any lock.
 
 ---
 
-## G-004 — Move lease expiry/fencing predicates
+## SCALE-003 — Design conflict/isolation model before replacing global mutex
 
-Centralize pure functions such as:
+Status: **TODO**
 
-```go
-Expired(now, leaseUntil)
-CanCommit(worker, attempt, lease, now)
-```
+Write a short design note containing:
 
-Keep store mutation in each runtime.
+- transaction read snapshot semantics;
+- sequence allocation strategy;
+- same-execution conflict handling;
+- cross-execution independence;
+- task dedup/index consistency;
+- commit atomicity;
+- retry/CAS policy;
+- rollback behavior.
 
-### Tests
-
-Boundary table at `<`, `==`, `>` deadline.
-
----
-
-## G-005 — Consolidate deterministic identity framing
-
-Use one canonical framing/hash strategy for durable IDs where semantics are shared.
-
-Do not change persisted ID format silently. If format must change, introduce versioning/migration first.
+Possible implementations may include execution-scoped/striped locking, Pebble indexed batches/snapshots, or optimistic CAS. Choose only after benchmarks and contracts exist.
 
 ---
 
-## G-006 — Add architecture dependency test
+## SCALE-004 — Refactor core Pebble transaction locking
 
-Prevent `internal/durable` from importing high-level runtime/ADGO packages.
+Status: **TODO**
 
-Desired dependency direction:
+Acceptance requirements:
 
-```text
-internal/durable <- Axiom runtime
-internal/durable <- ADGO
-```
-
-never reverse.
-
----
-
-# Phase H — Pebble contention and scalability
-
-Priority: **P2**
-
-## H-001 — Establish contention baseline first
-
-### Benchmark
-
-Add benchmark scenarios:
-
-- 1 execution, N goroutines;
-- N executions, N goroutines;
-- read-heavy;
-- commit-heavy;
-- inbox-heavy;
-- transaction-heavy.
-
-Collect:
-
-- ops/s;
-- p50/p95/p99;
-- alloc/op;
-- mutex profile if possible.
-
-Do not optimize without baseline.
+- same-execution semantics unchanged;
+- all shared Store contract tests green;
+- race detector green;
+- no task/history sequence regression;
+- throughput for independent executions improves materially at concurrency >1;
+- no significant single-thread regression.
 
 ---
 
-## H-002 — Add mutex/block profiling benchmark mode
+## SCALE-005 — Benchmark and reduce ADGO Pebble global mutex contention
 
-### Tool
+Status: **TODO**
 
-Extend `cmd/axiombench` or add benchmark flags enabling Go mutex/block profiles.
+ADGO `PebbleStore` also guards its full API with one mutex. After STORE-001 and schema work are green:
 
-### Acceptance
-
-Demonstrate percentage of time waiting on store-wide mutex.
-
----
-
-## H-003 — Introduce per-execution striped locks in ADGO PebbleStore
-
-### File
-
-- `adgo/pebble_store.go`
-
-### Change
-
-Replace global mutation serialization for independent execution IDs with fixed striped locks or keyed locks.
-
-Keep DB-wide operations protected separately only where necessary.
-
-### Tests
-
-- same execution remains serialized;
-- different executions proceed concurrently;
-- CAS conflict remains correct;
-- no races.
+- establish contention profiles;
+- split execution/catalog/inbox lock domains only where correctness permits;
+- preserve version-CAS semantics;
+- add high-contention backend-equivalence tests.
 
 ---
 
-## H-004 — Separate catalog/inbox lock domains
+# 6. TYPED — Optimize `ActTyped` without changing data semantics
 
-Avoid blocking unrelated execution commits on catalog scans or inbox work where Pebble itself provides safe concurrent access.
+Priority: **P1/P2.**
 
-Benchmark before/after.
+## TYPED-001 — Freeze typed activity conversion semantics with tests
 
----
+Status: **TODO**
 
-## H-005 — Revisit Core Pebble transaction lock scope
+Before optimizing, define the exact supported contract for:
 
-### Files
-
-- `internal/store/pebble/store.go`
-- `internal/store/pebble/transaction.go`
-
-### Goal
-
-Reduce duration of the store-wide lock without weakening atomicity.
-
-Possible path:
-
-- execution-scoped lock;
-- batch-local reads/snapshots;
-- optimistic version validation at commit;
-- deterministic conflict handling.
-
-### Requirement
-
-Do not implement this until D-phase contract tests are complete.
-
----
-
-# Phase I — Typed activity path optimization
-
-Priority: **P2**
-
-## I-001 — Benchmark `Act` vs `ActTyped`
-
-### New benchmark
-
-Measure identical payload using:
-
-- dynamic `Act`;
-- `ActTyped` struct input/output;
-- named map input/output.
-
-Capture latency and allocations.
-
----
-
-## I-002 — Extract typed codec registration plan
-
-### Files
-
-- `axiom.go` initially;
-- preferably new `typed_activity.go` after behavior is frozen.
-
-### Change
-
-Move shape validation and output field plan computation to registration time.
-
-Cache:
-
-- exported fields;
-- resolved output names;
-- skip rules;
-- field indexes.
-
-Do not rediscover schema on every invocation.
-
----
-
-## I-003 — Align typed output semantics with documented JSON semantics
-
-Explicitly define behavior for:
-
-- `json:"name"`;
+- struct input/output;
+- pointer structs;
+- named `map[string]T` types;
+- `axiom:"name"` tag precedence;
+- `json:"name"` tags;
 - `json:"-"`;
-- `omitempty`;
-- embedded structs;
-- pointers;
-- custom marshalers;
-- named map types.
+- `omitempty` behavior if supported;
+- embedded fields;
+- nil pointers;
+- integers vs floating JSON numbers;
+- slices/maps/nested structs;
+- custom `json.Marshaler` / `json.Unmarshaler` behavior;
+- unknown fields;
+- missing required fields if Axiom has such a concept.
 
-Either fully support a subset and reject unsupported constructs at registration, or use generated codecs.
-
-Never silently produce semantics different from documentation.
+Do not assume Go `encoding/json` behavior and current reflection behavior are identical — test and deliberately choose the public contract.
 
 ---
 
-## I-004 — Generate zero/low-allocation adapters in `axiomgen`
+## TYPED-002 — Establish `Act` vs `ActTyped` benchmark baseline
 
-### Package
+Status: **TODO**
 
-- `cmd/axiomgen/internal/codegen`
+Measure:
 
-### Goal
+- ns/op;
+- B/op;
+- allocs/op;
+- small/medium/nested structs;
+- map input;
+- pointer-heavy input;
+- generated wrapper path.
 
-Generate typed wrappers for known module activity shapes.
+Save baseline in the benchmark artifact schema.
 
-Generated adapters should avoid repeated generic JSON round-trips where practical.
+---
+
+## TYPED-003 — Compile conversion plans at registration time
+
+Status: **TODO**
+
+Move reflection/tag discovery out of each activity invocation.
+
+At registration time build immutable plans for:
+
+- input field lookup and assignment;
+- output field names/access;
+- pointer handling;
+- conversion validation.
+
+Cache by concrete type where safe.
+
+---
+
+## TYPED-004 — Remove unnecessary JSON round trip from typed input path
+
+Status: **TODO**
+
+Current path performs `json.Marshal(input map)` then `json.Unmarshal` into `In` for every call.
+
+Replace it with a lower-allocation converter only after TYPED-001 semantics are frozen.
+
+Acceptance:
+
+- all semantic fixtures match;
+- error quality does not regress;
+- large integer correctness does not regress;
+- no unsafe reflection panic;
+- materially fewer allocations than baseline.
+
+---
+
+## TYPED-005 — Remove per-call output reflection
+
+Status: **TODO**
+
+Use the registration-time output plan. Preserve tag behavior and named map support.
+
+---
+
+## TYPED-006 — Optional generator specialization
+
+Status: **TODO / later**
+
+After generic typed mapping is correct, allow `axiomgen` to emit specialized adapters for zero/minimal reflection on known generated types.
+
+Do not make generated wrappers semantically different from the normal typed API.
+
+---
+
+# 7. ERR — Replace string-based control flow with typed errors
+
+Priority: **P1.**
+
+## ERR-001 — Eliminate `AX505` substring retry classification
+
+Status: **TODO**
+
+### Evidence
+
+`isRetryableActivityFailure(message string)` currently treats any string containing `AX505` as retryable.
+
+This can misclassify unrelated error text and makes control flow depend on formatting.
+
+### Change
+
+Introduce/propagate a typed activity failure classification through the Store/retry boundary.
+
+Use:
+
+- `errors.Is` / `errors.As`;
+- explicit typed/sentinel retryability;
+- diagnostic `Code` only as a stable presentation identifier, not arbitrary substring parsing.
+
+### Backward compatibility
+
+If low-level/custom Store APIs only provide error strings, define a narrow compatibility adapter rather than preserving broad `strings.Contains` forever.
 
 ### Tests
 
-- generated code compiles;
-- generated adapter behavior equals dynamic adapter;
-- tags preserved;
-- error handling equivalent;
-- benchmark shows measurable benefit.
+- exact typed AX505 retryable failure;
+- wrapped typed failure;
+- text containing `AX505` but not typed failure is not retryable;
+- terminal diagnostic does not retry;
+- retry exhaustion unchanged;
+- persisted history still exposes the stable diagnostic code expected by users.
 
 ---
 
-# Phase J — Performance regression engineering
+## ERR-002 — Unify transaction commit-on-error classification
 
-Priority: **P2**
+Status: **PARTIAL**
 
-## J-001 — Replace broad allocation ceilings with baselines + budget
+`shouldCommitTransactionError` recognizes typed retry scheduling and selected diagnostic codes. Define an explicit interface/type for errors whose state mutations are intentionally durable despite a returned control-flow error.
 
-### Files
-
-- `allocation_test.go`
-- benchmark tooling/CI
-
-Current tests should remain as hard safety ceilings, but add tighter baseline regression detection.
-
-Example policy:
-
-```text
-hard absolute ceiling
-AND
-relative regression <= 15%
-```
-
-Use stable operations only; avoid flaky microbench thresholds in normal unit tests.
+Avoid growing a switch over presentation error codes.
 
 ---
 
-## J-002 — Persist benchmark artifact schema
+## ERR-003 — Publish an error taxonomy
 
-### `cmd/axiombench`
+Status: **TODO**
 
-Ensure JSON includes:
+Define categories for:
 
+- configuration/compile errors;
+- retryable activity errors;
+- terminal activity errors;
+- conflicts;
+- stale lease/fencing;
+- corruption/compatibility;
+- durability capability failure;
+- cancellation/deadline;
+- transient storage/system failure.
+
+Document which are safe for callers to branch on and provide `errors.Is/As` behavior.
+
+---
+
+# 8. FLOW — Finish durable-effect crash and operations engineering
+
+Priority: **P1/P2.**
+
+The durable Flow outbox is already implemented. Do not redesign it from scratch.
+
+## FLOW-001 — Add deterministic failpoints around every durable effect boundary
+
+Status: **TODO**
+
+Test crashes/failures:
+
+1. before state+intent commit;
+2. after commit, before effect call;
+3. during effect call;
+4. after effect success, before acknowledgement;
+5. during acknowledgement commit;
+6. after acknowledgement;
+7. during reopen/recovery.
+
+Prove:
+
+- no external effect before durable intent;
+- no lost pending effect;
+- same EffectID is reused for redelivery;
+- acknowledged effect is not redelivered;
+- state/history/outbox remain mutually consistent.
+
+---
+
+## FLOW-002 — Add outbox backlog and recovery observability
+
+Status: **TODO**
+
+Expose bounded-cardinality metrics/diagnostics for:
+
+- pending effects;
+- oldest pending age;
+- delivery attempts/failures;
+- acknowledgement failures;
+- recovery deliveries.
+
+Do not use execution ID as an unbounded metric label.
+
+---
+
+## FLOW-003 — Define batching/backpressure behavior
+
+Status: **TODO**
+
+For large backlogs define:
+
+- max batch size;
+- retry pacing;
+- cancellation behavior;
+- fairness between executions;
+- memory bound;
+- shutdown/drain behavior.
+
+Add scale benchmarks before optimizing.
+
+---
+
+## FLOW-004 — Version Flow durable records
+
+Status: **TODO**
+
+Include Flow state/history/outbox in STORE-004/STORE-005 compatibility work. Do not assume application state JSON itself is globally migratable; distinguish Axiom envelope schema from user state schema.
+
+---
+
+## FLOW-005 — Keep non-durable Flow guarantee explicit
+
+Status: **DONE/POLICY**
+
+The compatibility Flow path may execute an effect before persisting state. Keep documentation explicit that users requiring crash-safe external effects must use durable effects with a synchronous `DurableFlowStore` and downstream idempotency by EffectID.
+
+Do not silently change compatibility semantics in a patch release.
+
+---
+
+# 9. PERF — Turn performance checks into relative regression engineering
+
+Priority: **P2 after correctness work.**
+
+## PERF-001 — Keep tightened allocation ceilings and add relative baselines
+
+Status: **PARTIAL**
+
+Existing hard ceilings are useful catastrophe guards. Add reviewed relative thresholds against checked-in baseline data.
+
+Suggested policy:
+
+- fail or require review for >10–15% alloc/op regression on stable hot paths;
+- compare latency only with statistically meaningful benchmark sampling;
+- never auto-rewrite the baseline in the same change that regresses it.
+
+---
+
+## PERF-002 — Version benchmark artifact schema
+
+Status: **PARTIAL/TODO**
+
+Ensure benchmark JSON contains:
+
+- schema version;
 - commit SHA;
 - Go version;
 - OS/arch;
-- operation name;
+- CPU metadata when available;
 - sample count;
-- ops/s;
-- p50/p90/p95/p99;
-- alloc/op where available;
+- throughput;
+- percentile latency;
 - bytes/op;
-- configuration parameters.
-
-Version the artifact schema.
-
----
-
-## J-003 — Add benchmark comparison CI
-
-Store a reviewed baseline file, for example:
-
-- `benchmarks/baseline.json`
-
-CI should fail only on material regressions, with explicit tolerances per benchmark category.
-
-### Rule
-
-Do not automatically rewrite baseline on every run.
-
-Baseline updates require an intentional commit explaining why regression/improvement is accepted.
+- allocs/op;
+- benchmark configuration.
 
 ---
 
-## J-004 — Add ADGO benchmarks
+## PERF-003 — Add ADGO production-path benchmarks
 
-Currently performance focus is stronger in Axiom Core than ADGO.
+Status: **TODO**
 
-Add scenarios for:
+Cover:
 
-- simple graph completion;
-- parallel super-step;
-- durable timer handling;
-- router selection;
-- repair planning;
-- MemoryStore commit;
-- PebbleStore commit;
-- inbox delivery;
-- worker claim/complete;
-- 1k independent executions.
-
----
-
-# Phase K — Store capability and durability model
-
-Priority: **P2**
-
-## K-001 — Separate transactionality from durability conceptually
-
-### Problem
-
-`TransactionalStore` only proves transaction API presence, not persistence level.
-
-### Design
-
-Introduce explicit durability metadata/capability.
-
-Possible API:
-
-```go
-type DurabilityLevel uint8
-const (
-    DurabilityEphemeral DurabilityLevel = iota
-    DurabilityProcess
-    DurabilityHost
-    DurabilityDistributed
-)
-```
-
-Do not require exact names if a cleaner model emerges.
+- runtime supersteps;
+- scheduler selection;
+- router decisions;
+- admission acquire/heartbeat;
+- Memory/File/Pebble commits;
+- inbox processing;
+- lease recovery;
+- Flow outbox delivery bookkeeping;
+- retention/repair scans.
 
 ---
 
-## K-002 — Add capability inspection without breaking Store
+## PERF-004 — Add long-history and high-cardinality storage benchmarks
 
-Prefer optional interfaces:
+Status: **TODO**
 
-```go
-type DurabilityProvider interface {
-    Durability() DurabilityLevel
-}
-```
+Measure:
 
-rather than bloating base `Store`.
+- 1K/10K/100K history entries;
+- large task queues;
+- large inboxes;
+- many executions;
+- outbox backlog;
+- catalog scans;
+- reopen/recovery cost.
 
-### Defaults
-
-- Memory: ephemeral;
-- Pebble: host durable;
-- File: host/shared-filesystem durable with documented constraints;
-- custom stores: explicit or conservative default.
+Use results to choose indexes/retention strategy rather than guessing.
 
 ---
 
-## K-003 — Strengthen `WithProductionMode`
+# 10. SEC — Reduce security blind spots
 
-### File
+Priority: **P1/P2.**
 
-- `axiom.go`
+## SEC-001 — Remove broad global gosec exclusions one rule at a time
 
-### Change
+Status: **TODO**
 
-Production mode must validate both:
-
-- required transaction semantics;
-- required durability capability.
-
-If backward compatibility forbids immediate enforcement, introduce warning/strict production option first, then enforce in next breaking version.
-
----
-
-## K-004 — Add production configuration diagnostics
-
-Return structured diagnostics identifying:
-
-- missing transaction support;
-- ephemeral durability;
-- disabled sync/WAL risk;
-- unsupported concurrency mode;
-- non-idempotent external activity where detectable.
-
----
-
-# Phase L — Public API and compatibility cleanup
-
-Priority: **P2**
-
-## L-001 — Audit deprecated API fallbacks
-
-### File
-
-- `axiom.go`
-
-Focus on `NewEngine` fallback path that bypasses modern validation.
-
-Document all deprecated functions and whether they preserve modern invariants.
-
----
-
-## L-002 — Stop silent validation bypass
-
-Choose staged path:
-
-### Current minor release
-
-- keep deprecated API;
-- emit/return diagnostics where possible;
-- document unsafe compatibility fallback.
-
-### Next major
-
-- remove fallback;
-- deprecated constructor delegates strictly to validated `New`.
-
-Add migration docs.
-
----
-
-## L-003 — Freeze public API inventory
-
-Generate/check a public API manifest using Go tooling (`go doc`, `go list`, or an API checker).
-
-CI detects accidental exported API changes.
-
-Intentional changes require manifest update.
-
----
-
-# Phase M — Serialization and compatibility specification
-
-Priority: **P1/P2**
-
-## M-001 — Inventory persisted schemas
-
-Document all durable representations:
-
-- Axiom `Execution`;
-- `ExecutionState`;
-- `ActivityTask`;
-- history entries;
-- ADGO `Execution`;
-- inbox events;
-- plan digest/version;
-- schedule state;
-- router health state;
-- cache metadata;
-- artifact metadata.
-
----
-
-## M-002 — Add explicit schema/version fields where missing
-
-Do not depend exclusively on Go struct layout evolving compatibly.
-
-Add schema version metadata at durable boundaries where necessary.
-
----
-
-## M-003 — Add golden compatibility fixtures
-
-### New directory
-
-- `testdata/compat/`
-
-Store representative serialized states from released schema versions.
-
-Tests must verify new code can:
-
-- load supported old state;
-- reject unsupported state with clear diagnostic;
-- preserve integer precision;
-- preserve plan identity;
-- preserve task/history semantics.
-
----
-
-## M-004 — Define PlanDigest compatibility rules
-
-Document exactly what changes affect digest and migration compatibility:
-
-- node addition/removal;
-- activity rename;
-- dependency changes;
-- policy changes;
-- risk flags;
-- idempotency expressions;
-- output schema changes.
-
-Add tests for stable digest on semantically identical definitions.
-
----
-
-# Phase N — Security and supply-chain hardening
-
-Priority: **P2**
-
-## N-001 — Pin security tool versions
-
-### File
-
-- `.github/workflows/security.yml`
-
-Replace `@latest` executions for:
-
-- govulncheck;
-- gosec;
-
-with reviewed pinned versions.
-
-Use Dependabot/Renovate or periodic explicit updates.
-
----
-
-## N-002 — Reduce global gosec exclusions
-
-Audit each excluded rule:
+Current global exclusions include:
 
 `G101,G104,G115,G301,G302,G304,G306,G404,G703`
 
-For each:
+### Procedure for each rule
 
-1. find actual findings;
-2. fix legitimate issues;
-3. use local `#nosec` with explanation only where justified;
-4. remove rule from global exclude list when feasible.
+1. enable one rule;
+2. inspect every finding;
+3. fix real issues;
+4. for intentional behavior, place the narrowest local `#nosec <rule> -- justification` or equivalent documented suppression;
+5. keep tests/security green;
+6. commit the rule removal atomically.
 
-### Acceptance
-
-Every remaining global exclusion has a documented reason.
-
----
-
-## N-003 — Pin GitHub Actions by commit SHA for release/security-critical workflows
-
-At minimum:
-
-- checkout;
-- setup-go;
-- artifact upload;
-- gitleaks action;
-- release actions.
-
-Optionally keep comments indicating upstream tag for readability.
+Do not replace one broad global exclusion with a broad directory exclusion unless the directory is explicitly non-production and justified.
 
 ---
 
-## N-004 — Add SBOM generation
+## SEC-002 — Minimize workflow permissions per job
 
-Generate CycloneDX or SPDX for releases.
+Status: **TODO**
 
-Attach to release artifacts.
+Review workflows so write permissions exist only in jobs that need them.
 
----
+In particular:
 
-## N-005 — Add provenance/checksum release artifacts
-
-Produce:
-
-- checksums;
-- SBOM;
-- build metadata;
-- signed provenance if practical.
+- security scans generally need read access unless uploading SARIF/security events;
+- release publication needs contents/packages/id-token writes, but verification/build jobs should not inherit unnecessary write capability if job-level permissions can narrow them.
 
 ---
 
-# Phase O — Branch protection and repository governance
+## SEC-003 — Preserve immutable dependency pins
 
-Priority: **P0 process**
+Status: **DONE/POLICY**
 
-## O-001 — Protect `main`
-
-Configure GitHub ruleset / branch protection:
-
-- require pull request;
-- require `ci-gate`;
-- require security workflow or selected security checks;
-- require full race gate;
-- block force push;
-- block deletion;
-- require resolved review conversations;
-- require branch to be up to date when appropriate.
-
-If direct pushes are intentionally retained temporarily, at minimum require status checks for automated merges.
+The action pin guard and pinned scanner versions are established invariants. Update pins intentionally and keep the guard.
 
 ---
 
-## O-002 — Add CODEOWNERS for critical runtime areas
+## SEC-004 — Harden release provenance
 
-Suggested critical paths:
+Status: **PARTIAL**
 
-- `/internal/runtime/`
-- `/internal/store/`
-- `/adgo/`
-- `/.github/workflows/`
+SBOM and SHA256SUMS already exist. Add/verify:
 
-Use actual maintainers available to repository.
-
----
-
-## O-003 — Add PR checklist for invariant-sensitive changes
-
-Require author to state:
-
-- public API change?;
-- durable schema change?;
-- concurrency change?;
-- timing change?;
-- storage semantics change?;
-- benchmark impact?;
-- migration impact?;
-- docs updated?;
-- race test run?;
-- compatibility fixtures updated?
+- artifact provenance/attestation;
+- reproducible build metadata;
+- immutable target SHA recorded in release assets/notes;
+- container provenance/signing strategy if containers remain a supported artifact.
 
 ---
 
-# Phase P — Documentation correctness and executable docs
+# 11. API — Stabilize public surface before v1
 
-Priority: **P2**
+Priority: **P2.**
 
-## P-001 — Fix known documentation drift
+## API-001 — Add mechanical public API compatibility gate
 
-Audit at minimum:
+Status: **TODO**
 
-- production concurrency modes (`parallel/once/latest/first`);
-- Pebble default codec behavior;
-- production store requirements;
-- FileStore deployment constraints;
-- race/CI guarantees;
-- ADGO timer semantics.
+Create a checked baseline/API manifest for exported identifiers in supported public packages and compare in CI.
 
----
+The gate should distinguish:
 
-## P-002 — Make examples compile/run in CI as documentation tests
+- additive compatible change;
+- signature change;
+- removal;
+- deprecation;
+- package move.
 
-Existing examples suite is a good foundation. Extend it so every code block used as a canonical quick-start has a corresponding runnable source file or test.
-
-Avoid untested copy-paste snippets that can drift.
+For pre-v1, intentional breaking changes may be allowed only with explicit version/changelog annotation.
 
 ---
 
-## P-003 — Generate current audit/performance report from CI artifacts
+## API-002 — Classify panic-on-programmer-error APIs
 
-Do not maintain performance claims manually.
+Status: **TODO**
 
-Add generated report structure:
+Flow registration helpers currently panic on nil flow/handler and have tests asserting that behavior. Decide/document whether each exported `Must*`/registration helper is intentionally panic-based or should return an error in a future minor version.
+
+Do not casually convert existing panic contracts in a patch release.
+
+---
+
+## API-003 — Audit deprecated aliases and root facade size
+
+Status: **TODO**
+
+Inventory:
+
+- deprecated aliases such as `Register`;
+- root facade exports;
+- duplicate constructors;
+- low-level runtime exports that should remain internal.
+
+Produce a pre-v1 migration/deprecation table before removing anything.
+
+---
+
+## API-004 — Split large root files by responsibility without changing package API
+
+Status: **TODO / maintainability**
+
+After compatibility tests exist, split large files such as `axiom.go` into focused implementation files:
+
+- app/load/compile;
+- engine options;
+- activity registration/typed adapters;
+- Pebble facade;
+- public aliases/constants.
+
+This is a source-layout refactor only; exported names stay in package `axiom`.
+
+---
+
+# 12. ARCH — Extract a shared durable kernel only after contracts are stable
+
+Priority: **P2/P3.**
+
+## ARCH-001 — Inventory duplicated durable primitives
+
+Status: **TODO**
+
+Compare core Axiom and ADGO implementations of:
+
+- identity framing;
+- retry/backoff;
+- lease/fencing;
+- durability capability;
+- version/CAS semantics;
+- clock adapters;
+- persisted-format version handling;
+- lock ownership;
+- error classification.
+
+Mark each as:
+
+- genuinely identical and extractable;
+- superficially similar but different contract;
+- frontend/runtime-specific and should remain separate.
+
+---
+
+## ARCH-002 — Define `internal/durable` dependency direction
+
+Status: **TODO**
+
+Target shape:
 
 ```text
-reports/current/
-  test-summary.md
-  benchmark-summary.md
-  allocations.json
-  race-summary.md
-  fuzz-summary.md
-  security-summary.md
+frontends / DSL / Go APIs
+        ↓
+immutable plans / IR
+        ↓
+Axiom runtime       ADGO runtime
+        ↘           ↙
+      shared durable primitives
+              ↓
+         storage SPI
 ```
 
-Prefer generated files in release artifacts if committing them causes noise.
+Do **not** merge Axiom and ADGO engines into one large runtime.
 
 ---
 
-# Phase Q — Release engineering and compatibility policy
+## ARCH-003 — Extract only pure, proven primitives
 
-Priority: **P1/P2**
+Status: **TODO**
 
-## Q-001 — Define SemVer policy while project is pre-1.0
+Good initial candidates after ERR/TIME/STORE contracts:
 
-Create:
+- retry/backoff calculation;
+- lease/fencing predicates;
+- canonical identity framing;
+- durability levels/capability helpers;
+- format-version validation helpers where schemas remain separate.
 
-- `docs/VERSIONING.md`
-
-Define what constitutes breaking change for:
-
-- Go API;
-- AXM syntax;
-- TRIZ frontend;
-- model/table API;
-- ADGO Plan definition;
-- serialized state;
-- worker protocol;
-- callbacks;
-- store capability contracts.
+Each extraction must have no behavior change and must keep package dependency direction acyclic.
 
 ---
 
-## Q-002 — Define supported persistence compatibility window
+## ARCH-004 — Add architecture dependency tests
 
-Example policy:
-
-- current schema N reads N and N-1;
-- older schemas require migration tool;
-- major format incompatibility fails fast with explicit code.
-
-Choose actual policy deliberately; do not leave implicit.
-
----
-
-## Q-003 — Create first reproducible release workflow
-
-Release should run only after:
-
-- full CI;
-- full race;
-- security;
-- compatibility fixtures;
-- codegen verification;
-- benchmark gate.
-
-Artifacts:
-
-- source tag;
-- checksums;
-- SBOM;
-- generated documentation/report;
-- changelog.
-
----
-
-# Phase R — Advanced correctness testing
-
-Priority: **P1**
-
-## R-001 — Replay equivalence property tests
-
-Generate legal event sequences and verify:
-
-```text
-live execution final state == replayed final state
-```
-
-for deterministic components.
-
-Include:
-
-- patches;
-- signals;
-- retries;
-- completions;
-- human decisions;
-- repair revisions where supported.
-
----
-
-## R-002 — Crash-point injection framework
-
-Create a test-only failpoint abstraction capable of simulating crash/error at durable boundaries.
-
-Important crash points:
-
-- before commit;
-- after batch construction;
-- after state commit;
-- before/after inbox ack;
-- before task claim;
-- after claim before activity;
-- after activity before completion commit;
-- compensation step boundaries;
-- schedule firing before cursor commit.
-
-### Rule
-
-Failpoints must not ship enabled in normal builds unless zero-cost and explicitly controlled.
-
----
-
-## R-003 — Crash equivalence tests
-
-For each injected crash point:
-
-1. run until injected failure;
-2. reopen durable store/runtime;
-3. resume;
-4. compare final state to uninterrupted execution;
-5. assert allowed duplicate external calls only where contract says at-least-once;
-6. assert stale workers cannot commit.
-
----
-
-## R-004 — Store backend equivalence tests
-
-Run same deterministic workflow corpus against:
-
-- MemoryStore;
-- FileStore;
-- PebbleStore.
-
-Compare logical final execution state and history semantics modulo backend-specific metadata.
-
----
-
-## R-005 — Retry monotonicity properties
-
-Property tests:
-
-- attempt never decreases;
-- next retry deadline never moves backward unless explicitly rescheduled;
-- attempts never exceed MaxAttempts;
-- terminal failure cannot become pending without explicit repair/reset semantics;
-- completed task cannot be retried.
-
----
-
-## R-006 — Lease/fencing safety properties
-
-Generate worker IDs, attempts, lease renewals, expirations, and delayed completions.
-
-Invariant:
-
-> no stale worker can commit after ownership has transferred.
-
-Run under race detector.
-
----
-
-## R-007 — Budget monotonicity across all execution paths
-
-Expand existing ADGO budget tests to include:
-
-- retry;
-- hedging;
-- ensemble;
-- repair;
-- child workflow;
-- compensation;
-- failure;
-- cache hit/miss.
-
-No path may reduce already-accounted usage.
-
----
-
-## R-008 — Repair locality property tests
-
-Generate DAGs with independent branches.
-
-After targeted repair:
-
-- descendants of repair root may be invalidated;
-- unrelated completed branches must remain intact;
-- revision increment is deterministic;
-- no unrelated external effect is repeated.
-
----
-
-## R-009 — Migration safety property tests
-
-Generate compatible/incompatible plan mutations.
-
-Verify migration accepts only changes covered by compatibility rules and only at permitted quiescent points.
-
----
-
-## R-010 — Terminal-state non-resurrection tests
-
-For every terminal state:
-
-- completed;
-- failed;
-- canceled;
-- superseded where applicable;
-
-feed delayed/duplicate events and verify state cannot silently become active again unless an explicit API (repair/fork/retry) authorizes it.
-
----
-
-# Phase S — Observability and operations hardening
-
-Priority: **P2**
-
-## S-001 — Define stable metrics contract
-
-Metrics should include:
-
-- active executions;
-- waiting executions;
-- human-blocked executions;
-- pending/running tasks;
-- lease expirations;
-- stale worker commits rejected;
-- retry counts;
-- retry exhaustion;
-- repair attempts;
-- compensation attempts/failures;
-- provider circuit state;
-- admission rejection;
-- store latency;
-- coordinator loop latency.
-
-Avoid unbounded labels such as raw execution ID.
-
----
-
-## S-002 — Add structured event/log schema
-
-Define stable fields:
-
-```text
-execution_id
-plan_digest
-node_id
-task_id
-worker_id
-attempt
-revision
-event_type
-error_code
-```
-
-Ensure sensitive payloads are not logged by default.
-
----
-
-## S-003 — Add health/readiness distinction
-
-Production service helpers should distinguish:
-
-- process alive;
-- store reachable;
-- coordinator operational;
-- worker drain state;
-- schema compatible;
-- plan registry loaded.
-
----
-
-## S-004 — Expand operations runbook
-
-### File
-
-- `adgo/OPERATIONS.md`
-
-Add procedures for:
-
-- corrupted execution diagnostics;
-- stuck lease;
-- worker quarantine;
-- Pebble recovery/open failure;
-- FileStore stale lock recovery;
-- failed migration;
-- repair exhaustion;
-- human escalation backlog;
-- retention failure;
-- rollback to previous plan version.
-
----
-
-# Phase T — Codebase structure and maintainability
-
-Priority: **P2/P3**
-
-## T-001 — Split oversized public files by responsibility
-
-Candidate: root `axiom.go`.
-
-Target files may become:
-
-- `app.go`
-- `compile.go`
-- `engine_options.go`
-- `activity.go`
-- `store_options.go`
-- `compat.go`
-
-Preserve package API exactly.
-
-Do this only after stabilization tests exist to make refactor low-risk.
-
----
-
-## T-002 — Separate ADGO runtime, persistence, coordination, and policy layers physically
-
-Without changing package name immediately, group implementation by clear files/subpackages where circularity allows.
-
-Desired conceptual modules:
-
-```text
-plan/compiler
-runtime state machine
-coordinator
-worker
-storage
-policy
-routing
-repair
-scheduling
-operations
-```
-
-Avoid creating many tiny packages solely for aesthetics.
-
----
-
-## T-003 — Add architecture tests for dependency boundaries
+Status: **TODO**
 
 Prevent:
 
-- compiler depending on runtime;
-- durable primitives depending on high-level orchestration;
-- storage importing application-facing helpers;
-- examples becoming dependencies of library code.
+- `internal/durable` importing high-level runtime packages;
+- public frontend packages depending on concrete persistence implementations unnecessarily;
+- cyclic Axiom↔ADGO coupling;
+- test-only helpers leaking into production APIs.
 
 ---
 
-## T-004 — Standardize error taxonomy
+# 13. CI — Complete the production verification DAG
 
-Audit Axiom `AXxxx` diagnostics and ADGO errors.
+Priority: **P1/P2.**
 
-Define categories:
+## CI-001 — Restore cross-platform green baseline
 
-- compile/config;
-- runtime deterministic;
-- transient/retryable;
-- storage;
-- concurrency/conflict;
-- stale/fencing;
-- policy;
-- human required;
-- compatibility/migration.
+Status: **P0 BLOCKER**
 
-Expose machine-readable classification rather than string matching where possible.
+Same as P0-001. Current Windows failure must be repaired first.
 
 ---
 
-## T-005 — Remove retry classification by string inspection
+## CI-002 — Add focused concurrency diagnostics
 
-### Current area
+Status: **TODO**
 
-- `internal/runtime/retry_store.go`
+Keep full race, but add a small named diagnostic job/test selection for:
 
-Replace logic based on checking whether error text contains `AX505` with typed/structured errors or `errors.Is`/`errors.As` classification.
+- lease/fencing;
+- concurrent stores;
+- Flow dispatch;
+- FileStore/admission locks;
+- scheduler concurrency.
 
-### Tests
-
-- wrapped retryable error remains retryable;
-- unrelated text containing `AX505` is not accidentally retryable;
-- terminal errors never retry;
-- context cancellation never retry loops.
+This shortens diagnosis when the full race job fails.
 
 ---
 
-# Phase U — Concrete CI target topology
+## CI-003 — Add nightly subprocess/crash suite
 
-After stabilization, target CI DAG should be approximately:
+Status: **TODO**
 
-```text
-lint
-module-hygiene
-api-compat
-unit-linux
-unit-windows
-unit-macos
-race-full-linux
-fuzz-smoke
-store-contracts
-compat-fixtures
-codegen-verify
-examples
-security-fast
-benchmark-regression
-        ↓
-      ci-gate
+Nightly should include:
+
+- FileStore multiprocess contention/recovery;
+- admission multiprocess lock recovery;
+- Flow crash/failpoints;
+- persisted-format compatibility fixtures;
+- transaction contention stress;
+- repeated race.
+
+---
+
+## CI-004 — Add API compatibility and persisted compatibility jobs
+
+Status: **TODO**
+
+These should become explicit jobs rather than being hidden inside generic unit tests once fixtures are stable.
+
+---
+
+## CI-005 — Keep generated wrapper runtime verification isolated
+
+Status: **DONE/POLICY**
+
+Do not reintroduce nested `go mod tidy` or network dependency resolution inside `go test -race`.
+
+---
+
+# 14. RELEASE — Make release code and release policy identical
+
+Priority: **P1 before publishing a stable artifact.**
+
+## REL-001 — Fix frozen release branch resolution
+
+Status: **TODO**
+
+### Evidence
+
+`docs/versioning.md` promises that manual publication resolves `release/<version>`, verifies it is an ancestor of `main`, and publishes that frozen SHA.
+
+Current `.github/workflows/release.yml` manual path instead sets:
+
+```bash
+sha="$(git rev-parse HEAD)"
 ```
 
-Nightly:
+This can publish the workflow-dispatch branch HEAD rather than the frozen candidate described by policy.
 
-```text
-race-full-linux-count3
-race-full-macos
-fuzz-60s-or-longer
-crash-injection-suite
-multi-process-filestore
-stress-many-executions
-benchmark-full
-security-full
-```
+### Change
 
-Release:
+Make workflow behavior match the documented contract:
 
-```text
-ci-gate
-security-full
-compatibility
-benchmark-gate
-SBOM
-checksums
-provenance
-release
-```
+1. validate SemVer input;
+2. require dispatch from allowed branch/ref;
+3. resolve `refs/heads/release/<version>`;
+4. verify it exists;
+5. verify candidate is an ancestor of `main`;
+6. verify release notes policy;
+7. reject existing tag/release unless an explicit safe recovery path is used;
+8. checkout/publish the exact frozen SHA.
+
+Add workflow/script tests for metadata resolution where practical.
 
 ---
 
-# Phase V — Recommended commit sequence
+## REL-002 — Upgrade release verification to current main gates
 
-The safest implementation order is:
+Status: **TODO**
 
-1. `A-001` time inventory.
-2. `A-002` durabletime package.
-3. `A-003` ADGO Runtime clock injection.
-4. `A-004` deterministic durable timer test.
-5. `A-005..A-008` complete time migration + guard.
-6. `B-001` enable full race merge gate.
-7. `B-002..B-003` nightly repeated race diagnostics.
-8. `D-001..D-005` store contract suite before storage refactors.
-9. `D-006` tx pointer isolation fix.
-10. `E-001..E-004` deterministic ordering.
-11. `C-001..C-006` FileStore lock protocol + adversarial tests.
-12. `R-002..R-006` crash/lease property framework.
-13. `O-001..O-003` repository governance.
-14. `M-001..M-004` persistence compatibility.
-15. `Q-001..Q-003` release/versioning policy.
-16. `F-001..F-004` durable Flow effects.
-17. `G-001..G-006` shared durable kernel extraction.
-18. `H-001..H-005` Pebble contention optimization.
-19. `I-001..I-004` typed activity optimization.
-20. `J-001..J-004` stricter performance regression gates.
-21. `K-001..K-004` durability capability model.
-22. `L-001..L-003` public API cleanup.
-23. `N-001..N-005` supply-chain hardening.
-24. `P-001..P-003` executable docs/current reports.
-25. `S-001..S-004` operations/observability hardening.
-26. `T-001..T-005` structural cleanup after invariants are protected.
-27. `R-007..R-010` final broad property/migration invariants.
+Release verification currently runs a narrower race command than main CI.
 
-Do not start Pebble concurrency refactors or Durable Kernel movement before shared store/time contracts are green.
+Before publishing, require at least:
+
+- module hygiene;
+- `go vet ./...`;
+- `go test ./...`;
+- `go test -race ./...` on supported release runner;
+- compatibility fixtures;
+- codegen verification;
+- security gate or verified reusable workflow result;
+- benchmark regression review.
+
+Do not publish a release from a candidate that would fail current main requirements.
 
 ---
 
-# Phase W — Milestones and exit criteria
+## REL-003 — Keep SBOM/checksum generation and add provenance
 
-## Milestone M1 — Race-clean deterministic runtime
+Status: **PARTIAL**
 
-Contains:
-
-- Phase A complete;
-- Phase B complete.
-
-Exit:
-
-- `go test -race ./...` green on every main change;
-- no flaky durable timer tests across repeated runs.
-
-## Milestone M2 — Storage semantics locked down
-
-Contains:
-
-- Phase C;
-- Phase D;
-- Phase E.
-
-Exit:
-
-- all stores pass contract tests;
-- FileStore stale-lock ownership bug fixed;
-- deterministic task ordering proven.
-
-## Milestone M3 — Durable correctness
-
-Contains:
-
-- core of Phase R;
-- Phase F;
-- Phase M.
-
-Exit:
-
-- crash/replay/backend equivalence tests green;
-- Flow durable effect path available;
-- persisted schema compatibility specified.
-
-## Milestone M4 — Production governance
-
-Contains:
-
-- Phase O;
-- Phase N;
-- Phase Q.
-
-Exit:
-
-- protected main;
-- reproducible release pipeline;
-- security tools pinned;
-- first versioned release can be created safely.
-
-## Milestone M5 — Performance and architecture consolidation
-
-Contains:
-
-- Phase G;
-- Phase H;
-- Phase I;
-- Phase J;
-- Phase K;
-- Phase T.
-
-Exit:
-
-- shared durable primitives extracted;
-- independent execution throughput scales better than global mutex baseline;
-- typed activity overhead materially reduced;
-- benchmark regression gates enforce reviewed budgets.
+Current release workflow already creates CycloneDX SBOM and SHA256SUMS. Preserve them and add SEC-004 provenance/attestation.
 
 ---
 
-# Phase X — Test matrix required before declaring production-ready
+## REL-004 — Publish and verify the first real GitHub Release
 
-## Functional
+Status: **TODO**
 
-- parser/compiler success/error corpus;
-- AXM/TRIZ/model/table frontends;
-- Core Engine lifecycle;
-- Flow lifecycle;
-- ADGO runtime/engine/host/production topology.
+At audit time the GitHub Releases collection is empty even though `release/v0.1.0` exists.
 
-## Concurrency
+Only publish after:
 
-- same execution serialization;
-- independent execution parallelism;
-- CAS conflicts;
-- worker fencing;
-- lease expiry/heartbeat;
-- duplicate events;
-- duplicate callbacks;
-- concurrent schedule tick.
+- current `main` is green;
+- REL-001/REL-002 are fixed;
+- release notes match the candidate;
+- security is green.
 
-## Durability
+After publication verify:
 
-- store reopen;
-- process crash simulation;
+- tag SHA == frozen candidate SHA;
+- binary archives are present;
+- SBOM present;
+- SHA256SUMS validates every release asset;
+- container tags point to the intended version/SHA;
+- release notes name the persisted/API compatibility contract.
+
+---
+
+# 15. GOV — Repository governance and hygiene
+
+Priority: **P1/P2.**
+
+## GOV-001 — Add CODEOWNERS
+
+Status: **TODO**
+
+See P0-004.
+
+---
+
+## GOV-002 — Protect `main`
+
+Status: **EXTERNAL**
+
+See P0-004.
+
+---
+
+## GOV-003 — Clean stale implementation branches after verification
+
+Status: **TODO / maintenance**
+
+The repository still contains many historical `agent/*` branches plus the frozen release branch.
+
+Do not bulk-delete blindly.
+
+Procedure:
+
+1. classify branches as merged, superseded, active, or frozen-release;
+2. retain `release/*` according to release policy;
+3. verify no open PR/workflow depends on an old branch;
+4. delete only clearly merged/superseded branches;
+5. document branch naming/lifetime policy.
+
+This is not a production runtime blocker but reduces operational confusion.
+
+---
+
+# 16. OPS — Production observability and recovery
+
+Priority: **P2.**
+
+## OPS-001 — Define stable metric cardinality contract
+
+Status: **TODO/PARTIAL**
+
+Audit all metrics and prohibit unbounded labels such as raw execution IDs, task IDs, or arbitrary user keys.
+
+Define stable metrics for:
+
+- execution states;
+- queue depth;
+- lease expirations/fencing;
+- retries/exhaustion;
+- store latency/error rate;
+- outbox backlog;
+- repair attempts;
+- scheduler throttling;
+- admission denial;
+- schema/corruption errors.
+
+---
+
+## OPS-002 — Separate liveness and readiness
+
+Status: **TODO**
+
+Readiness should fail/degrade when the process cannot safely accept work, including where relevant:
+
+- durable store unavailable;
+- schema incompatibility;
+- coordinator lease failure;
+- severe outbox backlog;
+- repair subsystem exhausted;
+- migration required.
+
+Liveness should remain narrower and not restart a healthy-but-degraded process unnecessarily.
+
+---
+
+## OPS-003 — Expand runbooks
+
+Status: **PARTIAL/TODO**
+
+Ensure operators have explicit procedures for:
+
+- stuck/expired leases;
+- stale FileStore/admission locks;
+- corrupted JSON/Pebble records;
+- future/unsupported schema marker;
+- retry storm;
+- outbox backlog/poison effect;
+- repair exhaustion;
+- retention mistakes;
+- failed migration;
+- release rollback;
+- store backup/restore verification.
+
+---
+
+# 17. PROP — Advanced correctness and crash equivalence
+
+Priority: **P2/P3.**
+
+## PROP-001 — Replay equivalence properties
+
+Status: **TODO/PARTIAL**
+
+For supported deterministic paths, prove that replay from durable history yields the same state/decisions as live execution.
+
+Add randomized event sequences and shrinking-friendly test data.
+
+---
+
+## PROP-002 — Backend equivalence
+
+Status: **TODO**
+
+Run equivalent workloads against Memory/File/Pebble where capabilities overlap and compare:
+
+- final state;
+- event/task ordering;
+- version progression;
+- retry decisions;
+- dedup behavior;
+- terminal states.
+
+---
+
+## PROP-003 — Crash equivalence/failpoint framework
+
+Status: **TODO**
+
+Create reusable failpoints around durable boundaries rather than bespoke booleans in individual tests.
+
+Use them for:
+
+- core transaction commit;
+- task lease/complete/fail;
+- FileStore lock recovery;
+- Flow outbox;
+- migration/format adoption.
+
+---
+
+## PROP-004 — No-resurrection invariants
+
+Status: **TODO**
+
+Property-test that terminal/canceled/superseded work cannot be unintentionally resurrected by:
+
+- lease recovery;
+- retry scheduling;
 - inbox redelivery;
-- retry persistence;
-- compensation persistence;
-- timer persistence;
-- migration/fork/continue-as-new.
-
-## Determinism
-
-- replay equivalence;
-- randomized insertion order;
-- stable digest;
-- stable task ordering;
-- manual-clock exact-boundary behavior.
-
-## Performance
-
-- allocations;
-- latency percentiles;
-- throughput;
-- mutex contention;
-- large execution count;
-- long history;
-- large DAG;
-- parallel super-step.
-
-## Security
-
-- secret scan;
-- govulncheck;
-- gosec;
-- unsafe path/file identity tests;
-- callback authenticity/authz where applicable;
-- worker protocol auth/fencing;
-- dependency/SBOM checks.
+- migration;
+- repair;
+- stale worker completion.
 
 ---
 
-# Phase Y — Production readiness scorecard
+## PROP-005 — Budget and repair locality invariants
 
-Maintain a generated or reviewed scorecard with hard evidence, not subjective claims:
+Status: **TODO/PARTIAL**
 
-| Area | Required evidence |
-|---|---|
-| Correctness | full unit + property suite green |
-| Concurrency | full race + repeated concurrency suite green |
-| Durability | crash/reopen equivalence suite green |
-| Determinism | replay/order/time properties green |
-| Storage | contract suite on every backend |
-| Performance | benchmark regression gate green |
-| Security | pinned scanners green, SBOM generated |
-| Compatibility | persisted fixture suite green |
-| Operations | runbook + diagnostics + health/readiness |
-| Governance | protected main + release gate |
+Expand existing targeted tests into randomized properties:
 
-Axiom/ADGO should only be described as production-ready when all rows have current CI evidence.
+- budget usage never decreases unexpectedly;
+- bounded repair cannot exceed configured scope/budget;
+- targeted repair does not invalidate unrelated completed work;
+- migration does not reactivate invalid work.
 
 ---
 
-# Phase Z — Final architectural target
+# 18. Recommended execution order
 
-Long-term structure should converge toward:
+This order is mandatory unless a newly discovered P0 supersedes it.
+
+## Milestone M0 — Restore trustworthy baseline
+
+1. **P0-001** Windows admission lock portability.
+2. **P0-002** red-main rule.
+3. **P0-003** correct Pebble codec/persisted-format docs.
+4. Re-run all CI/security/checksum gates until `main` is fully green.
+5. **P0-004 / GOV-002** enable branch protection and required checks when repository settings can be changed.
+6. **GOV-001** CODEOWNERS.
+
+Exit: cross-platform green baseline + race green + protected merge path.
+
+## Milestone M1 — Finish deterministic runtime contracts
+
+7. TIME-001 clock inventory.
+8. TIME-002 admission clock.
+9. TIME-003 retry timer clock unification.
+10. TIME-004 remaining semantic deadlines.
+11. TIME-005 wall-clock architecture guard.
+12. ERR-001 typed retryability.
+13. ERR-002/ERR-003 error taxonomy.
+
+Exit: no mixed semantic/wall time in durable decisions and no string-formatted control flow.
+
+## Milestone M2 — Finish persistence compatibility
+
+14. STORE-001 ADGO Store contract.
+15. STORE-002 context semantics.
+16. STORE-003 ADGO Pebble format marker.
+17. STORE-004 persisted surface inventory.
+18. STORE-005 golden compatibility fixtures.
+19. STORE-006 subprocess lock/admission suite.
+20. CI-003/CI-004 explicit nightly/compatibility jobs.
+
+Exit: all durable surfaces have known contracts and upgrade behavior.
+
+## Milestone M3 — Crash correctness
+
+21. FLOW-001 effect failpoint matrix.
+22. PROP-003 reusable crash failpoints.
+23. PROP-001 replay equivalence.
+24. PROP-002 backend equivalence.
+25. PROP-004 no-resurrection properties.
+26. FLOW-002/003 outbox operations/backpressure.
+
+Exit: crash/replay/recovery claims are tested at durable boundaries.
+
+## Milestone M4 — Performance work
+
+27. TYPED-001 semantic freeze.
+28. TYPED-002 benchmark baseline.
+29. TYPED-003/004/005 optimization.
+30. PERF-001/002 relative benchmark infrastructure.
+31. SCALE-001/002 contention profiling.
+32. SCALE-003 isolation design.
+33. SCALE-004 core Pebble concurrency refactor.
+34. SCALE-005 ADGO Pebble concurrency refactor.
+35. PERF-003/004 extended ADGO/storage benchmarks.
+
+Exit: optimizations are measured, semantics-preserving, and regression-gated.
+
+## Milestone M5 — Security/API/release
+
+36. SEC-001 remove broad gosec exclusions incrementally.
+37. SEC-002 workflow permission minimization.
+38. API-001 compatibility gate.
+39. API-002/003 public contract cleanup plan.
+40. REL-001 frozen candidate resolution.
+41. REL-002 release gates match main.
+42. SEC-004/REL-003 provenance.
+43. REL-004 publish and verify real release.
+
+Exit: releases are reproducible, policy-compliant and mechanically protected.
+
+## Milestone M6 — Architecture and operations
+
+44. ARCH-001 duplicate durable primitive inventory.
+45. ARCH-002 dependency design.
+46. ARCH-003 selective extraction.
+47. ARCH-004 dependency guard.
+48. API-004 source-layout split.
+49. OPS-001/002/003 production operations completion.
+50. GOV-003 stale branch cleanup.
+51. Remaining PROP properties.
+
+Exit: maintainable long-term architecture with explicit operational contract.
+
+---
+
+# 19. Task-level verification template
+
+Every implementation task should end with a record like:
 
 ```text
-Declarative frontends
-  model / AXM / TRIZ / table / codegen
-                |
-         immutable plans/IR
-                |
-      +---------+---------+
-      |                   |
-Axiom object runtime   ADGO graph runtime
-      |                   |
-      +---------+---------+
-                |
-        shared durable kernel
-  clock / version / CAS / lease / retry /
-  fencing / deterministic identity / capabilities
-                |
-            Storage SPI
-     Memory / Pebble / File / SQL-KV
+Task: <ID>
+Baseline HEAD: <sha>
+Implementation commit: <sha>
+Changed files: <paths>
+Behavior changed: yes/no
+Persisted format changed: yes/no
+Public API changed: yes/no
+Narrow tests: <command/result>
+Race tests: <command/result or N/A>
+Cross-platform CI: Linux / Windows / macOS
+Security: pass/fail/N/A
+Bench before: <artifact or N/A>
+Bench after: <artifact or N/A>
+Docs updated: <paths or N/A>
+Plan status updated: yes
+Residual risk: <short statement>
 ```
 
-The purpose is **not** to merge Axiom Runtime and ADGO into one giant engine. They model different problems. The purpose is to ensure both use the same rigorously tested low-level durability semantics.
+If a task cannot satisfy its acceptance criteria, leave it incomplete and record the blocker. Do not mark partial behavior as DONE.
 
 ---
 
-# Immediate first implementation batch
+# 20. Immediate next implementation batch
 
-After this plan lands, implementation should begin with exactly this batch:
+Do not begin with Pebble concurrency or `ActTyped` optimization.
 
-1. `A-002` create deterministic clock package.
-2. `A-003` inject it into ADGO Runtime.
-3. `A-004` eliminate `TestDurableTimerResumes` wall-clock flake.
-4. run `go test ./...`.
-5. run `go test -race ./...`.
-6. only when both are green, merge `B-001` making full race a mandatory main gate.
-7. then build Store contract tests before touching FileStore/Pebble semantics.
+The next batch is exactly:
 
-This order minimizes simultaneous behavioral change and ensures each later refactor is protected by stronger invariants than the code has today.
+1. fix `TestFileAdmissionLockCleanupDoesNotDeleteReplacementOwner` portability without hiding the invariant;
+2. verify `go test ./adgo` on Windows semantics through CI;
+3. verify `go test ./...` on Linux/Windows/macOS;
+4. verify `go test -race ./...`;
+5. correct public JSON/Gob default documentation and document format pinning;
+6. only when all gates are green, start TIME-001/TIME-002;
+7. update this document with implementation commit SHAs.
+
+This batch restores a reliable foundation before any additional architecture or performance work.
