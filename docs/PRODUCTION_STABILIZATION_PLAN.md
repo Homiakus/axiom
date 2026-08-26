@@ -549,7 +549,7 @@ Tests must prove:
 
 ## STORE-006 — Expand FileStore/admission subprocess tests
 
-Status: **PARTIAL**
+Status: **DONE**
 
 Add true multi-process tests for:
 
