@@ -40,6 +40,10 @@ func OpenPebbleStore(path string, options ...PebbleStoreOption) (*PebbleStore, e
 	for _, option := range options {
 		option(store)
 	}
+	if err := store.ensureStoreFormat(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return store, nil
 }
 

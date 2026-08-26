@@ -476,7 +476,7 @@ Do not add mid-commit cancellation that can violate atomicity.
 
 ## STORE-003 — Add ADGO Pebble persisted-format identity
 
-Status: **TODO**
+Status: **DONE**
 
 ### Evidence
 
