@@ -29,9 +29,9 @@ func newExternalWorkerFixture(t *testing.T, executionID string) (*Engine, Store)
 
 func TestExternalWorkerClaimHeartbeatCompleteIsFenced(t *testing.T) {
 	ctx := context.Background()
-	engine, _ := newExternalWorkerFixture(t, "external-complete")
+	engine, store := newExternalWorkerFixture(t, "external-complete")
 
-	claim, err := engine.ClaimExternalActivity(ctx, "external-complete", "worker-a", time.Second)
+	claim, err := engine.ClaimExternalActivity(ctx, "external-complete", "worker-a", 200*time.Millisecond)
 	if err != nil {
 		t.Fatalf("ClaimExternalActivity() error = %v", err)
 	}
@@ -50,9 +50,23 @@ func TestExternalWorkerClaimHeartbeatCompleteIsFenced(t *testing.T) {
 	if err := engine.CompleteExternalActivity(ctx, stale, Output{"ok": true}); !errors.Is(err, ErrExternalActivityClaimStale) {
 		t.Fatalf("wrong-worker completion error = %v, want ErrExternalActivityClaimStale", err)
 	}
+	beforeHeartbeat := claim.LeaseUntil
+	time.Sleep(10 * time.Millisecond)
 	if err := engine.HeartbeatExternalActivity(ctx, claim.Token); err != nil {
 		t.Fatalf("HeartbeatExternalActivity() error = %v", err)
 	}
+	tasks, err := store.ListTasks(ctx, "external-complete")
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("ListTasks() len=%d err=%v", len(tasks), err)
+	}
+	if !tasks[0].LockedUntil.After(beforeHeartbeat) {
+		t.Fatalf("heartbeat did not extend lease: before=%s after=%s", beforeHeartbeat, tasks[0].LockedUntil)
+	}
+	remaining := tasks[0].LockedUntil.Sub(tasks[0].UpdatedAt)
+	if remaining < 150*time.Millisecond || remaining > 250*time.Millisecond {
+		t.Fatalf("heartbeat changed requested lease duration unexpectedly: %v", remaining)
+	}
+
 	if err := engine.CompleteExternalActivity(ctx, claim.Token, Output{"ok": true}); err != nil {
 		t.Fatalf("CompleteExternalActivity() error = %v", err)
 	}
@@ -117,11 +131,11 @@ func TestExternalWorkerFailureUsesDurableRetryAndRejectsArbitraryText(t *testing
 func TestExternalWorkerAttemptFencesReclaimedLease(t *testing.T) {
 	ctx := context.Background()
 	engine, _ := newExternalWorkerFixture(t, "external-reclaim")
-	first, err := engine.ClaimExternalActivity(ctx, "external-reclaim", "worker-a", 10*time.Millisecond)
+	first, err := engine.ClaimExternalActivity(ctx, "external-reclaim", "worker-a", 20*time.Millisecond)
 	if err != nil || first == nil {
 		t.Fatalf("first claim = %#v, err=%v", first, err)
 	}
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(35 * time.Millisecond)
 	second, err := engine.ClaimExternalActivity(ctx, "external-reclaim", "worker-b", 50*time.Millisecond)
 	if err != nil || second == nil {
 		t.Fatalf("second claim = %#v, err=%v", second, err)
@@ -134,6 +148,28 @@ func TestExternalWorkerAttemptFencesReclaimedLease(t *testing.T) {
 	}
 	if err := engine.CompleteExternalActivity(ctx, second.Token, Output{"ok": true}); err != nil {
 		t.Fatalf("second worker completion error = %v", err)
+	}
+}
+
+func TestExternalWorkerNewShortTTLDoesNotStealLiveLongLease(t *testing.T) {
+	ctx := context.Background()
+	engine, _ := newExternalWorkerFixture(t, "external-cross-ttl")
+	first, err := engine.ClaimExternalActivity(ctx, "external-cross-ttl", "worker-long", 200*time.Millisecond)
+	if err != nil || first == nil {
+		t.Fatalf("first claim = %#v, err=%v", first, err)
+	}
+
+	// A claimant asking for a much shorter lease must not use its own TTL as the
+	// expiry threshold for an already persisted long lease.
+	second, err := engine.ClaimExternalActivity(ctx, "external-cross-ttl", "worker-short", 5*time.Millisecond)
+	if err != nil {
+		t.Fatalf("second immediate ClaimExternalActivity() error = %v", err)
+	}
+	if second != nil {
+		t.Fatalf("short-TTL claimant stole live long lease: %#v", second)
+	}
+	if err := engine.HeartbeatExternalActivity(ctx, first.Token); err != nil {
+		t.Fatalf("original long claim became stale unexpectedly: %v", err)
 	}
 }
 
