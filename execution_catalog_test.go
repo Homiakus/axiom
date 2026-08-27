@@ -7,6 +7,10 @@ import (
 	"testing"
 )
 
+func catalogFixtureActivity(context.Context, Input) (Output, error) {
+	return Output{"ok": true}, nil
+}
+
 func TestExecutionCatalogSurvivesRetryWrapperAndPebbleReopen(t *testing.T) {
 	module := compileDurableRetryModule(t)
 	path := t.TempDir()
@@ -16,7 +20,7 @@ func TestExecutionCatalogSurvivesRetryWrapperAndPebbleReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenPebble(first) error = %v", err)
 	}
-	engine, err := New(module, WithStore(store))
+	engine, err := New(module, WithStore(store), Act("Work", catalogFixtureActivity))
 	if err != nil {
 		_ = store.Close()
 		t.Fatalf("New(first) error = %v", err)
@@ -45,7 +49,7 @@ func TestExecutionCatalogSurvivesRetryWrapperAndPebbleReopen(t *testing.T) {
 		t.Fatalf("OpenPebble(reopen) error = %v", err)
 	}
 	defer reopened.Close()
-	engine, err = New(module, WithStore(reopened))
+	engine, err = New(module, WithStore(reopened), Act("Work", catalogFixtureActivity))
 	if err != nil {
 		t.Fatalf("New(reopen) error = %v", err)
 	}
@@ -60,7 +64,7 @@ func TestExecutionCatalogSurvivesRetryWrapperAndPebbleReopen(t *testing.T) {
 
 func TestExecutionCatalogMemoryIsSortedAndHonorsCancellation(t *testing.T) {
 	module := compileDurableRetryModule(t)
-	engine, err := New(module, WithStore(NewMemoryStore()))
+	engine, err := New(module, WithStore(NewMemoryStore()), Act("Work", catalogFixtureActivity))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
