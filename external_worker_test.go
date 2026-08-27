@@ -7,9 +7,49 @@ import (
 	"time"
 )
 
+const externalWorkerSource = `domain ExternalWorker
+
+signal Run
+
+context State:
+  key: String = "job-1"
+  done: Bool = false
+
+policy resilient:
+  retry: 2
+  backoff: fixed(5ms)
+  timeout: 1s
+  concurrency: parallel
+  idempotency: required
+
+activity Work:
+  input:
+    key = State.key
+  output:
+    ok: Bool
+  effect: external
+  idempotencyKey: State.key
+  policy: resilient
+
+rule execute:
+  on Run
+  run: Work
+  write:
+    State.done = output.ok
+`
+
+func compileExternalWorkerModule(t *testing.T) *Module {
+	t.Helper()
+	module, err := Compile([]byte(externalWorkerSource))
+	if err != nil {
+		t.Fatalf("Compile(externalWorkerSource) error = %v", err)
+	}
+	return module
+}
+
 func newExternalWorkerFixture(t *testing.T, executionID string) (*Engine, Store) {
 	t.Helper()
-	module := compileDurableRetryModule(t)
+	module := compileExternalWorkerModule(t)
 	store := NewMemoryStore()
 	engine, err := New(module, WithStore(store), Act("Work", func(context.Context, Input) (Output, error) {
 		return Output{"ok": true}, nil
@@ -41,8 +81,8 @@ func TestExternalWorkerClaimHeartbeatCompleteIsFenced(t *testing.T) {
 	if claim.ActivityName != "Work" || claim.Token.WorkerID != "worker-a" || claim.Token.Attempt != 1 {
 		t.Fatalf("claim = %#v", claim)
 	}
-	if claim.IdempotencyKey == "" {
-		t.Fatal("claim idempotency key is empty")
+	if claim.IdempotencyKey != "job-1" {
+		t.Fatalf("claim idempotency key = %q, want job-1", claim.IdempotencyKey)
 	}
 
 	stale := claim.Token
@@ -178,7 +218,7 @@ type externalWorkerSemanticClock struct{ now time.Time }
 func (c externalWorkerSemanticClock) Now() time.Time { return c.now }
 
 func TestExternalWorkerLeaseIgnoresSemanticWorkflowClock(t *testing.T) {
-	module := compileDurableRetryModule(t)
+	module := compileExternalWorkerModule(t)
 	store := NewMemoryStore()
 	engine, err := New(
 		module,
