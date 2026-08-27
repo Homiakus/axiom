@@ -201,7 +201,8 @@ func (e *Engine) Module() *compiler.Module {
 
 // SetExternalActivities declares activity names that are owned by an external
 // fenced worker rather than this Engine's inline activity runner. The set is
-// copied so construction-time configuration remains immutable to callers.
+// copied and the store is wrapped so inline polling is rejected before a lease
+// or attempt counter can be mutated.
 func (e *Engine) SetExternalActivities(names map[string]struct{}) {
 	if e == nil {
 		return
@@ -209,6 +210,9 @@ func (e *Engine) SetExternalActivities(names map[string]struct{}) {
 	e.externalActivities = make(map[string]struct{}, len(names))
 	for name := range names {
 		e.externalActivities[name] = struct{}{}
+	}
+	if len(e.externalActivities) > 0 {
+		e.store = wrapExternalOwnershipStore(e.store, e.externalActivities)
 	}
 }
 
