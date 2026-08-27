@@ -47,6 +47,39 @@ func (s *externalOwnershipStore) PollTaskWithLease(ctx context.Context, executio
 	return s.Store.PollTaskWithLease(ctx, executionID, workerID, leaseTTL)
 }
 
+// Preserve the optional TaskDedupStore capability across the ownership wrapper.
+// Stores without a specialized index retain the same list-based fallback used
+// by Engine.scheduleActivity before wrapping.
+func (s *externalOwnershipStore) FindTask(ctx context.Context, executionID, ruleName, activityName, idempotencyKey string) (*ActivityTask, error) {
+	if indexed, ok := s.Store.(TaskDedupStore); ok {
+		return indexed.FindTask(ctx, executionID, ruleName, activityName, idempotencyKey)
+	}
+	tasks, err := s.Store.ListTasks(ctx, executionID)
+	if err != nil {
+		return nil, err
+	}
+	for _, task := range tasks {
+		if task != nil && task.RuleName == ruleName && task.ActivityName == activityName && task.IdempotencyKey == idempotencyKey {
+			copy := *task
+			copy.Input = cloneAnyMap(task.Input)
+			copy.Result = cloneAnyMap(task.Result)
+			return &copy, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *externalOwnershipStore) NextTaskSeq(ctx context.Context, executionID string) (int, error) {
+	if indexed, ok := s.Store.(TaskDedupStore); ok {
+		return indexed.NextTaskSeq(ctx, executionID)
+	}
+	tasks, err := s.Store.ListTasks(ctx, executionID)
+	if err != nil {
+		return 0, err
+	}
+	return len(tasks) + 1, nil
+}
+
 func (s *externalOwnershipStore) rejectInlineExternalWork(ctx context.Context, executionID string) error {
 	tasks, err := s.Store.ListTasks(ctx, executionID)
 	if err != nil {
