@@ -9,6 +9,7 @@ type ExternalActivityToken = runtimepkg.ExternalActivityToken
 type ExternalActivityClaim = runtimepkg.ExternalActivityClaim
 
 var (
-	ErrExternalActivityClaimInvalid = runtimepkg.ErrExternalActivityClaimInvalid
-	ErrExternalActivityClaimStale   = runtimepkg.ErrExternalActivityClaimStale
+	ErrExternalActivityClaimInvalid   = runtimepkg.ErrExternalActivityClaimInvalid
+	ErrExternalActivityClaimStale     = runtimepkg.ErrExternalActivityClaimStale
+	ErrExternalActivityWorkerRequired = runtimepkg.ErrExternalActivityWorkerRequired
 )
