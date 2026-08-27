@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/Homiakus/axiom/internal/durabletime"
 )
 
 var (
@@ -224,4 +226,4 @@ func safeExternalFailureCode(value string) bool {
 	return true
 }
 
-func externalLeaseNow() time.Time { return time.Now().UTC() }
+func externalLeaseNow() time.Time { return durabletime.LeaseWallNow() }
