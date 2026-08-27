@@ -37,16 +37,19 @@ type ExternalActivityClaim struct {
 	LeaseUntil     time.Time             `json:"leaseUntil"`
 }
 
-// ClaimExternalActivity atomically recovers expired leases for an execution and
-// leases at most one due task. The returned token must be supplied to heartbeat,
-// completion or failure. Nil, nil means no work is currently due.
+// ClaimExternalActivity atomically recovers external-worker leases whose
+// persisted LockedUntil deadline has expired and leases at most one due task.
+// The claimant's requested TTL is never used to judge an older worker's lease:
+// doing so would let a short-TTL claimant steal a still-valid long lease.
+// Legacy running tasks without LockedUntil are left untouched rather than
+// guessed; an explicit store/runtime recovery path can handle those separately.
 func (e *Engine) ClaimExternalActivity(ctx context.Context, executionID, workerID string, leaseTTL time.Duration) (*ExternalActivityClaim, error) {
 	if e == nil || !safeExternalToken(executionID, 256) || !safeExternalToken(workerID, 128) || leaseTTL <= 0 || leaseTTL > maxExternalActivityLease {
 		return nil, ErrExternalActivityClaimInvalid
 	}
 	var task *ActivityTask
 	err := e.withStoreTransaction(ctx, func(working *Engine) error {
-		if _, err := working.store.RecoverExpiredLeases(ctx, executionID, leaseTTL); err != nil {
+		if _, err := working.recoverExpiredExternalActivityLeases(ctx, executionID); err != nil {
 			return err
 		}
 		claimed, err := working.store.PollTaskWithLease(ctx, executionID, workerID, leaseTTL)
@@ -65,8 +68,9 @@ func (e *Engine) ClaimExternalActivity(ctx context.Context, executionID, workerI
 }
 
 // HeartbeatExternalActivity renews a currently valid claim. Worker id, attempt,
-// running status and lease expiry are checked transactionally before touching
-// the store heartbeat primitive.
+// running status and lease expiry are checked transactionally. Renewal preserves
+// the lease duration stored on the claimed task instead of depending on a
+// store-specific default TTL.
 func (e *Engine) HeartbeatExternalActivity(ctx context.Context, token ExternalActivityToken) error {
 	if e == nil || !validExternalActivityToken(token) {
 		return ErrExternalActivityClaimInvalid
@@ -76,7 +80,15 @@ func (e *Engine) HeartbeatExternalActivity(ctx context.Context, token ExternalAc
 		if err != nil {
 			return err
 		}
-		return working.store.HeartbeatTask(ctx, task.ID, token.WorkerID)
+		leaseTTL := task.LockedUntil.Sub(task.UpdatedAt)
+		if leaseTTL <= 0 || leaseTTL > maxExternalActivityLease {
+			return ErrExternalActivityClaimStale
+		}
+		now := working.now()
+		next := cloneExternalActivityTask(task)
+		next.LockedUntil = now.Add(leaseTTL)
+		next.UpdatedAt = now
+		return working.store.UpdateTask(ctx, next)
 	})
 }
 
@@ -110,6 +122,35 @@ func (e *Engine) FailExternalActivity(ctx context.Context, token ExternalActivit
 		}
 		return working.completeActivity(ctx, token.ExecutionID, task, nil, fmt.Errorf("external activity failure %s", code))
 	})
+}
+
+// recoverExpiredExternalActivityLeases performs portable, fail-safe recovery
+// using the deadline persisted with each modern leased task. It deliberately
+// does not call Store.RecoverExpiredLeases because that legacy API accepts a TTL
+// parameter and some stores interpret it relative to UpdatedAt; a new worker's
+// TTL must never participate in deciding whether an older lease is alive.
+func (e *Engine) recoverExpiredExternalActivityLeases(ctx context.Context, executionID string) (int, error) {
+	tasks, err := e.store.ListTasks(ctx, executionID)
+	if err != nil {
+		return 0, err
+	}
+	now := e.now()
+	recovered := 0
+	for _, task := range tasks {
+		if task == nil || task.Status != TaskRunning || task.LockedUntil.IsZero() || task.LockedUntil.After(now) {
+			continue
+		}
+		next := cloneExternalActivityTask(task)
+		next.Status = TaskPending
+		next.LockedBy = ""
+		next.LockedUntil = time.Time{}
+		next.UpdatedAt = now
+		if err := e.store.UpdateTask(ctx, next); err != nil {
+			return recovered, err
+		}
+		recovered++
+	}
+	return recovered, nil
 }
 
 func (e *Engine) requireExternalActivityClaim(ctx context.Context, token ExternalActivityToken) (*ActivityTask, error) {
