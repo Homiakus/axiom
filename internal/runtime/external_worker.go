@@ -14,7 +14,10 @@ var (
 	ErrExternalActivityClaimStale   = errors.New("axiom: stale external activity claim")
 )
 
-const maxExternalActivityLease = time.Hour
+const (
+	maxExternalActivityLease      = time.Hour
+	maxExternalActivityRetryAfter = 7 * 24 * time.Hour
+)
 
 // ExternalActivityToken is a fencing token for one leased activity attempt.
 // Attempt changes on every re-claim, so a late worker cannot complete a newer
@@ -114,6 +117,22 @@ func (e *Engine) CompleteExternalActivity(ctx context.Context, token ExternalAct
 // AXM retry policy. Only a bounded machine code is accepted; arbitrary provider
 // error text is intentionally excluded from Axiom history.
 func (e *Engine) FailExternalActivity(ctx context.Context, token ExternalActivityToken, code string) error {
+	return e.failExternalActivity(ctx, token, code, 0)
+}
+
+// FailExternalActivityAfter is FailExternalActivity with an upstream retry
+// floor. When AXM schedules a retry sooner than retryAfter, the same pending
+// task is durably deferred to max(policyBackoff, retryAfter). This lets provider
+// Retry-After semantics participate in the existing Axiom scheduler instead of
+// introducing a second retry loop in an integration adapter.
+func (e *Engine) FailExternalActivityAfter(ctx context.Context, token ExternalActivityToken, code string, retryAfter time.Duration) error {
+	if retryAfter <= 0 || retryAfter > maxExternalActivityRetryAfter {
+		return ErrExternalActivityClaimInvalid
+	}
+	return e.failExternalActivity(ctx, token, code, retryAfter)
+}
+
+func (e *Engine) failExternalActivity(ctx context.Context, token ExternalActivityToken, code string, retryAfter time.Duration) error {
 	if e == nil || !validExternalActivityToken(token) || !safeExternalFailureCode(code) {
 		return ErrExternalActivityClaimInvalid
 	}
@@ -122,7 +141,46 @@ func (e *Engine) FailExternalActivity(ctx context.Context, token ExternalActivit
 		if err != nil {
 			return err
 		}
-		return working.completeActivity(ctx, token.ExecutionID, task, nil, fmt.Errorf("external activity failure %s", code))
+		err = working.completeActivity(ctx, token.ExecutionID, task, nil, fmt.Errorf("external activity failure %s", code))
+		if retryAfter <= 0 {
+			return err
+		}
+		retry, scheduled := retryScheduled(err)
+		if !scheduled {
+			return err
+		}
+		minimum := working.now().Add(retryAfter)
+		if !retry.NextAttemptAt.Before(minimum) {
+			return err
+		}
+		tasks, listErr := working.store.ListTasks(ctx, token.ExecutionID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, current := range tasks {
+			if current == nil || current.ID != token.TaskID || current.Status != TaskPending {
+				continue
+			}
+			next := cloneExternalActivityTask(current)
+			next.NextAttemptAt = minimum
+			next.UpdatedAt = working.now()
+			if updateErr := working.store.UpdateTask(ctx, next); updateErr != nil {
+				return updateErr
+			}
+			if historyErr := working.store.AppendHistory(ctx, token.ExecutionID, "ActivityRetryDeferred", map[string]any{
+				"activity": task.ActivityName,
+				"rule": task.RuleName,
+				"task": task.ID,
+				"attempt": task.Attempt,
+				"code": code,
+				"nextAttemptAt": minimum.UTC().Format(time.RFC3339Nano),
+			}); historyErr != nil {
+				return historyErr
+			}
+			retry.NextAttemptAt = minimum
+			return retry
+		}
+		return ErrExternalActivityClaimStale
 	})
 }
 
