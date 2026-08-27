@@ -158,16 +158,17 @@ const (
 )
 
 type Engine struct {
-	module         *compiler.Module
-	store          Store
-	activities     ActivityRegistry
-	maxSteps       int
-	fast           *fastPlan
-	strictFast     bool
-	traceLevel     TraceLevel
-	storeMu        sync.Mutex
-	clock          Clock
-	executionLocks *syncx.KeyedLocker
+	module             *compiler.Module
+	store              Store
+	activities         ActivityRegistry
+	externalActivities map[string]struct{}
+	maxSteps           int
+	fast               *fastPlan
+	strictFast         bool
+	traceLevel         TraceLevel
+	storeMu            sync.Mutex
+	clock              Clock
+	executionLocks     *syncx.KeyedLocker
 }
 
 func NewEngine(module *compiler.Module, store Store, activities ActivityRegistry) *Engine {
@@ -177,14 +178,15 @@ func NewEngine(module *compiler.Module, store Store, activities ActivityRegistry
 	activities = applyActivityPolicies(module, activities)
 	fast := compileFastPlan(module, false)
 	engine := &Engine{
-		module:         module,
-		store:          store,
-		activities:     activities,
-		maxSteps:       1000,
-		fast:           fast,
-		traceLevel:     TraceAggregate,
-		clock:          systemClock{},
-		executionLocks: syncx.NewKeyedLocker(),
+		module:             module,
+		store:              store,
+		activities:         activities,
+		externalActivities: map[string]struct{}{},
+		maxSteps:           1000,
+		fast:               fast,
+		traceLevel:         TraceAggregate,
+		clock:              systemClock{},
+		executionLocks:     syncx.NewKeyedLocker(),
 	}
 	// retryStore resolves semantic time through engine.now on every decision.
 	// This keeps retry scheduling and due checks in the same clock domain even
@@ -195,6 +197,27 @@ func NewEngine(module *compiler.Module, store Store, activities ActivityRegistry
 
 func (e *Engine) Module() *compiler.Module {
 	return e.module
+}
+
+// SetExternalActivities declares activity names that are owned by an external
+// fenced worker rather than this Engine's inline activity runner. The set is
+// copied so construction-time configuration remains immutable to callers.
+func (e *Engine) SetExternalActivities(names map[string]struct{}) {
+	if e == nil {
+		return
+	}
+	e.externalActivities = make(map[string]struct{}, len(names))
+	for name := range names {
+		e.externalActivities[name] = struct{}{}
+	}
+}
+
+func (e *Engine) isExternalActivity(name string) bool {
+	if e == nil {
+		return false
+	}
+	_, ok := e.externalActivities[name]
+	return ok
 }
 
 func (e *Engine) EnableStrictFastRuntime() error {
