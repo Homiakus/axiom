@@ -84,7 +84,7 @@ func (e *Engine) HeartbeatExternalActivity(ctx context.Context, token ExternalAc
 		if leaseTTL <= 0 || leaseTTL > maxExternalActivityLease {
 			return ErrExternalActivityClaimStale
 		}
-		now := working.now()
+		now := externalLeaseNow()
 		next := cloneExternalActivityTask(task)
 		next.LockedUntil = now.Add(leaseTTL)
 		next.UpdatedAt = now
@@ -129,12 +129,16 @@ func (e *Engine) FailExternalActivity(ctx context.Context, token ExternalActivit
 // does not call Store.RecoverExpiredLeases because that legacy API accepts a TTL
 // parameter and some stores interpret it relative to UpdatedAt; a new worker's
 // TTL must never participate in deciding whether an older lease is alive.
+//
+// Worker leases are operational coordination state and intentionally use UTC
+// wall time, not Engine semantic time. Semantic clocks may be frozen/advanced
+// for deterministic workflow simulation and must not influence fencing expiry.
 func (e *Engine) recoverExpiredExternalActivityLeases(ctx context.Context, executionID string) (int, error) {
 	tasks, err := e.store.ListTasks(ctx, executionID)
 	if err != nil {
 		return 0, err
 	}
-	now := e.now()
+	now := externalLeaseNow()
 	recovered := 0
 	for _, task := range tasks {
 		if task == nil || task.Status != TaskRunning || task.LockedUntil.IsZero() || task.LockedUntil.After(now) {
@@ -165,7 +169,7 @@ func (e *Engine) requireExternalActivityClaim(ctx context.Context, token Externa
 		if task.ExecutionID != token.ExecutionID || task.Status != TaskRunning || task.LockedBy != token.WorkerID || task.Attempt != token.Attempt {
 			return nil, ErrExternalActivityClaimStale
 		}
-		if task.LockedUntil.IsZero() || !task.LockedUntil.After(e.now()) {
+		if task.LockedUntil.IsZero() || !task.LockedUntil.After(externalLeaseNow()) {
 			return nil, ErrExternalActivityClaimStale
 		}
 		return cloneExternalActivityTask(task), nil
@@ -219,3 +223,5 @@ func safeExternalFailureCode(value string) bool {
 	}
 	return true
 }
+
+func externalLeaseNow() time.Time { return time.Now().UTC() }
