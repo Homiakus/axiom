@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "interaction_policy": {
+    "pr_strength": 2,
+    "nightly_strength": 3,
+    "exhaustive_sentinels": true
+  },
+  "dimensions": [
+    {
+      "name": "identity",
+      "nominal": "ascii-simple",
+      "values": ["ascii-simple", "empty", "dot", "dotdot", "slash", "encoded-slash", "unicode", "very-long"],
+      "critical_values": ["empty", "dot", "dotdot", "slash", "encoded-slash", "unicode"]
+    },
+    {
+      "name": "numeric",
+      "nominal": "ordinary",
+      "values": ["ordinary", "zero", "negative", "epsilon", "max", "overflow-edge", "nan", "pos-inf", "neg-inf"],
+      "critical_values": ["negative", "overflow-edge", "nan", "pos-inf", "neg-inf"]
+    },
+    {
+      "name": "time",
+      "nominal": "inside-window",
+      "values": ["inside-window", "just-before", "exact-boundary", "just-after", "zero-time", "large-forward-jump", "backward-jump", "duration-overflow-edge"],
+      "critical_values": ["exact-boundary", "large-forward-jump", "backward-jump", "duration-overflow-edge"]
+    },
+    {
+      "name": "concurrency",
+      "nominal": "single-writer",
+      "values": ["single-writer", "same-id-race", "adjacent-id-race", "conflicting-writers", "cancel-race", "owner-replacement", "process-crash"],
+      "critical_values": ["same-id-race", "conflicting-writers", "cancel-race", "owner-replacement", "process-crash"]
+    },
+    {
+      "name": "persistence",
+      "nominal": "memory",
+      "values": ["memory", "pebble-json", "pebble-gob", "file", "reopen", "legacy-unmarked", "future-schema", "partial-marker"],
+      "critical_values": ["reopen", "legacy-unmarked", "future-schema", "partial-marker"]
+    },
+    {
+      "name": "failure-boundary",
+      "nominal": "none",
+      "values": ["none", "before-commit", "during-write", "after-state-before-effect", "after-effect-before-ack", "timeout", "cancellation", "disk-error"],
+      "critical_values": ["before-commit", "during-write", "after-state-before-effect", "after-effect-before-ack", "cancellation", "disk-error"]
+    },
+    {
+      "name": "ordering",
+      "nominal": "canonical",
+      "values": ["canonical", "reverse", "randomized", "equal-score", "duplicate", "prefix-related"],
+      "critical_values": ["randomized", "equal-score", "duplicate", "prefix-related"]
+    },
+    {
+      "name": "lifecycle",
+      "nominal": "fresh",
+      "values": ["fresh", "retry", "replay", "restart", "stale-lease", "compensation", "duplicate-delivery"],
+      "critical_values": ["retry", "replay", "restart", "stale-lease", "compensation", "duplicate-delivery"]
+    }
+  ],
+  "sentinels": [
+    {
+      "id": "S-ID-STORE",
+      "dimensions": ["identity", "persistence", "ordering"],
+      "invariant": "Distinct logical identities never alias, escape their namespace, or leak prefix-related records across backends and reopen cycles.",
+      "command": "go test -shuffle=on -count=5 ./adgo ./internal/store/... -run '(Identity|Execution|Prefix|Path|Catalog|Reopen|Legacy|Schema|Codec)'"
+    },
+    {
+      "id": "S-NUMERIC-STATE",
+      "dimensions": ["numeric", "persistence", "lifecycle"],
+      "invariant": "Non-finite, negative, overflowing, and boundary numeric values are either rejected consistently or round-trip with identical semantics before state publication.",
+      "command": "go test -shuffle=on -count=5 ./... -run '(NaN|Inf|Float|Budget|Overflow|Numeric|RoundTrip|Clone|Commit)'"
+    },
+    {
+      "id": "S-TIME-RACE",
+      "dimensions": ["time", "concurrency", "lifecycle"],
+      "invariant": "Exact deadlines, jumps, retries, leases, and cancellation races are governed by explicit semantic time and cannot create double ownership or early/late transitions.",
+      "command": "go test -race -shuffle=on -count=5 ./adgo ./internal/runtime/... -run '(Clock|Deadline|Retry|Lease|Schedule|Admission|Cancel|Heartbeat|Stale)'"
+    },
+    {
+      "id": "S-CRASH-DURABILITY",
+      "dimensions": ["failure-boundary", "persistence", "lifecycle"],
+      "invariant": "Every crash point preserves atomic state/effect semantics, recoverability, idempotency, and fail-closed handling of ambiguous persisted formats.",
+      "command": "go test -shuffle=on -count=5 ./... -run '(Crash|Recovery|Failpoint|Outbox|Durable|Reopen|Rollback|Migration|Corrupt)'"
+    },
+    {
+      "id": "S-CONCURRENCY-ORDER",
+      "dimensions": ["concurrency", "ordering", "identity"],
+      "invariant": "Concurrent admission and scheduling are deterministic under equivalent inputs and never use registration order, path prefixes, or unstable iteration as hidden tie-breakers.",
+      "command": "go test -race -shuffle=on -count=5 ./adgo ./internal/runtime/... ./internal/store/... -run '(Concurrent|Conflict|Order|Determin|Tie|Race|CAS|Owner)'"
+    }
+  ],
+  "campaigns": [
+    {
+      "id": "pr-shuffle-repeat",
+      "tier": "pr",
+      "command": "go test -shuffle=on -count=3 ./adgo ./internal/runtime/... ./internal/store/..."
+    },
+    {
+      "id": "pr-boundary-sentinels",
+      "tier": "pr",
+      "command": "bash scripts/quality_loop.sh sentinels"
+    },
+    {
+      "id": "nightly-full-shuffle",
+      "tier": "nightly",
+      "command": "go test -shuffle=on -count=5 ./..."
+    },
+    {
+      "id": "nightly-race-repeat",
+      "tier": "nightly",
+      "command": "go test -race -shuffle=on -count=3 ./adgo ./internal/runtime/... ./internal/store/..."
+    },
+    {
+      "id": "weekly-mutation-full",
+      "tier": "weekly",
+      "command": "gremlins unleash --output=test-artifacts/mutation-full.json"
+    }
+  ]
+}

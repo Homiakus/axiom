@@ -1,0 +1,40 @@
+silent: false
+unleash:
+  integration: false
+  dry-run: false
+  output: ""
+  workers: 0
+  test-cpu: 0
+  timeout-coefficient: 3
+  threshold:
+    efficacy: 0
+    mutant-coverage: 0
+  exclude-files:
+    - "(^|/)examples/"
+    - "(^|/)cmd/axiombench/"
+    - "_gen\\.go$"
+    - "generated"
+
+mutants:
+  arithmetic-base:
+    enabled: true
+  conditionals-boundary:
+    enabled: true
+  conditionals-negation:
+    enabled: true
+  increment-decrement:
+    enabled: true
+  invert-assignments:
+    enabled: false
+  invert-bitwise:
+    enabled: false
+  invert-bwassign:
+    enabled: false
+  invert-negatives:
+    enabled: true
+  invert-logical:
+    enabled: true
+  invert-loopctrl:
+    enabled: false
+  remove-self-assignments:
+    enabled: false
