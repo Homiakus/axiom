@@ -173,6 +173,41 @@ func TestExternalWorkerNewShortTTLDoesNotStealLiveLongLease(t *testing.T) {
 	}
 }
 
+type externalWorkerSemanticClock struct{ now time.Time }
+
+func (c externalWorkerSemanticClock) Now() time.Time { return c.now }
+
+func TestExternalWorkerLeaseIgnoresSemanticWorkflowClock(t *testing.T) {
+	module := compileDurableRetryModule(t)
+	store := NewMemoryStore()
+	engine, err := New(
+		module,
+		WithStore(store),
+		WithClock(externalWorkerSemanticClock{now: time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC)}),
+		Act("Work", func(context.Context, Input) (Output, error) { return Output{"ok": true}, nil }),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	ctx := context.Background()
+	if err := engine.Start(ctx, "external-clock-domain", nil); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if err := engine.Signal(ctx, "external-clock-domain", "Run", nil); err != nil {
+		t.Fatalf("Signal() error = %v", err)
+	}
+	claim, err := engine.ClaimExternalActivity(ctx, "external-clock-domain", "worker-clock", 200*time.Millisecond)
+	if err != nil || claim == nil {
+		t.Fatalf("claim = %#v, err=%v", claim, err)
+	}
+	if err := engine.HeartbeatExternalActivity(ctx, claim.Token); err != nil {
+		t.Fatalf("semantic clock incorrectly expired operational lease: %v", err)
+	}
+	if err := engine.CompleteExternalActivity(ctx, claim.Token, Output{"ok": true}); err != nil {
+		t.Fatalf("completion under divergent semantic clock failed: %v", err)
+	}
+}
+
 func containsUnsafeExternalText(value string) bool {
 	return value == "TEMP_UNAVAILABLE\nsecret=token" || value == "secret=token"
 }
