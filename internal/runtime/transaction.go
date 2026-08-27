@@ -58,15 +58,16 @@ func (e *Engine) withStoreTransaction(ctx context.Context, fn func(*Engine) erro
 	}
 
 	working := &Engine{
-		module:         e.module,
-		store:          tx,
-		activities:     e.activities,
-		maxSteps:       e.maxSteps,
-		fast:           e.fast,
-		strictFast:     e.strictFast,
-		traceLevel:     e.traceLevel,
-		clock:          e.clock,
-		executionLocks: e.executionLocks,
+		module:             e.module,
+		store:              tx,
+		activities:         e.activities,
+		externalActivities: e.externalActivities,
+		maxSteps:           e.maxSteps,
+		fast:               e.fast,
+		strictFast:         e.strictFast,
+		traceLevel:         e.traceLevel,
+		clock:              e.clock,
+		executionLocks:     e.executionLocks,
 	}
 
 	callbackErr := fn(working)
