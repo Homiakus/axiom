@@ -51,11 +51,9 @@ func newExternalWorkerFixture(t *testing.T, executionID string) (*Engine, Store)
 	t.Helper()
 	module := compileExternalWorkerModule(t)
 	store := NewMemoryStore()
-	engine, err := New(module, WithStore(store), Act("Work", func(context.Context, Input) (Output, error) {
-		return Output{"ok": true}, nil
-	}))
+	engine, err := NewWithExternalActivities(module, []string{"Work"}, WithStore(store))
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatalf("NewWithExternalActivities() error = %v", err)
 	}
 	ctx := context.Background()
 	if err := engine.Start(ctx, executionID, nil); err != nil {
@@ -65,6 +63,33 @@ func newExternalWorkerFixture(t *testing.T, executionID string) (*Engine, Store)
 		t.Fatalf("Signal() error = %v", err)
 	}
 	return engine, store
+}
+
+func TestExternalOwnershipBlocksInlineRunnerBeforeLease(t *testing.T) {
+	ctx := context.Background()
+	engine, store := newExternalWorkerFixture(t, "external-inline-guard")
+	if err := engine.RunUntilIdle(ctx, "external-inline-guard"); !errors.Is(err, ErrExternalActivityWorkerRequired) {
+		t.Fatalf("RunUntilIdle() error = %v, want ErrExternalActivityWorkerRequired", err)
+	}
+	tasks, err := store.ListTasks(ctx, "external-inline-guard")
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("ListTasks() len=%d err=%v", len(tasks), err)
+	}
+	task := tasks[0]
+	if task.Status != TaskPending || task.Attempt != 0 || task.LockedBy != "" || !task.LockedUntil.IsZero() {
+		t.Fatalf("inline guard mutated external task before claim: %#v", task)
+	}
+	claim, err := engine.ClaimExternalActivity(ctx, "external-inline-guard", "external-worker", time.Second)
+	if err != nil || claim == nil || claim.Token.Attempt != 1 {
+		t.Fatalf("external claim after inline guard = %#v err=%v", claim, err)
+	}
+}
+
+func TestExternalOwnershipRejectsNonExternalActivity(t *testing.T) {
+	module := compileDurableRetryModule(t) // Work is effect: local.
+	if _, err := NewWithExternalActivities(module, []string{"Work"}, WithStore(NewMemoryStore())); err == nil {
+		t.Fatal("NewWithExternalActivities() accepted a non-external activity")
+	}
 }
 
 func TestExternalWorkerClaimHeartbeatCompleteIsFenced(t *testing.T) {
@@ -220,14 +245,14 @@ func (c externalWorkerSemanticClock) Now() time.Time { return c.now }
 func TestExternalWorkerLeaseIgnoresSemanticWorkflowClock(t *testing.T) {
 	module := compileExternalWorkerModule(t)
 	store := NewMemoryStore()
-	engine, err := New(
+	engine, err := NewWithExternalActivities(
 		module,
+		[]string{"Work"},
 		WithStore(store),
 		WithClock(externalWorkerSemanticClock{now: time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC)}),
-		Act("Work", func(context.Context, Input) (Output, error) { return Output{"ok": true}, nil }),
 	)
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatalf("NewWithExternalActivities() error = %v", err)
 	}
 	ctx := context.Background()
 	if err := engine.Start(ctx, "external-clock-domain", nil); err != nil {
