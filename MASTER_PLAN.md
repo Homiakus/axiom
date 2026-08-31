@@ -4,7 +4,7 @@ Status: **ACTIVE — authoritative execution source of truth**
 
 Repository: `Homiakus/axiom`  
 Target branch: `main`  
-Last qualified HEAD before Iteration 6: `d611198a92f17011e487f5dba942bd2933da4a7a`  
+Last qualified HEAD: `668c8f77f0619aa8b88cc7dc0002d31651deedcf`  
 Last reconciliation: 2026-08-31
 
 > This file is the only execution roadmap. Historical plans, audits and topic-specific documents are evidence inputs, not parallel execution plans. Observable behavior, reproducible tests, security/correctness invariants and code outrank stale prose.
@@ -17,14 +17,14 @@ Last reconciliation: 2026-08-31
 
 1. Reconstruct state from remote `main`, this file, repository instructions and current CI before substantial work.
 2. Substantial work uses `T-XXX`; substantial unexpected information uses `F-XXX` before architecture/API/security/persistence behavior is changed.
-3. Red `main` blocks unrelated work. Flaky `FAIL -> retry -> PASS` is not a pass.
-4. One logical iteration = one logical commit with implementation, executable evidence, relevant docs and plan reconciliation whenever possible.
+3. Red `main` blocks unrelated work. Flaky `FAIL -> retry -> PASS` is not qualification.
+4. One logical iteration = one logical commit with implementation, executable evidence, relevant docs and plan reconciliation whenever technically possible.
 5. Never force-push.
 6. Prefer root-cause fixes, executable invariants, fail-closed behavior and small reversible transitions.
 7. Use mutation testing where it distinguishes semantic contracts; use deterministic clocks/schedulers plus race/shuffle for timing/concurrency contracts.
-8. Security suppressions must be scoped, mechanically constrained and justified. Broad global suppressions are temporary debt.
+8. Security suppressions must be narrow, mechanically constrained and justified. A path-scoped false-positive exception must have an executable counter-scan when the path could later contain real findings of the same rule.
 9. Performance work requires measurement first.
-10. Iteration logs use `Commit: <this commit>`; the following synchronization checkpoint records the actual verified SHA because a commit cannot embed its own final SHA.
+10. Iteration logs use `Commit: <this commit>` when the commit SHA cannot yet be embedded; the next checkpoint records the verified SHA.
 11. An iteration is qualified only after remote HEAD plus relevant `ci`, `security`, `quality-loop`, and `module-checksum` gates are green.
 
 Task states: `TODO`, `READY`, `IN_PROGRESS`, `VERIFYING`, `BLOCKED`, `DONE`, `DEFERRED`, `REJECTED`.  
@@ -42,19 +42,22 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 - Stale workers cannot commit through fencing.
 - Execution/plan/schema identity is explicit; incompatible persisted formats fail closed.
 - Same-execution mutation is serialized/validated; independent executions may progress concurrently.
-- Semantic durable time uses explicit clock abstractions; governing timers are armed before the operation becomes observably started.
+- Semantic durable time uses explicit clock abstractions; governing timers are armed before an operation becomes observably started.
 - Retry jitter is deterministic by execution/node identity and attempt and is never used as security entropy.
 - Security-sensitive random identifiers use cryptographic randomness.
-- Production source must not embed credentials; tests may use obvious fixtures, and current gosec does not scan `_test.go` unless explicitly enabled.
+- Production credentials are external inputs, never intentional source literals.
+- Public protocol/version identifiers are not credentials; if a scanner misclassifies one, the exception must not create a blind spot for future credentials.
 - Parsed syntax is not a runtime guarantee until executable behavior proves it.
-- Cross-platform/race/security/quality gates are never weakened to regain green.
+- Cross-platform/race/security/quality gates are never weakened merely to regain green.
 
 Repository/process state:
 
 - `MASTER_PLAN.md` is authoritative; `AGENTS.md` is absent; active instructions are primarily `CONTRIBUTING.md` and `DEVELOPMENT.md`.
-- GitHub reports `main` protection disabled; T-010 is an external blocker.
-- `d611198a92f17011e487f5dba942bd2933da4a7a` is fully qualified: full CI/race, security, quality-loop and module checksum PASS.
+- GitHub reports `main` protection disabled; T-010 remains an external blocker.
+- `668c8f77f0619aa8b88cc7dc0002d31651deedcf` is fully qualified: full CI/race, security, quality-loop and module checksum PASS.
 - G404 is enabled repository-wide with one path-scoped, sentinel-constrained deterministic-jitter exception.
+- G101 is enabled repository-wide. `adgo/http_worker.go` has one reviewed path-scoped G101 false positive, but a dedicated counter-scan re-runs G101 on `adgo` and permits exactly one finding tied to `HTTPWorkerProtocolVersion`; any additional G101 finding fails CI.
+- Remaining global gosec exclusions: `G104,G115,G301,G302,G304,G306,G703`.
 - No GitHub Release had been published at the audited baseline.
 
 ---
@@ -96,8 +99,8 @@ Repository/process state:
 **Status:** OPEN  
 **Category:** Security / signal quality  
 **Severity:** High  
-**Current remaining global exclusions after T-040:** `G101,G104,G115,G301,G302,G304,G306,G703` before this iteration; T-042 removes G101.  
-**Direction:** one rule per atomic iteration, based on actual finding/signal analysis.
+**Remaining global exclusions:** `G104,G115,G301,G302,G304,G306,G703`.  
+**Direction:** one rule per atomic iteration, based on actual finding/signal analysis; do not mass-enable noisy rules.
 
 ### F-008 — Public compatibility promises lack a mechanical API gate
 **Status:** OPEN  
@@ -134,24 +137,24 @@ Repository/process state:
 **Resolution:** G404 enabled globally; only `adgo/runtime.go` is path-scoped, with executable policy that fails if math/rand usage expands.  
 **Qualified commit:** `d611198a92f17011e487f5dba942bd2933da4a7a`.
 
-### F-016 — G101 hardcoded-credential detection is globally disabled without a production false positive
-
-**Status:** VERIFYING via T-042  
+### F-016 — G101 hardcoded-credential detection was globally disabled
+**Status:** RESOLVED by T-042  
 **Category:** Security / credential leakage / signal quality  
 **Severity:** High  
-**Confidence:** High
+**Root cause:** inherited broad SAST exclusion outlived its justification.  
+**Resolution:** G101 removed from global `-exclude`; global re-suppression is rejected by `scripts/test_gosec_policy.sh`.  
+**Qualified commit:** `668c8f77f0619aa8b88cc7dc0002d31651deedcf`.
 
-**Evidence:** G101 remained in the global gosec exclusion list. Pre-flight code search found no production Go `password` literal assignment, no `token := "..."`, no `secret := "..."`; literal `BearerToken: "..."` appears only in `_test.go`. Gosec v2.28 G101 inspects credential-like identifiers plus high-entropy/specific secret patterns; current security workflow does not enable test-file scanning.
-
-**Observed behavior:** a future hardcoded production credential can bypass G101 by configuration, leaving only other scanners to detect it.
-
-**Expected behavior:** G101 runs repository-wide with no exception; policy guard prevents global re-suppression.
-
-**Root cause:** inherited broad SAST exclusion outlived the code conditions that might have justified it.
-
-**Impact:** defense-in-depth gap for AST/context-aware credential detection.
-
-**Task:** T-042.
+### F-017 — G101 misclassifies the public HTTP worker protocol version as a credential
+**Status:** RESOLVED by T-042 failure recovery  
+**Category:** Security / scanner signal quality  
+**Severity:** Medium process risk; not a product vulnerability  
+**Evidence:** gosec v2.28 reported `adgo/http_worker.go` `HTTPWorkerProtocolVersion = "adgo-worker-v1"` as G101/CWE-798 with LOW confidence.  
+**Root cause:** G101 heuristic treats the public protocol-version constant as credential-like even though it carries no authentication secret.  
+**Rejected fix:** restore G101 global exclusion or silently exclude the whole file without compensating evidence.  
+**Resolution:** main scan excludes only `G101` for `adgo/http_worker.go`; `scripts/verify_g101_false_positive.sh` independently re-runs G101 on `adgo` and requires exactly one G101 finding, in `http_worker.go`, referencing `HTTPWorkerProtocolVersion`. A second credential-like finding therefore fails CI.  
+**Test-of-tests:** expected fixture PASS; second-G101 mutant KILLED; wrong-path mutant KILLED; global-G101-restoration mutant KILLED; missing-counter-scan mutant KILLED.  
+**Qualified commit:** `668c8f77f0619aa8b88cc7dc0002d31651deedcf`.
 
 ---
 
@@ -187,26 +190,28 @@ Repository/process state:
 #### T-040 — Enable G404 globally and constrain deterministic retry-jitter exception
 **Status:** DONE  
 **Finding:** F-015  
-**Commit:** `d611198a92f17011e487f5dba942bd2933da4a7a`  
-**Qualification:** policy sentinel, gosec G404, govulncheck, Gitleaks, full CI/race, quality-loop and module checksum PASS.
+**Qualified commit:** `d611198a92f17011e487f5dba942bd2933da4a7a`.
 
-#### T-042 — Enable G101 globally without exceptions
-**Status:** VERIFYING  
+#### T-042 — Enable G101 globally with a fail-closed false-positive contract
+**Status:** DONE  
 **Priority:** P1  
-**Finding:** F-016
+**Findings:** F-016, F-017  
+**Activation commit:** `f98e049bc323c780cf4c780a9d4b2c94ab6cb3d5` — exposed F-017 and correctly failed security qualification.  
+**Recovery/qualified commit:** `668c8f77f0619aa8b88cc7dc0002d31651deedcf`.
 
-Acceptance:
-- G101 is removed from global `-exclude`;
-- no G101 path/inline exception is introduced;
-- existing G404 scoped policy remains intact;
-- policy sentinel rejects re-adding G101 or G404 to global exclusions;
-- current production code remains unchanged;
-- security workflow and all repository gates pass post-push.
+Acceptance satisfied:
+- G101 absent from global `-exclude`;
+- global G101/G404 restoration is sentinel-blocked;
+- G404 deterministic-jitter exception remains constrained;
+- the G101 public-protocol false positive is path-scoped and independently counter-scanned;
+- any second G101 in `adgo` fails the targeted contract;
+- production Go code and public API were unchanged by the recovery commit;
+- security, full CI/race, quality-loop and module-checksum all PASS.
 
 #### T-043 — Classify and remove the next global gosec exclusion
-**Status:** READY after T-042 qualifies  
+**Status:** READY  
 **Priority:** P1  
-**Selection:** inspect actual source/finding semantics first. Permission rules need explicit public-artifact vs secret-state policy; taint rules must not be mass-enabled blindly.
+**Selection rule:** inspect actual source/finding semantics before choosing the rule. Permission rules require an explicit public-artifact vs secret-state policy; taint rules must not be mass-enabled blindly. Prefer the next rule that can be enabled with high signal and a small, mechanically provable exception surface.
 
 #### T-041 — Supply-chain provenance, remaining workflow permission minimization, container digest pinning
 **Status:** TODO, P2.
@@ -238,7 +243,8 @@ Acceptance:
 - REJECTED: retry-away/disable/weaken tests or scanners to regain green.
 - REJECTED: replace deterministic jitter with crypto randomness or a home-grown PRNG merely to silence SAST.
 - REJECTED: leave G404 globally disabled for one deterministic false positive.
-- REJECTED: keep G101 globally disabled when characterization finds no production exception requirement.
+- REJECTED: restore G101 global suppression because one public protocol-version constant is misclassified.
+- REJECTED: path-exclude a G101-bearing credential boundary without an independent counter-scan.
 - REJECTED: tag-push as a second release publisher.
 - DEFERRED: generated typed-activity specialization until profiling proves value.
 
@@ -259,68 +265,49 @@ Release verification reuses current DAGs and publication is fail-closed/single-e
 Pre-existing deterministic-clock flake found by quality-loop and root-caused to timer registration order; commit `3a0ba3034f9202a38108fe412286f4e337a90f21`; full CI/race/security/quality PASS.
 
 ### Iteration 5 — T-040
-- Root cause: one deterministic retry-jitter `math/rand` use caused repository-wide G404 suppression.
-- Change: G404 enabled globally; only `adgo/runtime.go` receives path-scoped G404; sentinel constrains approved RNG API set and strict `#nosec` metadata policy.
-- Test-of-tests: invalid initial fixture evidence caused by permission error was discarded; corrected fixture PASS; global-G404 mutant KILLED; added-rand.Intn mutant KILLED.
-- Commit: `d611198a92f17011e487f5dba942bd2933da4a7a`.
-- Qualification: policy sentinel, gosec, govulncheck, Gitleaks, full CI/race, quality-loop, module checksum PASS.
-- Process learning: security exception scope needs its own executable invariant, not just reviewer memory.
+G404 enabled globally; deterministic retry-jitter exception constrained by executable sentinel; test-of-tests killed global-G404 and added-rand-API mutants; commit `d611198a92f17011e487f5dba942bd2933da4a7a`; all gates PASS.
 
-### Iteration 6 — T-042
+### Iteration 6 — T-042 activation
+- Pre-flight search found no obvious production credential literals.
+- Commit `f98e049bc323c780cf4c780a9d4b2c94ab6cb3d5` removed G101 from global exclusion and strengthened the policy sentinel.
+- Post-push security correctly FAILED: G101 exposed `HTTPWorkerProtocolVersion = "adgo-worker-v1"` as a LOW-confidence false positive.
+- Learning: code search cannot substitute for executing the exact scanner; false-positive characterization belongs in the failure-recovery loop.
 
-Selected task: enable G101 hardcoded-credential detection globally.
-
-Why now: it removes another High-severity false-green class without production behavior changes or known exception debt.
-
-Pre-flight contract:
-- Root cause: inherited global G101 exclusion has no current production false-positive evidence.
-- Invariants: production credentials are external inputs, never source literals; test fixtures do not define production policy.
-- Change surface: `.github/workflows/security.yml`, `scripts/test_gosec_policy.sh`, `MASTER_PLAN.md`.
-- Protected surface: all Go production code, public API, persistence, runtime/retry/release behavior.
-- Observable contract: G101 scans production repository code; no G101 exception exists.
-- Characterization: production password literal search empty; production `token := "..."`/`secret := "..."` empty; literal BearerToken found only in test code; G101 rule semantics verified against gosec v2.28 source.
-- Compatibility: none; scanner policy only.
-- Failure modes: hidden production high-entropy credential fixture causes real finding; policy sentinel incorrectly permits re-exclusion; unrelated scanner regression.
-- Rollback: revert one policy commit if evidence shows an intentional production literal that needs explicit redesign/classification.
-
-Verification before push:
-- updated policy script shell syntax PASS;
-- fixture PASS;
-- mutant restoring global G101 exclusion KILLED;
-- regression mutant restoring global G404 exclusion KILLED.
-
-SELF REVIEW before push:
-- Root cause fixed for G101: YES if post-push gosec remains green with no exception.
-- Production code changed: NO.
-- New hidden state/source of truth: NO; existing security workflow remains authoritative and sentinel only constrains it.
-- Security signal: stronger; Gitleaks remains independent defense in depth.
-- Remaining exclusions: `G104,G115,G301,G302,G304,G306,G703`, tracked by F-007/T-043.
-
-Commit: <this commit>  
-Status: VERIFYING — pending atomic push and qualification.
+### Iteration 6A — T-042 failure recovery
+- Finding F-017 recorded conceptually before remediation: public protocol version misclassified as credential.
+- Rejected global rollback and unguarded file-level blindness.
+- Added exact path-scoped G101 exclusion plus `verify_g101_false_positive.sh` counter-scan.
+- Test-of-tests: normal fixture PASS; second-finding mutant KILLED; wrong-path mutant KILLED; global-G101 mutant KILLED; missing-guard mutant KILLED.
+- Commit `668c8f77f0619aa8b88cc7dc0002d31651deedcf`.
+- Qualification: G101 main scan PASS, targeted false-positive contract PASS, govulncheck PASS, Gitleaks PASS, Linux/macOS/Windows tests PASS, race PASS, lint/fuzz/examples/codegen/downstream/release/benchmark gates PASS, quality-loop PASS, module checksum PASS.
+- Process learning: a necessary path exclusion is acceptable only when a narrower executable counter-scan closes the blind spot.
 
 ---
 
 ## 6. Continuation checkpoint
 
-CURRENT HEAD BEFORE ITERATION 6 PUSH: `d611198a92f17011e487f5dba942bd2933da4a7a`  
-CURRENT QUALIFIED MILESTONE: release correctness closed; deterministic quality gate restored; G404 suppression debt closed.
+CURRENT QUALIFIED HEAD: `668c8f77f0619aa8b88cc7dc0002d31651deedcf`  
+CURRENT QUALIFIED MILESTONE: release correctness closed; deterministic quality gate restored; G404 and G101 repository-wide suppression debt closed with mechanically constrained false-positive handling.
 
 OPEN CRITICAL/HIGH:
 - F-002 unprotected `main` — external blocker;
 - F-005 Core/ADGO durable duplication;
 - F-006 Flow crash-boundary proof gap;
-- F-007 remaining global gosec exclusions;
-- F-008 no mechanical API compatibility gate;
-- F-016 G101 enablement — VERIFYING.
+- F-007 remaining global gosec exclusions `G104,G115,G301,G302,G304,G306,G703`;
+- F-008 no mechanical API compatibility gate.
 
-NEXT TASK AFTER T-042 QUALIFIES:
-- T-043 — choose the next global gosec exclusion using evidence, not numeric order.
+NEXT TASK:
+- T-043 — choose and qualify the next global gosec exclusion using observed findings, not numeric order.
 
-WHY NEXT:
-- security scanner false-green classes are currently cheap to remove atomically; once noisy permission/taint rules require architectural changes, priority must be recalculated against T-030 durability and T-050 compatibility gates.
+SELECTION GUIDANCE:
+- first test each remaining rule against the current codebase;
+- prefer a rule with zero/low false-positive burden and meaningful security value;
+- do not trade a broad global exclusion for a broad path exclusion;
+- if permission rules are selected, distinguish public generated artifacts from secret/private state before changing modes;
+- if taint rules are selected, require sink/source evidence and deterministic scanner behavior.
 
-VERIFICATION:
-- `bash scripts/test_gosec_policy.sh`
-- security workflow, especially `SAST Scan (gosec)`
-- full repository `ci`, `quality-loop`, `module-checksum`.
+VERIFICATION FOR NEXT ITERATION:
+- exact-rule characterization against current HEAD;
+- executable policy/test-of-tests for any exception;
+- security workflow;
+- full `ci`, `quality-loop`, `module-checksum` qualification.
