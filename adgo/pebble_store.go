@@ -47,8 +47,7 @@ func OpenPebbleStore(path string, options ...PebbleStoreOption) (*PebbleStore, e
 		option(store)
 	}
 	if err := store.ensureStoreFormat(); err != nil {
-		_ = db.Close()
-		return nil, err
+		return nil, errors.Join(err, db.Close())
 	}
 	return store, nil
 }
@@ -186,7 +185,9 @@ func (s *PebbleStore) PutInbox(ctx context.Context, id string, event Event) erro
 	}
 	key := pebbleInboxKey(id, event.ID)
 	if _, closer, err := s.db.Get(key); err == nil {
-		closer.Close()
+		if closeErr := closer.Close(); closeErr != nil {
+			return closeErr
+		}
 		return nil
 	} else if !errors.Is(err, pebbledb.ErrNotFound) {
 		return err

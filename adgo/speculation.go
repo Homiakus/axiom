@@ -210,7 +210,9 @@ func chooseSpeculativeResult(all []variantResult, minQuality float64) (ActivityR
 	errorsSeen := []error{}
 	valid := make([]variantResult, 0, len(all))
 	for _, value := range all {
-		addBudget(&budget, value.result.Budget)
+		if err := addBudget(&budget, value.result.Budget); err != nil {
+			return ActivityResult{}, fmt.Errorf("adgo: speculative variant %q returned invalid budget: %w", value.name, err)
+		}
 		if value.err != nil {
 			errorsSeen = append(errorsSeen, fmt.Errorf("%s: %w", value.name, value.err))
 			continue

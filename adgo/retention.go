@@ -203,10 +203,11 @@ func (s *PebbleStore) PruneVersions(_ context.Context, id string, keepLast int) 
 		keys = append(keys, append([]byte(nil), iter.Key()...))
 	}
 	if err := iter.Error(); err != nil {
-		iter.Close()
+		return 0, errors.Join(err, iter.Close())
+	}
+	if err := iter.Close(); err != nil {
 		return 0, err
 	}
-	iter.Close()
 	if len(keys) <= keepLast {
 		return 0, nil
 	}

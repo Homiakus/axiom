@@ -14,7 +14,7 @@ fail() {
 [[ -f "$runtime" ]] || fail "missing runtime source: $runtime"
 [[ -f "$g101_guard" ]] || fail "missing G101 exception guard: $g101_guard"
 
-for rule in G101 G404; do
+for rule in G101 G104 G404; do
   if grep -Eq -- "-exclude=[^[:space:]]*${rule}" "$workflow"; then
     fail "${rule} must not be globally excluded"
   fi

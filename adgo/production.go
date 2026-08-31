@@ -18,14 +18,14 @@ const (
 )
 
 type ProductionConfig struct {
-	Backend            ProductionBackend
-	Root               string
-	LeaseTTL           time.Duration
-	PollInterval       time.Duration
+	Backend             ProductionBackend
+	Root                string
+	LeaseTTL            time.Duration
+	PollInterval        time.Duration
 	CoordinatorInterval time.Duration
-	MaxLeaseRecoveries int
-	Router              RouterConfig
-	PebbleNoSync        bool
+	MaxLeaseRecoveries  int
+	Router               RouterConfig
+	PebbleNoSync         bool
 }
 
 func DefaultProductionConfig(root string) ProductionConfig {
@@ -45,12 +45,12 @@ func DefaultProductionConfig(root string) ProductionConfig {
 // admission, activity-result cache and schedules. Applications can still replace
 // any of these primitives individually, but do not need to assemble them by hand.
 type Production struct {
-	Engine        *Engine
-	Store         Store
-	Router        *AdaptiveRouter
-	Admission     AdmissionController
-	Cache         ActivityCache
-	Schedules     ScheduleStore
+	Engine         *Engine
+	Store          Store
+	Router         *AdaptiveRouter
+	Admission      AdmissionController
+	Cache          ActivityCache
+	Schedules      ScheduleStore
 	ScheduleRunner *ScheduleRunner
 
 	close func() error
@@ -138,23 +138,19 @@ func OpenProduction(plan *Plan, registry *Registry, config ProductionConfig) (*P
 		control := filepath.Join(config.Root, "control")
 		healthStore, err = NewFileProviderHealthStore(control)
 		if err != nil {
-			state.Close()
-			return nil, err
+			return nil, errors.Join(err, state.Close())
 		}
 		production.Admission, err = NewFileAdmissionController(control)
 		if err != nil {
-			state.Close()
-			return nil, err
+			return nil, errors.Join(err, state.Close())
 		}
 		production.Cache, err = NewFileActivityCache(control)
 		if err != nil {
-			state.Close()
-			return nil, err
+			return nil, errors.Join(err, state.Close())
 		}
 		production.Schedules, err = NewFileScheduleStore(control)
 		if err != nil {
-			state.Close()
-			return nil, err
+			return nil, errors.Join(err, state.Close())
 		}
 		production.close = state.Close
 
@@ -174,14 +170,12 @@ func OpenProduction(plan *Plan, registry *Registry, config ProductionConfig) (*P
 		WithAdaptiveRouter(production.Router),
 	)
 	if err != nil {
-		_ = production.Close()
-		return nil, err
+		return nil, errors.Join(err, production.Close())
 	}
 	production.Engine = engine
 	production.ScheduleRunner, err = NewScheduleRunner(engine, production.Schedules)
 	if err != nil {
-		_ = production.Close()
-		return nil, err
+		return nil, errors.Join(err, production.Close())
 	}
 	return production, nil
 }

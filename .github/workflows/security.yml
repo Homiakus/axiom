@@ -82,13 +82,14 @@ jobs:
       - name: Run gosec
         shell: bash
         run: |
-          # G101 and G404 are enabled repository-wide. Two reviewed false positives
-          # are path-scoped here, then separately constrained by executable checks:
-          # deterministic retry jitter (G404) and the public HTTP protocol version (G101).
+          # G101, G104 and G404 are enabled repository-wide. Two reviewed false
+          # positives are path-scoped here, then separately constrained by
+          # executable checks: deterministic retry jitter (G404) and the public
+          # HTTP protocol version (G101).
           go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 \
             -exclude-dir=examples \
             -exclude-dir=internal/testutil \
-            -exclude=G104,G115,G301,G302,G304,G306,G703 \
+            -exclude=G115,G301,G302,G304,G306,G703 \
             -exclude-rules='adgo/runtime\.go:G404;adgo/http_worker\.go:G101' \
             -nosec-require-rules \
             -nosec-require-justification \
@@ -98,20 +99,3 @@ jobs:
       - name: Verify scoped G101 false positive
         shell: bash
         run: bash scripts/verify_g101_false_positive.sh
-
-      - name: Characterize remaining gosec exclusions
-        shell: bash
-        run: |
-          # Informational T-043 evidence pass. Existing findings are expected and
-          # deliberately do not fail the job; scanner/configuration errors still
-          # remain visible in the output. This step is removed or converted into
-          # an enforcing gate once the next rule is selected from observed data.
-          go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 \
-            -exclude-dir=examples \
-            -exclude-dir=internal/testutil \
-            -include=G104,G115,G301,G302,G304,G306,G703 \
-            -nosec-require-rules \
-            -nosec-require-justification \
-            -no-fail \
-            -fmt=text \
-            ./...
