@@ -4,7 +4,7 @@ Status: **ACTIVE — authoritative execution source of truth**
 
 Repository: `Homiakus/axiom`  
 Target branch: `main`  
-Last qualified HEAD: `685a2b8f478ac57fd90af613f30a684c12c99f0a`  
+Last qualified HEAD: `80c78cdb611cac857ce2dc1a674e952118a945ea`  
 Last reconciliation: 2026-08-31
 
 > This file is the only execution roadmap. Historical plans, audits and topic-specific documents are evidence inputs, not parallel execution plans. Observable behavior, reproducible tests, security/correctness invariants and code outrank stale prose.
@@ -51,6 +51,7 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 - Cleanup errors from durable-store initialization and explicit close paths are not silently discarded when they can be returned or joined with the primary failure.
 - Typed numeric boundaries reject sign changes, narrowing overflow and non-finite/out-of-domain float-to-integer conversion rather than accepting Go wraparound semantics.
 - Internal uint32 runtime/compiler IDs may use reviewed narrowing only where their domain is structurally derived from in-memory slice indexes; the exact G115 finding multiset is independently counter-scanned so any expansion fails CI.
+- Private file-backed runtime state and coordination files are created owner-only (`0600`) unless an explicit sharing policy states otherwise. Cross-principal sharing requires external ACL/permission configuration; generated source and publication artifacts are a separate permission domain and may intentionally be readable by other users.
 - Parsed syntax is not a runtime guarantee until executable behavior proves it.
 - Cross-platform/race/security/quality gates are never weakened merely to regain green.
 
@@ -58,13 +59,14 @@ Repository/process state:
 
 - `MASTER_PLAN.md` is authoritative; `AGENTS.md` is absent; active instructions are primarily `CONTRIBUTING.md` and `DEVELOPMENT.md`.
 - GitHub reports `main` protection disabled; T-010 remains an external blocker.
-- `685a2b8f478ac57fd90af613f30a684c12c99f0a` is fully qualified: full CI/race, security, quality-loop and module checksum PASS.
+- `80c78cdb611cac857ce2dc1a674e952118a945ea` is fully qualified: full CI/race, security, quality-loop and module checksum PASS.
 - G404 is enabled repository-wide with one path-scoped, sentinel-constrained deterministic-jitter exception.
 - G101 is enabled repository-wide. `adgo/http_worker.go` has one reviewed path-scoped G101 false positive, but a dedicated counter-scan re-runs G101 on `adgo` and permits exactly one finding tied to `HTTPWorkerProtocolVersion`; any additional G101 finding fails CI.
 - G104 is enabled repository-wide with no path or inline suppressions; ignored-error debt found by exact v2.28.0 characterization was handled directly.
 - G115 is enabled repository-wide. Six real boundary findings were removed; the remaining 16 structurally bounded internal-ID conversions are path-scoped across four files and independently counter-scanned as an exact `5+4+3+4` multiset.
+- G302 is enabled repository-wide with no path or inline suppressions. ADGO coordination lock files use an explicit `0600` invariant; the axiomgen append path passes mode `0` because it does not create files and therefore preserves existing generated-source permissions.
 - Exact gosec v2.28.0 characterization at `aa823e1613a44445fd552a634f8abc399116f39d` measured 92 findings across the then-remaining exclusions: `G104=8`, `G115=22`, `G301=20`, `G302=6`, `G304=18`, `G306=4`, `G703=14`.
-- Current remaining global gosec exclusions: `G301,G302,G304,G306,G703`.
+- Current remaining global gosec exclusions: `G301,G304,G306,G703`.
 - No GitHub Release had been published at the audited baseline.
 
 ---
@@ -106,7 +108,7 @@ Repository/process state:
 **Status:** OPEN  
 **Category:** Security / signal quality  
 **Severity:** High  
-**Remaining global exclusions:** `G301,G302,G304,G306,G703`.  
+**Remaining global exclusions:** `G301,G304,G306,G703`.  
 **Characterization evidence:** exact v2.28.0 informational scan at `aa823e1613a44445fd552a634f8abc399116f39d`: `G104=8`, `G115=22`, `G301=20`, `G302=6`, `G304=18`, `G306=4`, `G703=14`.  
 **Direction:** one rule per atomic iteration, based on actual finding/signal analysis; do not mass-enable noisy rules.
 
@@ -181,6 +183,15 @@ Repository/process state:
 **Root cause:** Go conversion semantics were treated as validation at external numeric boundaries, and the round-robin sequence was narrowed before modulo reduction.  
 **Resolution:** typed conversions now validate sign, target width, NaN/Inf and integer domains before assignment; numeric targets bypass unchecked `reflect.Convert`; Host keeps sequence/modulo arithmetic unsigned through indexing. Regression tests cover signed/unsigned/narrow/float boundaries and forced `atomic.Uint64` rollover. The 16 remaining G115 findings are internal IDs structurally derived from bounded in-memory indexes and are accepted only through an exact counter-scan that fails on any changed or additional G115 finding.  
 **Qualified commit:** `685a2b8f478ac57fd90af613f30a684c12c99f0a`.
+
+### F-020 — ADGO coordination lock files were created world-readable
+**Status:** RESOLVED by T-045  
+**Category:** Security / filesystem confidentiality / scanner signal quality  
+**Severity:** Medium  
+**Evidence:** exact G302 characterization reported five ADGO coordination lock creation sites using `0644`, plus one axiomgen append call whose mode is ignored because `O_CREATE` is absent. Lock records contain owner/coordination metadata and should follow the same private local-state boundary as durable files.  
+**Root cause:** generic `0644` defaults were copied into private coordination paths, while the generator supplied a meaningless mode argument to a non-creating `OpenFile` call.  
+**Resolution:** introduced `privateLockFileMode = 0600` and applied it to all five ADGO lock creation sites; POSIX regression evidence verifies created owned locks are `0600`; axiomgen append now uses mode `0`, preserving existing generated-source permissions. G302 is globally enabled with no G302 path or inline suppressions.  
+**Qualified commit:** `80c78cdb611cac857ce2dc1a674e952118a945ea`.
 
 ---
 
@@ -267,10 +278,25 @@ Acceptance satisfied:
 - `verify_g115_internal_ids.sh` independently re-runs exact gosec v2.28.0 G115 and requires exactly 16 findings with the fixed `5+4+3+4` file multiset; any new or moved G115 finding fails CI;
 - security, Linux/macOS/Windows tests, race, lint/fuzz/examples/codegen/downstream/release/benchmark, Plan & Edge-Space, Boundary Shuffle & Sentinels, module checksum and CI Completion Gate all PASS.
 
-#### T-045 — Select and remove the next global gosec exclusion
+#### T-045 — Enable G302 globally and establish private lock-file permissions
+**Status:** DONE  
+**Priority:** P1  
+**Finding:** F-020  
+**Implementation/qualified commit:** `80c78cdb611cac857ce2dc1a674e952118a945ea`.
+
+Acceptance satisfied:
+- G302 removed from global `-exclude`; policy sentinel blocks restoration of broad G302 suppression;
+- no G302 path or inline suppressions were introduced;
+- all five ADGO lock creation sites create private coordination files with mode `0600`;
+- POSIX regression test verifies the owned lock-file mode on Linux/macOS and is intentionally skipped on Windows where POSIX mode bits are not the ACL contract;
+- axiomgen append uses mode `0` because no `O_CREATE` flag is present, so existing generated-source permissions are preserved rather than made private merely to satisfy SAST;
+- exact G302-enabled gosec v2.28.0 PASS;
+- security, Linux/macOS/Windows tests, race, lint/fuzz/examples/codegen/downstream/release/benchmark, Plan & Edge-Space, Boundary Shuffle & Sentinels, module checksum and CI Completion Gate all PASS.
+
+#### T-046 — Select and remove the next global gosec exclusion
 **Status:** READY  
 **Priority:** P1  
-**Evidence available:** `G301=20`, `G302=6`, `G304=18`, `G306=4`, `G703=14`. Permission rules require an explicit public-artifact vs private-state policy; path rules require source/sink trust-boundary analysis. Prefer a rule whose remediation improves a real private-state or path-safety invariant rather than merely changing permissions to satisfy a scanner.
+**Evidence available:** `G301=20`, `G304=18`, `G306=4`, `G703=14`. T-045 established the private-runtime-vs-generated-artifact filesystem boundary. G301 is the leading candidate because many findings are private ADGO state/coordination directories, while the axiomgen output directory may need a distinct public/generated-artifact contract. G304/G703 require path provenance/root-containment analysis; G306 includes intentional generated/benchmark outputs and must not be “fixed” by making public artifacts private without product justification.
 
 #### T-041 — Supply-chain provenance, remaining workflow permission minimization, container digest pinning
 **Status:** TODO, P2.
@@ -306,6 +332,7 @@ Acceptance satisfied:
 - REJECTED: path-exclude a G101-bearing credential boundary without an independent counter-scan.
 - REJECTED: suppress G104 cleanup errors or the speculative budget validation error instead of handling them.
 - REJECTED: restore G115 as a broad global exclusion or accept a G115 path exception without an exact independent counter-scan.
+- REJECTED: restore G302 globally or make generated source private merely to silence G302/G306.
 - REJECTED: enable permission/path/integer rules in bulk without classifying their distinct contracts.
 - REJECTED: tag-push as a second release publisher.
 - DEFERRED: generated typed-activity specialization until profiling proves value.
@@ -369,29 +396,38 @@ G404 enabled globally; deterministic retry-jitter exception constrained by execu
 - Qualification: G115-enabled main gosec PASS, G101 counter-scan PASS, G115 internal-ID counter-scan PASS, Gitleaks/govulncheck PASS, Linux/macOS/Windows PASS, race PASS, lint/fuzz/examples/codegen/downstream/release/benchmark PASS, Plan & Edge-Space PASS, Boundary Shuffle & Sentinels PASS, module checksum PASS, CI Completion Gate PASS.
 - Learning: scanner debt should be split into real boundary defects and mechanically constrained invariants; neither blanket suppression nor hot-path checks added solely for SAST are acceptable defaults.
 
+### Iteration 9 — T-045 implementation and qualification
+- Selected G302 after separating private runtime coordination files from generated source artifacts.
+- Five ADGO lock creation sites now use the shared `privateLockFileMode = 0600`; durable JSON already used owner-only temp-file creation, so this aligns coordination metadata with the existing local-state boundary.
+- A POSIX regression test observes a live owned lock and requires mode `0600`; Windows skips this POSIX-specific assertion rather than pretending mode bits represent Windows ACL semantics.
+- The axiomgen append path now passes mode `0`: because `O_CREATE` is absent, the mode is not a creation policy and existing generated-source permissions remain unchanged.
+- G302 was removed from the global exclusion list and added to the anti-regression policy sentinel; no G302 suppression was introduced.
+- Commit `80c78cdb611cac857ce2dc1a674e952118a945ea`.
+- Qualification: G302-enabled main gosec PASS, G101/G115 counter-scans PASS, Gitleaks/govulncheck PASS, Linux/macOS/Windows PASS, race PASS, lint/fuzz/examples/codegen/downstream/release/benchmark PASS, Plan & Edge-Space PASS, Boundary Shuffle & Sentinels PASS, module checksum PASS, CI Completion Gate PASS.
+- Learning: permission scanners become useful when the repository first distinguishes private runtime state from intentionally shareable artifacts; meaningless mode arguments should be removed semantically rather than converted into arbitrary stricter permissions.
+
 ---
 
 ## 6. Continuation checkpoint
 
-CURRENT QUALIFIED HEAD: `685a2b8f478ac57fd90af613f30a684c12c99f0a`  
-CURRENT QUALIFIED MILESTONE: release correctness closed; deterministic quality gate restored; G404/G101/G104/G115 broad global suppression debt closed; five gosec rule families remain globally excluded.
+CURRENT QUALIFIED HEAD: `80c78cdb611cac857ce2dc1a674e952118a945ea`  
+CURRENT QUALIFIED MILESTONE: release correctness closed; deterministic quality gate restored; G404/G101/G104/G115/G302 broad global suppression debt closed; four gosec rule families remain globally excluded.
 
 OPEN CRITICAL/HIGH:
 - F-002 unprotected `main` — external blocker;
 - F-005 Core/ADGO durable duplication;
 - F-006 Flow crash-boundary proof gap;
-- F-007 remaining global gosec exclusions `G301,G302,G304,G306,G703`;
+- F-007 remaining global gosec exclusions `G301,G304,G306,G703`;
 - F-008 no mechanical API compatibility gate.
 
 NEXT TASK:
-- T-045 — select and qualify the next global gosec exclusion from measured evidence.
+- T-046 — select and qualify the next global gosec exclusion from measured evidence.
 
-SELECTION GUIDANCE FOR T-045:
-- do not choose by finding count alone;
-- G302/G301 should distinguish private durable/runtime state from intentionally shareable generated artifacts before changing modes;
-- G306 has only four findings, but generated source and benchmark outputs may intentionally be world-readable and therefore need an explicit artifact-permission contract;
-- G703/G304 require path provenance and root-containment analysis, not directory-wide suppression;
-- prefer the next rule where characterization reveals a real confidentiality/path-integrity defect or establishes a reusable permission boundary.
+SELECTION GUIDANCE FOR T-046:
+- G301 is the leading next candidate because T-045 established an explicit private runtime filesystem boundary; classify all 20 directory findings into private state/coordination versus generated/public artifact directories before changing modes;
+- do not make axiomgen output or benchmark/generated artifacts private merely to satisfy a scanner; if their public readability/traversability is intentional, encode that as an explicit narrow contract;
+- G304/G703 require source-to-sink path provenance and root-containment analysis, not directory-wide suppressions;
+- G306 has only four findings but includes intentionally generated/benchmark outputs, so finding count alone is not a reason to choose it.
 
 VERIFICATION FOR NEXT ITERATION:
 - exact-rule evidence against current qualified HEAD;
