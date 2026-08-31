@@ -11,7 +11,6 @@ import (
 	"github.com/Homiakus/axiom/internal/durabletime"
 )
 
-
 type ActivityVariant struct {
 	Name    string
 	Handler ActivityHandler
@@ -79,14 +78,18 @@ func NewHedgedActivity(variants []ActivityVariant, policy SpeculationPolicy) (Ac
 				results <- variantResult{name: variant.Name, result: result, err: err, duration: time.Since(started)}
 			}()
 		}
-		launch(variants[0])
-		next := 1
+
+		// Arm the semantic hedge timer before the primary handler can run. With a
+		// manual clock, observing primary start and advancing time must never race
+		// with timer registration and silently shift the hedge deadline.
 		timer := newSpeculativeTimer(policy.Clock, policy.HedgeDelay)
 		defer func() {
 			if timer != nil {
 				timer.Stop()
 			}
 		}()
+		launch(variants[0])
+		next := 1
 		all := make([]variantResult, 0, policy.MaxParallel)
 		winner := -1
 
@@ -131,7 +134,6 @@ func NewHedgedActivity(variants []ActivityVariant, policy SpeculationPolicy) (Ac
 		return chooseSpeculativeResult(all, policy.MinQuality)
 	}, nil
 }
-
 
 // NewEnsembleActivity executes all variants up to MaxParallel and chooses the
 // highest-quality successful result with deterministic name tie-breaking. Budget
@@ -239,4 +241,3 @@ func chooseSpeculativeResult(all []variantResult, minQuality float64) (ActivityR
 	winner.Metrics["winner_quality"] = QualityUtility(valid[0].result.Quality)
 	return winner, nil
 }
-
