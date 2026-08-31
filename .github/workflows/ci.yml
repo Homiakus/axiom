@@ -258,6 +258,18 @@ jobs:
         shell: bash
         run: bash scripts/test_consumer.sh
 
+  release-metadata-contract:
+    name: Release Metadata Contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Test frozen release candidate resolution
+        shell: bash
+        run: bash scripts/test_release_candidate.sh
+
   bench-smoke:
     name: Benchmark Regression Smoke
     runs-on: ubuntu-latest
@@ -309,6 +321,7 @@ jobs:
       - fuzz-smoke
       - codegen-verify
       - consumer-test
+      - release-metadata-contract
       - bench-smoke
     if: always()
     steps:

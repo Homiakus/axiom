@@ -45,15 +45,25 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+              echo "Manual releases must be dispatched from main; got ${GITHUB_REF}." >&2
+              exit 1
+            fi
             ver="${{ inputs.version }}"
             pre="${{ inputs.prerelease }}"
-            sha="$(git rev-parse HEAD)"
+            metadata="$(bash scripts/resolve_release_candidate.sh manual "$ver" origin)"
+            printf '%s\n' "$metadata"
+            resolved_version="$(awk -F= '$1 == "version" {print $2}' <<<"$metadata")"
+            sha="$(awk -F= '$1 == "target_sha" {print $2}' <<<"$metadata")"
+            if [[ "$resolved_version" != "$ver" || -z "$sha" ]]; then
+              echo "Release metadata resolver returned incomplete output." >&2
+              exit 1
+            fi
           else
             ver="${GITHUB_REF_NAME}"
-            pre="false"
-            if [[ "$ver" =~ [a-zA-Z] ]]; then
-              pre="true"
-            fi
+            metadata="$(bash scripts/resolve_release_candidate.sh validate "$ver")"
+            printf '%s\n' "$metadata"
+            pre="$(awk -F= '$1 == "semver_prerelease" {print $2}' <<<"$metadata")"
             sha="${GITHUB_SHA}"
           fi
           echo "version=$ver" >> "$GITHUB_OUTPUT"

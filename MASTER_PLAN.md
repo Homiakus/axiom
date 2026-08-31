@@ -4,72 +4,57 @@ Status: **ACTIVE — authoritative execution source of truth**
 
 Repository: `Homiakus/axiom`
 Target branch: `main`
-Baseline reconstructed from remote `main`: `faf3fba67a377b354d8fa1a5745cef0b8b96f0c7`
+Baseline reconstructed before plan bootstrap: `faf3fba67a377b354d8fa1a5745cef0b8b96f0c7`
+Last verified completed-task commit before Iteration 2: `414f01c84ec215b29784cbfa7e5987cb35cdea41`
 Last reconciliation: 2026-08-31
 
-> This file is the only execution roadmap. Existing documents such as `docs/PRODUCTION_STABILIZATION_PLAN.md`, `adgo/AGENT_PLATFORM_PLAN_RU.md`, audit reports and historical release plans are evidence/reference inputs, not parallel execution plans. When they disagree with code, tests, current CI or this plan after reconciliation, observable behavior and executable invariants win.
+> This file is the only execution roadmap. `docs/PRODUCTION_STABILIZATION_PLAN.md`, `adgo/AGENT_PLATFORM_PLAN_RU.md`, audit reports and historical release documents are evidence/reference inputs, not parallel execution plans. Observable behavior, reproducible tests, security/correctness invariants and code outrank stale prose.
 
 ---
 
 ## 0. Operating protocol
 
-Work uses the loop:
+Loop:
 
 `SYNCHRONIZE -> OBSERVE -> UNDERSTAND -> SELECT -> CHARACTERIZE -> IMPLEMENT -> VERIFY -> ATTACK -> LEARN -> RECONCILE -> COMMIT -> PUSH MAIN -> CHECKPOINT -> REPEAT`
 
 Rules:
 
-1. Read current remote `main`, this file, `CONTRIBUTING.md`, `DEVELOPMENT.md` and relevant architecture/runtime contracts before substantial work.
-2. Every substantial change has a `T-XXX` task. Every substantial unexpected problem has an `F-XXX` finding.
-3. Findings are recorded before architectural/public-API/security/persistence behavior is changed.
-4. Red `main` blocks unrelated implementation work.
-5. One logical task = one logical commit including tests/docs/plan reconciliation.
-6. Never force-push.
-7. Prefer root-cause removal over symptom patches and executable invariants over prose-only rules.
-8. Mutation testing is required where technically useful for critical policy/state/validation logic.
-9. Performance changes require a measured baseline.
-10. After every successful push, record an iteration log and continuation checkpoint here.
+1. Re-read remote `main`, this file, `CONTRIBUTING.md`, `DEVELOPMENT.md` and relevant contracts before substantial work.
+2. Every substantial change has `T-XXX`; every substantial unexpected problem has `F-XXX` before the corresponding architecture/API/security/persistence fix.
+3. Red `main` blocks unrelated implementation work.
+4. One logical task = one logical commit containing implementation, tests, relevant docs and plan reconciliation whenever technically possible.
+5. Never force-push.
+6. Prefer executable invariants, root-cause fixes, fail-closed behavior and minimal reversible transitions.
+7. Mutation testing is required where technically applicable to critical policy/state/validation logic. Performance work requires measurement first.
+8. A commit cannot contain its own final SHA without changing that SHA. Therefore an iteration records `Commit: <this commit>` inside the commit and the actual remote SHA is written into the next synchronization checkpoint. This avoids a self-referential infinite commit chain.
+9. After push, verify remote HEAD and CI state before treating the iteration as qualified.
 
 Task states: `TODO`, `READY`, `IN_PROGRESS`, `VERIFYING`, `BLOCKED`, `DONE`, `DEFERRED`, `REJECTED`.
-
 Finding states: `OPEN`, `INVESTIGATING`, `RESOLVED`, `ACCEPTED_RISK`, `REJECTED`.
 
 ---
 
-## 1. Reconstructed repository state
+## 1. Reconstructed current state
 
-### Current baseline
+- `MASTER_PLAN.md` was absent at baseline and was bootstrapped by Iteration 1.
+- `AGENTS.md` is absent; repository instructions are primarily `CONTRIBUTING.md` and `DEVELOPMENT.md`.
+- `main` branch protection is disabled in GitHub metadata; this is an external blocker, not a source-code blocker.
+- Baseline `ci`, `module-checksum`, `quality-loop` and scheduled `security` runs were green.
+- Repository is pre-v1 and had no published GitHub Release at the audited baseline.
+- Core Axiom declarative frontends converge to the compiled runtime; typed Flow is a separate reducer surface; ADGO is a separate durable graph/coordinator/worker runtime.
 
-- Remote branch: `main`.
-- Reconstructed HEAD before this plan existed: `faf3fba67a377b354d8fa1a5745cef0b8b96f0c7`.
-- `MASTER_PLAN.md` was absent at that baseline.
-- `AGENTS.md` is absent; repository instructions currently live primarily in `CONTRIBUTING.md` and `DEVELOPMENT.md`.
-- Current `main` branch metadata reports branch protection disabled.
-- Latest inspected `ci`, `module-checksum`, `quality-loop` and scheduled `security` runs for the reconstructed baseline were green.
-- Repository is pre-v1; no GitHub Release had been published at the audited baseline.
-
-### Architectural shape
-
-- Declarative Go `model`, AXM and TOML compile to the canonical Axiom plan/runtime.
-- Typed `Flow` is a separate reducer-oriented API.
-- `adgo` is a durable graph/coordinator/worker runtime for long-running and agent workloads.
-- Core Axiom and ADGO intentionally remain separate engines, but duplicate durable primitives must not drift.
-- Memory and Pebble are core store paths; ADGO additionally has File/Pebble production storage paths.
-
-### Critical invariants already established
-
-Do not weaken without a dedicated finding/task:
+Critical invariants that must not be weakened:
 
 - external effects are at-least-once, never falsely exactly-once;
-- durable intents/tasks are persisted before external execution where the durable contract requires it;
-- external effect handlers require idempotency/reconciliation semantics;
-- stale workers are fenced from committing late results;
-- execution/plan identity is pinned and migration is explicit;
-- persisted schemas/codecs fail closed on incompatible/future identity;
+- durable intent/task is persisted before external execution where the contract requires it;
+- idempotency/reconciliation is explicit at external effect boundaries;
+- stale workers cannot commit through fencing;
+- execution/plan/schema identity is explicit and incompatible persisted formats fail closed;
 - same-execution mutation is serialized/validated while independent executions may progress concurrently;
-- semantic orchestration time uses explicit clock abstractions where durable decisions depend on time;
-- red cross-platform CI is a production regression;
-- parsed syntax is not documented as a runtime guarantee until code/tests prove it.
+- semantic durable time comes from explicit clock abstractions;
+- parsed syntax is not a runtime guarantee until executable behavior proves it;
+- cross-platform/race/security gates are not weakened to regain green.
 
 ---
 
@@ -77,575 +62,315 @@ Do not weaken without a dedicated finding/task:
 
 ### F-001 — Missing authoritative living execution plan
 
-**Status:** RESOLVED by `T-001`
-
-**Category:** Engineering process / planning
-
+**Status:** RESOLVED
+**Category:** Engineering process
 **Severity:** High
-
-**Confidence:** High
-
-**Evidence:** `MASTER_PLAN.md` returned not found on reconstructed `main`; execution state was split across `docs/PRODUCTION_STABILIZATION_PLAN.md`, ADGO plans, audits and release docs.
-
-**Observed behavior:** a new engineering session could not reconstruct one authoritative task/finding/checkpoint state from the repository.
-
-**Expected behavior:** one living plan contains priorities, dependencies, findings, iteration logs and continuation checkpoints.
-
-**Root cause:** planning artifacts accumulated by topic/era without a final ownership boundary.
-
-**Impact:** duplicated work, stale task status, plan worship, lost findings and expensive context recovery.
-
-**Affected invariants:** repository recoverability; single source of truth; autonomous continuation.
-
-**Recommended direction:** keep this file authoritative; historical plans become evidence/reference only.
-
----
+**Evidence:** `MASTER_PLAN.md` returned 404 on reconstructed baseline.
+**Root cause:** topic/era plans accumulated without a final ownership boundary.
+**Impact:** context recovery, duplicated work, stale status and parallel-roadmap ambiguity.
+**Resolution:** T-001 established this file as the sole execution plan.
 
 ### F-002 — `main` is not protected
 
 **Status:** OPEN / external configuration
-
 **Category:** Governance / CI integrity
-
 **Severity:** Critical process risk
+**Evidence:** branch metadata reports `protected=false` and no required checks.
+**Impact:** direct pushes can bypass otherwise strong source-controlled gates.
+**Affected task:** T-010.
 
-**Confidence:** High
+### F-003 — Manual release violates frozen-candidate policy
 
-**Evidence:** GitHub branch metadata reports `protected=false` and no required status checks.
-
-**Observed behavior:** a direct push can update `main` without GitHub enforcing the otherwise strong CI/security gates.
-
-**Expected behavior:** required checks and safe branch rules mechanically protect `main`.
-
-**Root cause:** repository settings are weaker than the source-controlled verification DAG.
-
-**Impact:** one accidental or compromised push can bypass correctness/security gates and publish incompatible persisted/runtime behavior.
-
-**Blast radius:** entire repository and downstream consumers.
-
-**Affected tasks:** `T-010`.
-
-**Recommended direction:** enable branch/ruleset protection with exact active check names; keep a source-controlled validation/checklist for the external setting.
-
----
-
-### F-003 — Manual release does not implement the documented frozen-SHA contract
-
-**Status:** OPEN
-
+**Status:** OPEN, addressed by T-002/T-003
 **Category:** Release / supply chain
-
 **Severity:** High
+**Evidence:** `docs/versioning.md` requires `release/<version>` candidate resolution; current manual workflow used checkout `HEAD`.
+**Root cause:** policy evolved beyond executable workflow implementation.
+**Impact:** wrong commit can be released despite correct review documentation.
 
-**Confidence:** High
-
-**Evidence:** `docs/versioning.md` says manual release resolves `release/<version>` and publishes that reviewed SHA; `.github/workflows/release.yml` currently derives manual `target_sha` from checkout `HEAD`.
-
-**Observed behavior:** workflow-dispatch source revision can become the release target instead of the frozen release branch.
-
-**Expected behavior:** malformed/missing/non-ancestor candidate is rejected and release/tag is pinned explicitly to the frozen candidate SHA.
-
-**Root cause:** release policy evolved beyond workflow implementation.
-
-**Impact:** wrong commit can be released despite correct documentation/review process.
-
-**Affected tasks:** `T-002`, `T-003`.
-
-**Recommended direction:** characterize metadata resolution in a testable script, make workflow consume it, verify tag target explicitly.
-
----
-
-### F-004 — Release verification is weaker than normal `main` verification
+### F-004 — Release verification is weaker than normal `main`
 
 **Status:** OPEN
-
 **Category:** CI/CD
-
 **Severity:** High
+**Evidence:** normal CI uses `go test -race ./...`; release verify races only selected packages and omits several main gates.
+**Affected task:** T-003.
 
-**Confidence:** High
-
-**Evidence:** normal CI runs `go test -race ./...`; release workflow currently races only root/internal runtime/store subsets and does not reproduce all compatibility/security gates.
-
-**Impact:** a candidate can pass release verification while failing a gate normally expected on `main`.
-
-**Affected tasks:** `T-003`.
-
----
-
-### F-005 — Core and ADGO duplicate durable primitives without an executable anti-drift boundary
+### F-005 — Core and ADGO duplicate durable primitives without executable anti-drift boundary
 
 **Status:** OPEN
-
 **Category:** Architecture
-
 **Severity:** High
+**Evidence:** overlapping retry/backoff, lease/fencing, clock, CAS/version, persisted-format and failure-classification concepts exist in both runtimes.
+**Direction:** do not merge engines; inventory and extract only behavior-identical low-level primitives.
+**Affected tasks:** T-020..T-023.
 
-**Confidence:** High
-
-**Evidence:** both runtimes own overlapping retry/backoff, lease/fencing, clock, version/CAS, persistence-format and failure-classification concepts; existing stabilization roadmap already identified `ARCH-001..004` but extraction is unfinished.
-
-**Expected behavior:** engines remain separate while genuinely identical low-level durable primitives have one implementation/contract and dependency tests prevent reverse coupling.
-
-**Root cause:** ADGO grew rapidly as a production runtime before common low-level contracts were fully frozen.
-
-**Impact:** semantic drift and duplicate bug fixes.
-
-**Affected tasks:** `T-020` through `T-023`.
-
----
-
-### F-006 — Durable Flow crash boundaries are not comprehensively failpoint-qualified
+### F-006 — Durable Flow crash boundaries lack comprehensive failpoint qualification
 
 **Status:** OPEN
-
 **Category:** Persistence / reliability
-
 **Severity:** High
+**Impact:** duplicate external effects can only be trusted after intent/effect/ack crash boundaries are deterministically exercised.
+**Affected tasks:** T-030..T-033.
 
-**Confidence:** High
-
-**Evidence:** durable outbox exists, but deterministic crash/failpoint coverage across intent commit, effect call, success-before-ack and ack commit remains outstanding in the stabilization evidence.
-
-**Impact:** at-least-once behavior may be correct by design yet insufficiently proven at the exact boundaries that can duplicate real-world effects.
-
-**Affected tasks:** `T-030` through `T-033`.
-
----
-
-### F-007 — Security scan has broad global gosec exclusions
+### F-007 — Security workflow has broad global gosec exclusions
 
 **Status:** OPEN
-
 **Category:** Security
-
 **Severity:** High
-
-**Confidence:** High
-
-**Evidence:** security workflow globally excludes `G101,G104,G115,G301,G302,G304,G306,G404,G703`.
-
-**Expected behavior:** rules are enabled; intentional exceptions are local and justified.
-
-**Impact:** green security status has known blind spots, especially relevant to filesystem/storage paths.
-
-**Affected tasks:** `T-040`.
-
----
+**Evidence:** global exclusions include `G101,G104,G115,G301,G302,G304,G306,G404,G703`.
+**Direction:** enable one rule at a time, fix real findings, keep only local justified suppressions.
+**Affected task:** T-040.
 
 ### F-008 — Public compatibility promises lack a mechanical API gate
 
 **Status:** OPEN
-
 **Category:** API / compatibility
-
 **Severity:** High
+**Impact:** pre-v1 evolution can silently break downstream consumers or documented contracts.
+**Affected tasks:** T-050/T-051.
 
-**Confidence:** High
-
-**Evidence:** versioning policy declares exported identifiers, runtime guarantees, diagnostic codes, persisted formats and generated contracts public, while no API-manifest/apidiff-style required job is established.
-
-**Affected tasks:** `T-050`, `T-051`.
-
----
-
-### F-009 — Documentation has semantic drift from implementation/CI
+### F-009 — Documentation has semantic drift
 
 **Status:** OPEN
-
 **Category:** Documentation / process
-
 **Severity:** Medium
+**Evidence:** stale `first/latest` architecture text, README workflow badge path drift, DEVELOPMENT race-command drift.
+**Affected tasks:** T-060/T-061.
 
+### F-010 — Tag-trigger prerelease detection classifies every `v*` tag as prerelease
+
+**Status:** IN_PROGRESS via T-002
+**Category:** Release correctness
+**Severity:** High
 **Confidence:** High
+**Evidence:** current workflow sets `pre=true` when `$ver` contains any ASCII letter; every valid tag starts with `v`.
+**Observed behavior:** stable `v1.2.3` tag event is marked prerelease.
+**Expected behavior:** tag-event prerelease state is derived from the SemVer prerelease component, not the leading `v`.
+**Root cause:** loose text heuristic instead of SemVer parsing.
+**Impact:** stable releases can be published with incorrect prerelease metadata.
+**Affected task:** T-002.
 
-**Evidence examples:** `ARCHITECTURE.md` contains stale production semantics for `first/latest`; README CI badge references `test.yml` while active workflow is `ci.yml`; `DEVELOPMENT.md` describes a narrower race command than current `ci.yml`.
+### F-011 — Release publication path is more permissive than documented policy
 
-**Impact:** maintainers and consumers may choose behavior based on obsolete contracts.
-
-**Affected tasks:** `T-060`, `T-061`.
+**Status:** OPEN
+**Category:** Release / supply chain
+**Severity:** High
+**Evidence:** publication falls back to generated notes when release notes are missing and uses create-or-upload behavior for an existing release, while `docs/versioning.md` says these cases are rejected.
+**Root cause:** same policy/workflow drift family as F-003.
+**Affected task:** T-003.
 
 ---
 
 ## 3. Prioritized task DAG
 
-### Milestone M0 — Trustworthy execution process
+### M0 — Trustworthy execution process
 
 #### T-001 — Establish authoritative `MASTER_PLAN.md`
 
-**Status:** IN_PROGRESS
-
+**Status:** DONE
 **Priority:** P0 process foundation
-
-**Depends on:** none
-
-**Goal:** make repository state reconstructable without conversation memory and remove parallel-roadmap ambiguity.
-
-**Acceptance:**
-- this file exists on `main`;
-- findings and tasks are evidence-based;
-- previous stabilization/agent plans are explicitly reference-only;
-- first iteration log and checkpoint are recorded;
-- future substantial commits reconcile this file.
+**Result:** repository-first continuation state exists; historical plans are reference-only.
+**Implementation commit verified after push:** `414f01c84ec215b29784cbfa7e5987cb35cdea41`.
 
 #### T-010 — Protect `main` with required checks
 
-**Status:** BLOCKED (external GitHub repository setting)
-
+**Status:** BLOCKED — external GitHub setting
 **Priority:** P0
+**Minimum external action:** enable branch/ruleset protection with exact active required checks, no force push/delete, and PR/review requirements appropriate to the repository.
+**Independent work:** source-controlled hardening continues because the user explicitly requested direct-main execution while this external setting remains unavailable to the current tool surface.
 
-**Depends on:** exact current workflow/check-name inventory
+### M1 — Release correctness and provenance
 
-**Minimum external action:** enable a branch/ruleset that requires active CI/security compatibility gates, disallows force push/delete, and requires PR/review as appropriate.
+#### T-002 — Make frozen release metadata resolution executable and testable
 
-**Independent work:** all source-controlled hardening tasks can proceed; direct-main pushes are performed only because the user explicitly requested them while protection remains external/unconfigured.
-
----
-
-### Milestone M1 — Release correctness and provenance
-
-#### T-002 — Make frozen release candidate resolution executable and testable
-
-**Status:** READY
-
+**Status:** IN_PROGRESS
 **Priority:** P0/P1
-
 **Depends on:** T-001
 
-**Goal:** eliminate policy/workflow drift for manual releases.
+Acceptance:
+- strict SemVer tag validation before ref interpolation;
+- manual dispatch must run from `main`;
+- manual candidate resolves `release/<version>`, not checkout HEAD;
+- missing release branch fails;
+- candidate must be ancestor of remote `main`;
+- existing remote tag fails;
+- tag-event stable/prerelease classification follows SemVer, not arbitrary letters;
+- deterministic synthetic-git regression suite covers success and negative cases;
+- normal CI executes that suite and CI Completion Gate depends on it.
 
-**Acceptance:**
-- SemVer input validated;
-- dispatch/manual candidate resolves `release/<version>` rather than arbitrary checkout HEAD;
-- missing branch is rejected;
-- candidate must be ancestor of current `main`;
-- duplicate tag/release policy is explicit;
-- release target SHA becomes deterministic/testable outside YAML where practical;
-- regression/negative tests cover malformed version, missing branch and non-ancestor candidate.
-
-#### T-003 — Make release verification at least as strong as `main`
+#### T-003 — Make publication/verification match the documented release contract
 
 **Status:** TODO
-
 **Priority:** P1
-
 **Depends on:** T-002
 
-**Acceptance:** release verification includes module hygiene, vet, full tests, full relevant race, compatibility/codegen/security gates or verified reusable equivalents; release creation explicitly targets the frozen SHA; tag SHA is verified after creation; provenance/attestation strategy is documented/implemented.
+Acceptance:
+- release verification is at least as strong as main or reuses verified required workflows;
+- release notes are required according to policy;
+- existing tag/release is rejected unless an explicit separately designed recovery path is selected;
+- release creation explicitly targets frozen SHA and remote tag SHA is verified after creation;
+- provenance/attestation and permission scope are reviewed;
+- docs and workflow say the same thing.
+
+### M2 — Durable correctness closure
+
+- **T-030 — reusable deterministic durable failpoint framework:** TODO, P1.
+- **T-031 — Flow intent/effect/ack crash matrix:** TODO, P1, depends T-030.
+- **T-032 — no-resurrection/backend/crash equivalence properties:** TODO, P1/P2, depends T-030.
+- **T-033 — Flow backlog/backpressure/observability contracts:** TODO, P2, depends T-031.
+
+### M3 — Shared durable primitives without merging engines
+
+- **T-020 — inventory Core vs ADGO durable primitive contracts:** TODO, P1.
+- **T-021 — define acyclic `internal/durable` boundary:** TODO, P1/P2, depends T-020.
+- **T-022 — extract only behavior-identical pure primitives:** TODO, P2, depends T-021.
+- **T-023 — architecture dependency/anti-drift tests:** TODO, P2, depends T-021.
+
+### M4 — Security boundary reduction
+
+- **T-040 — remove broad gosec exclusions incrementally:** TODO, P1.
+- **T-041 — minimize workflow permissions and pin container bases by digest:** TODO, P2.
+
+### M5 — API and compatibility freeze
+
+- **T-050 — mechanical public API compatibility baseline/gate:** TODO, P1/P2.
+- **T-051 — typed error taxonomy and stable/experimental surface classification:** TODO, P2, depends T-050.
+- **T-052 — reduce/deprecate unnecessary root aliases before v1:** TODO, P2/P3, depends T-050/T-051.
+
+### M6 — Documentation as executable contract
+
+- **T-060 — repair current semantic documentation drift:** TODO, P1/P2.
+- **T-061 — add docs/architecture drift guardrails:** TODO, P2, depends T-060.
+
+### M7 — Operations and performance qualification
+
+- **T-070 — bounded-cardinality metrics and readiness/liveness:** TODO, P2.
+- **T-071 — recovery/corruption/lease/outbox/migration runbooks:** TODO, P2.
+- **T-072 — versioned relative benchmark baseline/regression comparison:** TODO, P2.
+- **T-073 — long-history/high-cardinality/reopen benchmarks:** TODO, P2/P3.
 
 ---
 
-### Milestone M2 — Durable correctness closure
+## 4. Rejected / deferred directions
 
-#### T-030 — Build reusable deterministic failpoint framework for durable boundaries
-
-**Status:** TODO
-
-**Priority:** P1
-
-**Depends on:** T-001
-
-#### T-031 — Qualify durable Flow intent/effect/ack crash matrix
-
-**Status:** TODO
-
-**Priority:** P1
-
-**Depends on:** T-030
-
-**Required boundaries:** before state+intent commit; after commit before effect; during effect; after effect success before ack; during ack; after ack; reopen/recovery.
-
-#### T-032 — Add no-resurrection/backend/crash equivalence properties
-
-**Status:** TODO
-
-**Priority:** P1/P2
-
-**Depends on:** T-030
-
-#### T-033 — Add Flow outbox backpressure and operational observability contracts
-
-**Status:** TODO
-
-**Priority:** P2
-
-**Depends on:** T-031
+- REJECTED: merge Core Axiom and ADGO into one mega-runtime.
+- REJECTED: claim exactly-once external effects.
+- REJECTED: weaken tests/security checks to restore green.
+- REJECTED: optimize before measurement or correctness closure.
+- DEFERRED: generated typed-activity specialization until profiling proves value after semantic freeze.
 
 ---
 
-### Milestone M3 — Shared durable primitives without merging engines
-
-#### T-020 — Inventory Core vs ADGO durable primitive contracts
-
-**Status:** TODO
-
-**Priority:** P1 architectural foundation
-
-**Depends on:** correctness contracts for touched primitives must be green
-
-**Classify:** retry/backoff; lease/fencing; durability capability; CAS/version semantics; clock adapters; persisted-format validation; lock ownership; error classification.
-
-#### T-021 — Define acyclic `internal/durable` dependency boundary
-
-**Status:** TODO
-
-**Priority:** P1/P2
-
-**Depends on:** T-020
-
-#### T-022 — Extract only behavior-identical pure durable primitives
-
-**Status:** TODO
-
-**Priority:** P2
-
-**Depends on:** T-021
-
-**Protected decision:** do not merge Core Axiom Engine and ADGO Engine into a single mega-runtime.
-
-#### T-023 — Add architecture dependency/anti-drift tests
-
-**Status:** TODO
-
-**Priority:** P2
-
-**Depends on:** T-021
-
----
-
-### Milestone M4 — Security boundary reduction
-
-#### T-040 — Remove broad gosec exclusions incrementally
-
-**Status:** TODO
-
-**Priority:** P1
-
-**Method:** enable one rule at a time; classify findings; fix real issues; replace intentional cases with narrow local justified suppression; add negative/security tests when a real boundary is found.
-
-#### T-041 — Minimize workflow permissions and pin container bases by digest
-
-**Status:** TODO
-
-**Priority:** P2
-
-**Depends on:** T-040 may be independent by file scope; keep separate commits.
-
----
-
-### Milestone M5 — API and compatibility freeze
-
-#### T-050 — Add mechanical exported API compatibility baseline/gate
-
-**Status:** TODO
-
-**Priority:** P1/P2
-
-**Acceptance:** additive/change/removal/deprecation can be distinguished; intentional pre-v1 break requires explicit changelog/migration annotation.
-
-#### T-051 — Publish stable typed error taxonomy and compatibility surface classification
-
-**Status:** TODO
-
-**Priority:** P2
-
-**Depends on:** T-050
-
-#### T-052 — Reduce/deprecate unnecessary root facade aliases before v1
-
-**Status:** TODO
-
-**Priority:** P2/P3
-
-**Depends on:** T-050, T-051
-
----
-
-### Milestone M6 — Documentation as executable contract
-
-#### T-060 — Repair current semantic documentation drift
-
-**Status:** TODO
-
-**Priority:** P1/P2
-
-**Scope:** architecture `first/latest`, README workflow badge, development race/full-CI descriptions, historical audit status.
-
-#### T-061 — Add docs/architecture drift guardrails for key capabilities
-
-**Status:** TODO
-
-**Priority:** P2
-
-**Depends on:** T-060
-
----
-
-### Milestone M7 — Operations and performance qualification
-
-#### T-070 — Define bounded-cardinality operational metrics and readiness/liveness
-
-**Status:** TODO
-
-**Priority:** P2
-
-#### T-071 — Complete recovery/corruption/lease/outbox/migration runbooks
-
-**Status:** TODO
-
-**Priority:** P2
-
-#### T-072 — Add versioned relative benchmark baseline/regression comparison
-
-**Status:** TODO
-
-**Priority:** P2
-
-#### T-073 — Add long-history/high-cardinality/reopen benchmarks
-
-**Status:** TODO
-
-**Priority:** P2/P3
-
-**Datasets:** 1K/10K/100K history entries; large task queues/inboxes/outbox; many executions; reopen/recovery cost.
-
----
-
-## 4. Deferred / rejected directions
-
-- **REJECTED:** merge Core Axiom and ADGO into one generalized mega-runtime. They have different orchestration models; share only proven identical primitives.
-- **REJECTED:** claim exactly-once external effects. Preserve at-least-once + idempotency/reconciliation.
-- **REJECTED:** weaken or skip cross-platform/race/security tests to restore green.
-- **REJECTED:** optimize before measurement or before correctness contracts are green.
-- **DEFERRED:** generator specialization for typed activities until generic typed mapping remains semantically frozen and profiling proves need.
-
----
-
-## 5. Convergence criterion
-
-The repository converges only when:
-
-- Critical findings = 0;
-- High findings = 0 or explicitly accepted/deferred with evidence;
-- P0 closed; P1 closed or justified;
-- `main` is mechanically protected and CI is trustworthy;
-- no unexplained flaky/red gates;
-- race/security/compatibility gates are green;
-- critical durable crash/recovery boundaries are failpoint/property qualified;
-- public/persisted contracts have compatibility protection;
-- Core/ADGO duplicate durable architecture has an explicit anti-drift boundary;
-- security suppressions are narrow and justified;
-- benchmark regressions are measured against reviewed baselines;
-- docs match executable behavior;
-- re-audit finds no new fundamental architecture/correctness/security/reliability problem;
-- final verified state is on `main`.
-
----
-
-## 6. Iteration log
+## 5. Iteration log
 
 ### Iteration 1 — T-001
 
-**Task:** establish the living master execution plan.
+Selected task: bootstrap authoritative living plan.
 
-**Findings addressed:**
-- F-001.
+SELF REVIEW
+- Root cause fixed: YES.
+- New findings: F-002..F-009 reconstructed from repository evidence.
+- Tests/mutation/race/performance: not applicable to documentation-only bootstrap.
+- Compatibility: unchanged.
+- Process learning: continuation state must live in repository; self-SHA cannot be embedded in the same commit, so logs use `<this commit>` and next sync records the actual SHA.
+- Commit: implementation commit later verified as `414f01c84ec215b29784cbfa7e5987cb35cdea41`.
+- Push: `main`.
+- Result: PASS for repository state; CI qualification is checked separately before subsequent writes.
 
-**Unexpected findings incorporated:**
-- F-002 through F-009 reconstructed from current repository/code/CI evidence rather than conversation memory.
+### Iteration 2 — T-002
 
-**Pre-flight contract:**
-- Root cause: no single repository-owned execution state.
-- Affected invariants: recoverability, task/finding ownership, source-of-truth hierarchy.
-- Change surface: new `MASTER_PLAN.md` only.
-- Protected surface: all Go code, public API, persistence, CI workflows, release workflow.
-- Observable contract: a fresh session can recover priorities/findings/checkpoint from repository.
-- Characterization: `MASTER_PLAN.md` absent on reconstructed baseline.
-- Compatibility: none; documentation/process-only.
-- Failure modes: duplicate roadmap status, stale evidence, overclaiming completed work.
-- Rollback: delete this file and revert commit; no runtime state affected.
-- Verification: fetch file from remote `main`, verify commit/head and internal task/finding consistency.
+Selected task: frozen release metadata resolution.
 
-**Edge-space projection:** repository changed concurrently / stale baseline / missing prior plan / conflicting historical plan / external branch settings. No production runtime edge-space is touched.
+Why now: highest-value source-controlled release correctness issue; T-010 is externally blocked.
 
-**Mutation:** not applicable to documentation-only bootstrap.
+Pre-flight contract:
+- Root cause: security-critical release selection logic lives as untested inline YAML heuristics and diverged from release policy.
+- Invariants: reviewed frozen candidate identity; SemVer integrity; ancestor relation to main; no duplicate remote tag; stable/prerelease classification correctness.
+- Change surface: `scripts/resolve_release_candidate.sh`, `scripts/test_release_candidate.sh`, `.github/workflows/release.yml`, `.github/workflows/ci.yml`, `MASTER_PLAN.md`.
+- Protected surface: Go runtime, public API, stores, persisted formats, ADGO/Flow semantics.
+- Observable contract: manual dispatch targets frozen release branch; tag-trigger metadata marks stable tags stable.
+- Characterization: existing manual path used `git rev-parse HEAD`; existing tag path treats leading `v` as evidence of prerelease.
+- Compatibility: workflow behavior intentionally becomes stricter/fail-closed; runtime/API compatibility unchanged.
+- Failure modes: refspec injection, stale local refs, missing branch, divergent candidate, duplicate tag, malformed SemVer, YAML syntax error.
+- Rollback: revert this single release-tooling commit; no runtime/persisted data affected.
+- Verification: synthetic local bare-remote suite, meaningful test-of-tests mutants, workflow parse sanity, then GitHub CI after push.
 
-**Race/security/performance:** not applicable to production behavior; security/governance findings are recorded without changing policy in this commit.
+Edge-space projection:
+- INPUT: stable/pre-release/build-metadata/malformed/leading-zero numeric prerelease.
+- STATE: missing release branch / existing tag / frozen ancestor / divergent candidate.
+- EXTERNAL STATE: local checkout refs stale or absent; resolver fetches exact remote refs.
+- PERMISSIONS: manual dispatch on non-main fails.
+- PLATFORM: release resolver is intentionally Linux/bash because release job is Ubuntu; consumer/runtime platform matrix remains unchanged.
 
-**Process improvement:** future session recovery is now repository-first and historical roadmaps are demoted to evidence/reference.
+Mutation target:
+- ancestor enforcement removal must be killed;
+- forcing stable tags to prerelease must be killed.
 
-**Commit:** pending
+Local characterization/verification already executed before repository write:
+- release candidate contract: PASS;
+- removed ancestor enforcement mutant: KILLED;
+- forced-prerelease mutant: KILLED.
 
-**Push:** `main`
-
-**Result:** VERIFYING
+Status: IN_PROGRESS — pending final remote synchronization, atomic commit and CI.
+Commit: <this commit>
 
 ---
 
-## 7. Continuation checkpoint
+## 6. Continuation checkpoint
 
-CURRENT HEAD: pending Iteration 1 commit verification
+CURRENT HEAD: synchronize from remote before write; last verified completed-task commit `414f01c84ec215b29784cbfa7e5987cb35cdea41`.
 
-CURRENT QUALIFIED MILESTONE: M0 — trustworthy execution process
+CURRENT QUALIFIED MILESTONE: M1 — release correctness.
 
 ARCHITECTURE:
-- canonical compiled Axiom runtime remains the business/state-machine core;
-- typed Flow remains a separate lightweight reducer surface;
-- ADGO remains a separate durable graph/worker runtime;
-- shared low-level durable primitives may be extracted only after contract inventory.
+- compiled Axiom runtime remains core business/state runtime;
+- Flow remains separate reducer surface;
+- ADGO remains separate durable graph/worker runtime;
+- common durable extraction waits for contract inventory.
 
 CRITICAL INVARIANTS:
-- at-least-once external effects + idempotency/reconciliation;
-- fencing against stale workers;
-- explicit durable plan/schema identity;
-- red-main blocks unrelated changes;
-- no force push;
-- code/tests outrank plans/docs.
+- at-least-once + idempotency/reconciliation;
+- stale-worker fencing;
+- explicit durable identity/schema;
+- code/tests outrank plans;
+- red-main blocks unrelated work;
+- no force push.
 
-COMPLETED THIS ITERATION:
-- T-001 in verification.
+COMPLETED:
+- T-001.
 
-RESOLVED FINDINGS:
-- F-001 when remote commit is confirmed.
-
-OPEN CRITICAL/HIGH FINDINGS:
+OPEN CRITICAL/HIGH:
 - F-002 unprotected main (external);
-- F-003 frozen-SHA release mismatch;
-- F-004 weaker release verification;
-- F-005 duplicate durable primitives without anti-drift boundary;
-- F-006 Flow crash-boundary proof gap;
-- F-007 global gosec exclusions;
-- F-008 no mechanical public API compatibility gate.
+- F-003/F-004/F-010/F-011 release correctness;
+- F-005 duplicate durable primitives;
+- F-006 Flow crash proof;
+- F-007 security suppressions;
+- F-008 API gate.
 
 BLOCKERS:
-- T-010 requires external repository settings; source work can proceed independently.
+- T-010 external repository setting.
 
-NEXT TASK:
-- T-002 — frozen release candidate resolution.
+NEXT TASK AFTER T-002:
+- T-003 — strict release publication and verification parity.
 
 WHY NEXT:
-- it is a high-confidence release correctness root cause, source-controlled, atomic, high blast-radius reduction, and unlocks trustworthy release verification.
+- same high-blast-radius release boundary; T-002 makes candidate identity testable, which unlocks safe publication hardening without mixing concerns.
 
 CRITICAL FILES:
 - `MASTER_PLAN.md`;
 - `.github/workflows/release.yml`;
-- `docs/versioning.md`;
-- `CONTRIBUTING.md`;
-- `DEVELOPMENT.md`.
-
-VERIFICATION COMMANDS / GATES:
-- targeted release metadata tests to be introduced by T-002;
-- normal `go test ./...` / CI when production/release tooling is changed;
-- workflow syntax and current Actions result after push.
+- `.github/workflows/ci.yml`;
+- `scripts/resolve_release_candidate.sh`;
+- `scripts/test_release_candidate.sh`;
+- `docs/versioning.md`.
 
 IMPORTANT DECISIONS:
-- one execution plan only;
-- do not merge Axiom and ADGO engines;
-- release correctness precedes new feature work.
+- release ref input is validated before refspec construction;
+- manual release candidate is a remote frozen branch, not local checkout state;
+- stable tag prerelease state comes from SemVer prerelease component.
 
 REJECTED OPTIONS:
-- continue using `docs/PRODUCTION_STABILIZATION_PLAN.md` as a second active roadmap;
-- fix unrelated documentation/runtime items before closing the release target root cause.
-
-NEW PROCESS LEARNING:
-- plans must contain a repository-resident continuation checkpoint, not rely on conversation history.
+- keep release logic embedded only in YAML;
+- trust locally fetched branch refs without exact fetch;
+- retry/fallback on invalid release metadata.
