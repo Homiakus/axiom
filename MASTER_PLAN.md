@@ -4,7 +4,7 @@ Status: **ACTIVE — authoritative execution source of truth**
 
 Repository: `Homiakus/axiom`  
 Target branch: `main`  
-Last qualified HEAD: `8560aca04db9dde1777d079404ec69d1ce080044`  
+Last qualified HEAD: `685a2b8f478ac57fd90af613f30a684c12c99f0a`  
 Last reconciliation: 2026-08-31
 
 > This file is the only execution roadmap. Historical plans, audits and topic-specific documents are evidence inputs, not parallel execution plans. Observable behavior, reproducible tests, security/correctness invariants and code outrank stale prose.
@@ -49,6 +49,8 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 - Public protocol/version identifiers are not credentials; if a scanner misclassifies one, the exception must not create a blind spot for future credentials.
 - Budget aggregation is fail-closed: invalid, negative, non-finite or overflowing usage from any executed speculative variant invalidates the aggregate instead of silently selecting a winner with partial accounting.
 - Cleanup errors from durable-store initialization and explicit close paths are not silently discarded when they can be returned or joined with the primary failure.
+- Typed numeric boundaries reject sign changes, narrowing overflow and non-finite/out-of-domain float-to-integer conversion rather than accepting Go wraparound semantics.
+- Internal uint32 runtime/compiler IDs may use reviewed narrowing only where their domain is structurally derived from in-memory slice indexes; the exact G115 finding multiset is independently counter-scanned so any expansion fails CI.
 - Parsed syntax is not a runtime guarantee until executable behavior proves it.
 - Cross-platform/race/security/quality gates are never weakened merely to regain green.
 
@@ -56,12 +58,13 @@ Repository/process state:
 
 - `MASTER_PLAN.md` is authoritative; `AGENTS.md` is absent; active instructions are primarily `CONTRIBUTING.md` and `DEVELOPMENT.md`.
 - GitHub reports `main` protection disabled; T-010 remains an external blocker.
-- `8560aca04db9dde1777d079404ec69d1ce080044` is fully qualified: full CI/race, security, quality-loop and module checksum PASS.
+- `685a2b8f478ac57fd90af613f30a684c12c99f0a` is fully qualified: full CI/race, security, quality-loop and module checksum PASS.
 - G404 is enabled repository-wide with one path-scoped, sentinel-constrained deterministic-jitter exception.
 - G101 is enabled repository-wide. `adgo/http_worker.go` has one reviewed path-scoped G101 false positive, but a dedicated counter-scan re-runs G101 on `adgo` and permits exactly one finding tied to `HTTPWorkerProtocolVersion`; any additional G101 finding fails CI.
 - G104 is enabled repository-wide with no path or inline suppressions; ignored-error debt found by exact v2.28.0 characterization was handled directly.
+- G115 is enabled repository-wide. Six real boundary findings were removed; the remaining 16 structurally bounded internal-ID conversions are path-scoped across four files and independently counter-scanned as an exact `5+4+3+4` multiset.
 - Exact gosec v2.28.0 characterization at `aa823e1613a44445fd552a634f8abc399116f39d` measured 92 findings across the then-remaining exclusions: `G104=8`, `G115=22`, `G301=20`, `G302=6`, `G304=18`, `G306=4`, `G703=14`.
-- Current remaining global gosec exclusions: `G115,G301,G302,G304,G306,G703`.
+- Current remaining global gosec exclusions: `G301,G302,G304,G306,G703`.
 - No GitHub Release had been published at the audited baseline.
 
 ---
@@ -103,7 +106,7 @@ Repository/process state:
 **Status:** OPEN  
 **Category:** Security / signal quality  
 **Severity:** High  
-**Remaining global exclusions:** `G115,G301,G302,G304,G306,G703`.  
+**Remaining global exclusions:** `G301,G302,G304,G306,G703`.  
 **Characterization evidence:** exact v2.28.0 informational scan at `aa823e1613a44445fd552a634f8abc399116f39d`: `G104=8`, `G115=22`, `G301=20`, `G302=6`, `G304=18`, `G306=4`, `G703=14`.  
 **Direction:** one rule per atomic iteration, based on actual finding/signal analysis; do not mass-enable noisy rules.
 
@@ -169,6 +172,15 @@ Repository/process state:
 **Root cause:** speculative result selection treated budget accumulation as infallible even though the shared accounting helper is explicitly fallible.  
 **Resolution:** fail immediately when any executed variant returns invalid budget usage; regression test proves an invalid variant cannot produce a speculative winner or partial aggregate. All seven scanner-reported cleanup/close findings were handled directly, and adjacent explicit cleanup discards in Pebble initialization / production construction were joined with their primary failures for consistent semantics.  
 **Qualified commit:** `8560aca04db9dde1777d079404ec69d1ce080044`.
+
+### F-019 — Unchecked numeric narrowing and round-robin counter rollover under G115
+**Status:** RESOLVED by T-044  
+**Category:** Correctness / numeric safety / long-running runtime safety  
+**Severity:** High  
+**Evidence:** exact G115 characterization exposed unsafe `uint64 -> int64`, signed-to-unsigned and narrow destination conversions in `internal/typedconv`, plus `uint64 -> int` narrowing in `Host.Poll`. At counter rollover the former Host expression could narrow `MaxUint64` to `-1` on 64-bit systems and produce a negative order index.  
+**Root cause:** Go conversion semantics were treated as validation at external numeric boundaries, and the round-robin sequence was narrowed before modulo reduction.  
+**Resolution:** typed conversions now validate sign, target width, NaN/Inf and integer domains before assignment; numeric targets bypass unchecked `reflect.Convert`; Host keeps sequence/modulo arithmetic unsigned through indexing. Regression tests cover signed/unsigned/narrow/float boundaries and forced `atomic.Uint64` rollover. The 16 remaining G115 findings are internal IDs structurally derived from bounded in-memory indexes and are accepted only through an exact counter-scan that fails on any changed or additional G115 finding.  
+**Qualified commit:** `685a2b8f478ac57fd90af613f30a684c12c99f0a`.
 
 ---
 
@@ -239,10 +251,26 @@ Acceptance satisfied:
 - exact G104-enabled gosec v2.28.0 scan PASS;
 - security, Linux/macOS/Windows tests, race, lint/fuzz/examples/codegen/downstream/release/benchmark, quality-loop, module checksum and CI Completion Gate all PASS.
 
-#### T-044 — Select and remove the next global gosec exclusion
+#### T-044 — Enable G115 globally and close unsafe numeric boundaries
+**Status:** DONE  
+**Priority:** P1  
+**Finding:** F-019  
+**Implementation/qualified commit:** `685a2b8f478ac57fd90af613f30a684c12c99f0a`.
+
+Acceptance satisfied:
+- G115 removed from global `-exclude`; policy sentinel blocks restoration of a broad G115 exclusion;
+- typed numeric conversion rejects signed/unsigned crossings, target-width overflow and non-finite/out-of-domain float-to-integer conversion;
+- numeric target conversion cannot bypass validation through `reflect.Convert`;
+- Host round-robin performs modulo reduction without `uint64 -> int` narrowing and survives forced counter rollover;
+- no inline G115 suppressions were introduced;
+- only the four reviewed internal compiler/runtime ID paths are G115 path-scoped;
+- `verify_g115_internal_ids.sh` independently re-runs exact gosec v2.28.0 G115 and requires exactly 16 findings with the fixed `5+4+3+4` file multiset; any new or moved G115 finding fails CI;
+- security, Linux/macOS/Windows tests, race, lint/fuzz/examples/codegen/downstream/release/benchmark, Plan & Edge-Space, Boundary Shuffle & Sentinels, module checksum and CI Completion Gate all PASS.
+
+#### T-045 — Select and remove the next global gosec exclusion
 **Status:** READY  
 **Priority:** P1  
-**Evidence available:** `G115=22`, `G301=20`, `G302=6`, `G304=18`, `G306=4`, `G703=14`. Permission rules require an explicit public-artifact vs private-state policy; G703 requires source/sink path-boundary analysis; G115 requires integer-domain proofs rather than blanket casts or suppressions.
+**Evidence available:** `G301=20`, `G302=6`, `G304=18`, `G306=4`, `G703=14`. Permission rules require an explicit public-artifact vs private-state policy; path rules require source/sink trust-boundary analysis. Prefer a rule whose remediation improves a real private-state or path-safety invariant rather than merely changing permissions to satisfy a scanner.
 
 #### T-041 — Supply-chain provenance, remaining workflow permission minimization, container digest pinning
 **Status:** TODO, P2.
@@ -277,6 +305,7 @@ Acceptance satisfied:
 - REJECTED: restore G101 global suppression because one public protocol-version constant is misclassified.
 - REJECTED: path-exclude a G101-bearing credential boundary without an independent counter-scan.
 - REJECTED: suppress G104 cleanup errors or the speculative budget validation error instead of handling them.
+- REJECTED: restore G115 as a broad global exclusion or accept a G115 path exception without an exact independent counter-scan.
 - REJECTED: enable permission/path/integer rules in bulk without classifying their distinct contracts.
 - REJECTED: tag-push as a second release publisher.
 - DEFERRED: generated typed-activity specialization until profiling proves value.
@@ -331,29 +360,38 @@ G404 enabled globally; deterministic retry-jitter exception constrained by execu
 - Qualification: G104-enabled gosec PASS, G101 counter-scan PASS, govulncheck/Gitleaks PASS, Linux/macOS/Windows PASS, race PASS, lint/fuzz/examples/codegen/downstream/release/benchmark PASS, Plan & Edge-Space PASS, Boundary Shuffle & Sentinels PASS, module checksum PASS, CI Completion Gate PASS.
 - Learning: rule-count alone is not the selection criterion; a slightly larger rule set with a real fail-closed defect can have higher engineering value than a smaller set dominated by intentional policy choices.
 
+### Iteration 8 — T-044 implementation and qualification
+- Selected G115 after exact finding review exposed two real boundary classes rather than treating all 22 findings uniformly.
+- `typedconv` now validates sign, target width and float domain before numeric assignment; named numeric types follow the same checked path and unchecked `reflect.Convert` no longer bypasses numeric validation.
+- `Host.Poll` keeps the round-robin sequence unsigned through modulo reduction; a regression test forces `atomic.Uint64` rollover and proves the old negative-index failure mode is gone.
+- The remaining 16 internal compiler/runtime ID conversions are intentionally retained to avoid redundant hot-path checks and public/state type churn; their exact four-file finding multiset is independently counter-scanned and expansion fails CI.
+- Commit `685a2b8f478ac57fd90af613f30a684c12c99f0a`.
+- Qualification: G115-enabled main gosec PASS, G101 counter-scan PASS, G115 internal-ID counter-scan PASS, Gitleaks/govulncheck PASS, Linux/macOS/Windows PASS, race PASS, lint/fuzz/examples/codegen/downstream/release/benchmark PASS, Plan & Edge-Space PASS, Boundary Shuffle & Sentinels PASS, module checksum PASS, CI Completion Gate PASS.
+- Learning: scanner debt should be split into real boundary defects and mechanically constrained invariants; neither blanket suppression nor hot-path checks added solely for SAST are acceptable defaults.
+
 ---
 
 ## 6. Continuation checkpoint
 
-CURRENT QUALIFIED HEAD: `8560aca04db9dde1777d079404ec69d1ce080044`  
-CURRENT QUALIFIED MILESTONE: release correctness closed; deterministic quality gate restored; G404/G101/G104 global suppression debt closed; remaining gosec debt characterized exactly with v2.28.0.
+CURRENT QUALIFIED HEAD: `685a2b8f478ac57fd90af613f30a684c12c99f0a`  
+CURRENT QUALIFIED MILESTONE: release correctness closed; deterministic quality gate restored; G404/G101/G104/G115 broad global suppression debt closed; five gosec rule families remain globally excluded.
 
 OPEN CRITICAL/HIGH:
 - F-002 unprotected `main` — external blocker;
 - F-005 Core/ADGO durable duplication;
 - F-006 Flow crash-boundary proof gap;
-- F-007 remaining global gosec exclusions `G115,G301,G302,G304,G306,G703`;
+- F-007 remaining global gosec exclusions `G301,G302,G304,G306,G703`;
 - F-008 no mechanical API compatibility gate.
 
 NEXT TASK:
-- T-044 — select and qualify the next global gosec exclusion from measured evidence.
+- T-045 — select and qualify the next global gosec exclusion from measured evidence.
 
-SELECTION GUIDANCE FOR T-044:
+SELECTION GUIDANCE FOR T-045:
 - do not choose by finding count alone;
-- G306 has only 4 findings but generated source/benchmark outputs may intentionally be world-readable, so define artifact permission policy before changing modes;
-- G302/G301 similarly require private-state vs public-artifact classification;
-- G115 has 22 high-severity conversion findings and should be selected only with integer-domain/range proofs and tests rather than blanket casts;
-- G703/G304 require path trust-boundary analysis and should not be mass-suppressed by directory.
+- G302/G301 should distinguish private durable/runtime state from intentionally shareable generated artifacts before changing modes;
+- G306 has only four findings, but generated source and benchmark outputs may intentionally be world-readable and therefore need an explicit artifact-permission contract;
+- G703/G304 require path provenance and root-containment analysis, not directory-wide suppression;
+- prefer the next rule where characterization reveals a real confidentiality/path-integrity defect or establishes a reusable permission boundary.
 
 VERIFICATION FOR NEXT ITERATION:
 - exact-rule evidence against current qualified HEAD;
