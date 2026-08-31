@@ -12,9 +12,11 @@ fail() {
 [[ -f "$workflow" ]] || fail "missing workflow: $workflow"
 [[ -f "$runtime" ]] || fail "missing runtime source: $runtime"
 
-if grep -Eq -- '-exclude=[^[:space:]]*G404' "$workflow"; then
-  fail "G404 must not be globally excluded"
-fi
+for rule in G101 G404; do
+  if grep -Eq -- "-exclude=[^[:space:]]*${rule}" "$workflow"; then
+    fail "${rule} must not be globally excluded"
+  fi
+done
 
 grep -Fq -- "-exclude-rules='adgo/runtime\\.go:G404'" "$workflow" || \
   fail "expected path-scoped G404 exception for adgo/runtime.go"

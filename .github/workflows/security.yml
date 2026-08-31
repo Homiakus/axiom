@@ -82,13 +82,14 @@ jobs:
       - name: Run gosec
         shell: bash
         run: |
-          # G404 is enabled repository-wide. adgo/runtime.go has one approved
-          # deterministic retry-jitter use of math/rand. The policy sentinel
-          # above fails if that scoped exception expands without review.
+          # G101 and G404 are enabled repository-wide. adgo/runtime.go has one
+          # approved deterministic retry-jitter use of math/rand. The policy
+          # sentinel above fails if removed rules are globally suppressed again
+          # or if the scoped G404 exception expands without review.
           go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 \
             -exclude-dir=examples \
             -exclude-dir=internal/testutil \
-            -exclude=G101,G104,G115,G301,G302,G304,G306,G703 \
+            -exclude=G104,G115,G301,G302,G304,G306,G703 \
             -exclude-rules='adgo/runtime\.go:G404' \
             -nosec-require-rules \
             -nosec-require-justification \
