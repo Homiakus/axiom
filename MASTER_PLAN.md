@@ -4,7 +4,7 @@ Status: **ACTIVE — authoritative execution source of truth**
 
 Repository: `Homiakus/axiom`  
 Target branch: `main`  
-Last qualified HEAD: `aa823e1613a44445fd552a634f8abc399116f39d`  
+Last qualified HEAD: `8560aca04db9dde1777d079404ec69d1ce080044`  
 Last reconciliation: 2026-08-31
 
 > This file is the only execution roadmap. Historical plans, audits and topic-specific documents are evidence inputs, not parallel execution plans. Observable behavior, reproducible tests, security/correctness invariants and code outrank stale prose.
@@ -56,12 +56,12 @@ Repository/process state:
 
 - `MASTER_PLAN.md` is authoritative; `AGENTS.md` is absent; active instructions are primarily `CONTRIBUTING.md` and `DEVELOPMENT.md`.
 - GitHub reports `main` protection disabled; T-010 remains an external blocker.
-- `aa823e1613a44445fd552a634f8abc399116f39d` is fully qualified: full CI/race, security, quality-loop and module checksum PASS.
+- `8560aca04db9dde1777d079404ec69d1ce080044` is fully qualified: full CI/race, security, quality-loop and module checksum PASS.
 - G404 is enabled repository-wide with one path-scoped, sentinel-constrained deterministic-jitter exception.
 - G101 is enabled repository-wide. `adgo/http_worker.go` has one reviewed path-scoped G101 false positive, but a dedicated counter-scan re-runs G101 on `adgo` and permits exactly one finding tied to `HTTPWorkerProtocolVersion`; any additional G101 finding fails CI.
+- G104 is enabled repository-wide with no path or inline suppressions; ignored-error debt found by exact v2.28.0 characterization was handled directly.
 - Exact gosec v2.28.0 characterization at `aa823e1613a44445fd552a634f8abc399116f39d` measured 92 findings across the then-remaining exclusions: `G104=8`, `G115=22`, `G301=20`, `G302=6`, `G304=18`, `G306=4`, `G703=14`.
-- T-043 selects G104 because its small finding set contains a real fail-closed budget-accounting defect; G306 is smaller but currently dominated by intentional public generated/benchmark file permissions and needs an explicit artifact-permission policy first.
-- After the pending T-043 implementation, intended remaining global gosec exclusions are `G115,G301,G302,G304,G306,G703`.
+- Current remaining global gosec exclusions: `G115,G301,G302,G304,G306,G703`.
 - No GitHub Release had been published at the audited baseline.
 
 ---
@@ -103,7 +103,7 @@ Repository/process state:
 **Status:** OPEN  
 **Category:** Security / signal quality  
 **Severity:** High  
-**Remaining after pending T-043:** `G115,G301,G302,G304,G306,G703`.  
+**Remaining global exclusions:** `G115,G301,G302,G304,G306,G703`.  
 **Characterization evidence:** exact v2.28.0 informational scan at `aa823e1613a44445fd552a634f8abc399116f39d`: `G104=8`, `G115=22`, `G301=20`, `G302=6`, `G304=18`, `G306=4`, `G703=14`.  
 **Direction:** one rule per atomic iteration, based on actual finding/signal analysis; do not mass-enable noisy rules.
 
@@ -162,13 +162,13 @@ Repository/process state:
 **Qualified commit:** `668c8f77f0619aa8b88cc7dc0002d31651deedcf`.
 
 ### F-018 — Speculative budget aggregation ignored validation failure
-**Status:** VERIFYING via T-043  
+**Status:** RESOLVED by T-043  
 **Category:** Correctness / budget safety / security signal  
 **Severity:** High  
-**Evidence:** exact G104 characterization reported `adgo/speculation.go:213` ignoring the return value from `addBudget(&budget, value.result.Budget)`. `addBudget` rejects invalid negative/non-finite usage and arithmetic overflow, so discarding its error allows a speculative winner to be selected after failed budget aggregation.  
+**Evidence:** exact G104 characterization reported `adgo/speculation.go:213` ignoring the return value from `addBudget(&budget, value.result.Budget)`. `addBudget` rejects invalid negative/non-finite usage and arithmetic overflow, so discarding its error allowed a speculative winner to be selected after failed budget aggregation.  
 **Root cause:** speculative result selection treated budget accumulation as infallible even though the shared accounting helper is explicitly fallible.  
-**Resolution under verification:** fail immediately when any executed variant returns invalid budget usage; regression test asserts that an invalid variant cannot produce a speculative winner or partial aggregate. The seven scanner-reported cleanup/close findings are handled directly rather than suppressed, and adjacent explicit cleanup discards in Pebble initialization / production construction are also joined with their primary failures for consistent semantics.  
-**Task:** T-043.
+**Resolution:** fail immediately when any executed variant returns invalid budget usage; regression test proves an invalid variant cannot produce a speculative winner or partial aggregate. All seven scanner-reported cleanup/close findings were handled directly, and adjacent explicit cleanup discards in Pebble initialization / production construction were joined with their primary failures for consistent semantics.  
+**Qualified commit:** `8560aca04db9dde1777d079404ec69d1ce080044`.
 
 ---
 
@@ -223,23 +223,24 @@ Acceptance satisfied:
 - security, full CI/race, quality-loop and module-checksum all PASS.
 
 #### T-043 — Enable G104 globally and close ignored-error findings
-**Status:** VERIFYING  
+**Status:** DONE  
 **Priority:** P1  
 **Finding:** F-018  
 **Characterization commit:** `aa823e1613a44445fd552a634f8abc399116f39d` — exact v2.28.0 scan, fully qualified.  
-**Implementation:** `<this commit>`.
+**Implementation/qualified commit:** `8560aca04db9dde1777d079404ec69d1ce080044`.
 
-Acceptance under verification:
+Acceptance satisfied:
 - G104 removed from global `-exclude` and added to the anti-regression policy sentinel;
 - no G104 path or inline suppressions introduced;
 - speculative budget aggregation fails closed on `addBudget` validation errors;
 - all seven scanner-reported cleanup/close findings are handled directly; adjacent explicit Pebble/production cleanup discards are also eliminated;
-- temporary informational characterization step is removed after evidence capture;
+- temporary informational characterization step removed after evidence capture;
 - focused regression test catches the former ignored-budget error;
-- security, full CI/race, quality-loop and module checksum must all pass.
+- exact G104-enabled gosec v2.28.0 scan PASS;
+- security, Linux/macOS/Windows tests, race, lint/fuzz/examples/codegen/downstream/release/benchmark, quality-loop, module checksum and CI Completion Gate all PASS.
 
 #### T-044 — Select and remove the next global gosec exclusion
-**Status:** BLOCKED on T-043 qualification  
+**Status:** READY  
 **Priority:** P1  
 **Evidence available:** `G115=22`, `G301=20`, `G302=6`, `G304=18`, `G306=4`, `G703=14`. Permission rules require an explicit public-artifact vs private-state policy; G703 requires source/sink path-boundary analysis; G115 requires integer-domain proofs rather than blanket casts or suppressions.
 
@@ -320,38 +321,43 @@ G404 enabled globally; deterministic retry-jitter exception constrained by execu
 - Full CI/race, security, quality-loop and module checksum PASS.
 - Selected G104 because one finding exposed F-018; G306, although smaller, is dominated by intentional public artifact permissions and needs a separate policy.
 
-### Iteration 7A — T-043 implementation
-- G104 removed from global suppression; policy sentinel now prevents G104 from returning to the global exclude list.
+### Iteration 7A — T-043 implementation and qualification
+- G104 removed from global suppression; policy sentinel prevents G104 from returning to the global exclude list.
 - F-018 fixed by propagating `addBudget` validation failure from speculative result selection.
 - Regression test asserts invalid speculative budget cannot produce a winner or partial budget result.
 - Pebble iterator/closer errors are propagated; Pebble/production startup cleanup errors are joined with primary initialization failures.
 - Temporary characterization step removed after evidence capture.
-- Commit: `<this commit>`.
-- Status: VERIFYING — post-push qualification required before T-044 starts.
+- Commit `8560aca04db9dde1777d079404ec69d1ce080044`.
+- Qualification: G104-enabled gosec PASS, G101 counter-scan PASS, govulncheck/Gitleaks PASS, Linux/macOS/Windows PASS, race PASS, lint/fuzz/examples/codegen/downstream/release/benchmark PASS, Plan & Edge-Space PASS, Boundary Shuffle & Sentinels PASS, module checksum PASS, CI Completion Gate PASS.
+- Learning: rule-count alone is not the selection criterion; a slightly larger rule set with a real fail-closed defect can have higher engineering value than a smaller set dominated by intentional policy choices.
 
 ---
 
 ## 6. Continuation checkpoint
 
-CURRENT QUALIFIED HEAD: `aa823e1613a44445fd552a634f8abc399116f39d`  
-CURRENT QUALIFIED MILESTONE: release correctness closed; deterministic quality gate restored; G404/G101 suppression debt closed; remaining gosec debt characterized exactly with v2.28.0.
+CURRENT QUALIFIED HEAD: `8560aca04db9dde1777d079404ec69d1ce080044`  
+CURRENT QUALIFIED MILESTONE: release correctness closed; deterministic quality gate restored; G404/G101/G104 global suppression debt closed; remaining gosec debt characterized exactly with v2.28.0.
 
 OPEN CRITICAL/HIGH:
 - F-002 unprotected `main` — external blocker;
 - F-005 Core/ADGO durable duplication;
 - F-006 Flow crash-boundary proof gap;
-- F-007 remaining global gosec exclusions after pending T-043: `G115,G301,G302,G304,G306,G703`;
-- F-008 no mechanical API compatibility gate;
-- F-018 speculative budget validation propagation — VERIFYING.
+- F-007 remaining global gosec exclusions `G115,G301,G302,G304,G306,G703`;
+- F-008 no mechanical API compatibility gate.
 
-CURRENT TASK:
-- T-043 — post-push qualification of G104 enablement and ignored-error fixes.
+NEXT TASK:
+- T-044 — select and qualify the next global gosec exclusion from measured evidence.
 
-NEXT TASK AFTER GREEN:
-- T-044 — select next gosec rule from already measured evidence, with preference for correctness/security value over raw finding count.
+SELECTION GUIDANCE FOR T-044:
+- do not choose by finding count alone;
+- G306 has only 4 findings but generated source/benchmark outputs may intentionally be world-readable, so define artifact permission policy before changing modes;
+- G302/G301 similarly require private-state vs public-artifact classification;
+- G115 has 22 high-severity conversion findings and should be selected only with integer-domain/range proofs and tests rather than blanket casts;
+- G703/G304 require path trust-boundary analysis and should not be mass-suppressed by directory.
 
-VERIFICATION FOR T-043:
-- focused speculative invalid-budget regression test;
-- G104-enabled exact gosec v2.28.0 scan with no G104 suppressions;
+VERIFICATION FOR NEXT ITERATION:
+- exact-rule evidence against current qualified HEAD;
+- executable regression tests for any real defect;
+- no broad replacement suppression;
 - security workflow;
 - full `ci`, `quality-loop`, `module-checksum` qualification.
