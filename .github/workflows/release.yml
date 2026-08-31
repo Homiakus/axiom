@@ -1,9 +1,6 @@
 name: release
 
 on:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+*'
   workflow_dispatch:
     inputs:
       version:
@@ -39,67 +36,94 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Determine version & commit
+      - name: Determine and validate release candidate
         id: meta
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-              echo "Manual releases must be dispatched from main; got ${GITHUB_REF}." >&2
-              exit 1
-            fi
-            ver="${{ inputs.version }}"
-            pre="${{ inputs.prerelease }}"
-            metadata="$(bash scripts/resolve_release_candidate.sh manual "$ver" origin)"
-            printf '%s\n' "$metadata"
-            resolved_version="$(awk -F= '$1 == "version" {print $2}' <<<"$metadata")"
-            sha="$(awk -F= '$1 == "target_sha" {print $2}' <<<"$metadata")"
-            if [[ "$resolved_version" != "$ver" || -z "$sha" ]]; then
-              echo "Release metadata resolver returned incomplete output." >&2
-              exit 1
-            fi
-          else
-            ver="${GITHUB_REF_NAME}"
-            metadata="$(bash scripts/resolve_release_candidate.sh validate "$ver")"
-            printf '%s\n' "$metadata"
-            pre="$(awk -F= '$1 == "semver_prerelease" {print $2}' <<<"$metadata")"
-            sha="${GITHUB_SHA}"
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Releases must be dispatched from main; got ${GITHUB_REF}." >&2
+            exit 1
           fi
+          ver="${{ inputs.version }}"
+          pre="${{ inputs.prerelease }}"
+          metadata="$(bash scripts/resolve_release_candidate.sh manual "$ver" origin)"
+          printf '%s\n' "$metadata"
+          resolved_version="$(awk -F= '$1 == "version" {print $2}' <<<"$metadata")"
+          sha="$(awk -F= '$1 == "target_sha" {print $2}' <<<"$metadata")"
+          if [[ "$resolved_version" != "$ver" || -z "$sha" ]]; then
+            echo "Release metadata resolver returned incomplete output." >&2
+            exit 1
+          fi
+
+          notes_path="docs/releases/${ver}.md"
+          if ! git cat-file -e "${sha}:${notes_path}" 2>/dev/null; then
+            echo "Release notes are required on the frozen candidate: ${notes_path}" >&2
+            exit 1
+          fi
+          if [[ -z "$(git show "${sha}:${notes_path}" | tr -d '[:space:]')" ]]; then
+            echo "Release notes must not be empty: ${notes_path}" >&2
+            exit 1
+          fi
+
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          set +e
+          http_code="$(curl --silent --show-error --location \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${ver}")"
+          curl_status=$?
+          set -e
+          if [[ $curl_status -ne 0 ]]; then
+            echo "Unable to check existing GitHub Release for ${ver}." >&2
+            cat "$response_file" >&2 || true
+            exit 1
+          fi
+          case "$http_code" in
+            404) ;;
+            200)
+              echo "GitHub Release already exists for ${ver}; refusing implicit overwrite/recovery." >&2
+              exit 1
+              ;;
+            *)
+              echo "Unexpected GitHub API status while checking ${ver}: ${http_code}" >&2
+              cat "$response_file" >&2 || true
+              exit 1
+              ;;
+          esac
+
           echo "version=$ver" >> "$GITHUB_OUTPUT"
           echo "prerelease=$pre" >> "$GITHUB_OUTPUT"
           echo "target_sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "==> Publishing Release: $ver at commit $sha (prerelease=$pre)"
+          echo "==> Qualified release candidate: $ver at $sha (prerelease=$pre)"
 
   verify:
-    name: Full Release Pre-Verification
+    name: Full Release CI Verification
     needs: resolve-metadata
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout exact release commit
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          ref: ${{ needs.resolve-metadata.outputs.target_sha }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.resolve-metadata.outputs.target_sha }}
 
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.26.x'
-          cache: true
-
-      - name: Run verification checks
-        shell: bash
-        run: |
-          set -euo pipefail
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
-          go vet ./...
-          go test ./...
-          go test -race . ./internal/runtime/... ./internal/store/...
+  security-verify:
+    name: Full Release Security Verification
+    needs: resolve-metadata
+    permissions:
+      contents: read
+    uses: ./.github/workflows/security.yml
+    with:
+      ref: ${{ needs.resolve-metadata.outputs.target_sha }}
 
   build-binaries:
     name: Cross-Compile Binaries (${{ matrix.os }}/${{ matrix.arch }})
-    needs: [resolve-metadata, verify]
+    needs: [resolve-metadata, verify, security-verify]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -208,7 +232,7 @@ jobs:
 
   docker-publish:
     name: Build & Publish Container Images
-    needs: [resolve-metadata, verify]
+    needs: [resolve-metadata, verify, security-verify]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout release commit
@@ -256,10 +280,11 @@ jobs:
     needs: [resolve-metadata, sbom-and-checksums, docker-publish]
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout exact release commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.resolve-metadata.outputs.target_sha }}
+          fetch-depth: 0
 
       - name: Download complete release bundle
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -267,25 +292,29 @@ jobs:
           name: complete-release-bundle
           path: dist-release/
 
-      - name: Publish GitHub Release
+      - name: Publish exact frozen release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.resolve-metadata.outputs.version }}
           PRERELEASE: ${{ needs.resolve-metadata.outputs.prerelease }}
+          TARGET_SHA: ${{ needs.resolve-metadata.outputs.target_sha }}
         shell: bash
         run: |
           set -euo pipefail
           notes_file="docs/releases/${VERSION}.md"
-          flags=(--title "Axiom ${VERSION}")
-          if [[ -f "$notes_file" ]]; then
-            flags+=(--notes-file "$notes_file")
-          else
-            flags+=(--generate-notes)
-          fi
+          test -s "$notes_file"
+
+          flags=(--title "Axiom ${VERSION}" --notes-file "$notes_file" --target "$TARGET_SHA")
           if [[ "$PRERELEASE" == "true" ]]; then
             flags+=(--prerelease)
           fi
 
-          # Create or edit release
-          gh release create "$VERSION" dist-release/* "${flags[@]}" || \
-          gh release upload "$VERSION" dist-release/* --clobber
+          gh release create "$VERSION" dist-release/* "${flags[@]}"
+
+          git fetch --quiet --force origin "refs/tags/${VERSION}:refs/tags/${VERSION}"
+          resolved_tag_sha="$(git rev-parse "refs/tags/${VERSION}^{commit}")"
+          if [[ "$resolved_tag_sha" != "$TARGET_SHA" ]]; then
+            echo "Published tag ${VERSION} points to ${resolved_tag_sha}, expected ${TARGET_SHA}." >&2
+            exit 1
+          fi
+          echo "Verified release tag ${VERSION} -> ${resolved_tag_sha}"

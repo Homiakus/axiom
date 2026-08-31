@@ -40,36 +40,41 @@ The following are not compatibility promises:
 Before creating a release tag:
 
 1. `go mod tidy` leaves `go.mod`/`go.sum` unchanged;
-2. `go test ./...` passes;
-3. critical packages pass under `go test -race`;
-4. `go vet ./...` passes;
-5. `govulncheck` passes or every accepted finding is documented;
+2. `go test ./...` passes on the normal supported CI matrix;
+3. `go test -race ./...` passes in the normal CI verification DAG;
+4. `go vet ./...` and linting pass;
+5. `govulncheck`, Gitleaks and gosec pass under the current security workflow or every explicitly accepted finding is documented;
 6. parser/TRIZ fuzz smoke tests pass;
 7. the external-consumer CI test passes;
-8. runnable examples and documented generator commands pass;
+8. runnable examples and generated-wrapper verification pass;
 9. public API/runtime changes are described in `CHANGELOG.md` and release notes;
-10. benchmark regressions are reviewed rather than silently accepted.
+10. benchmark regression smoke passes and material benchmark changes are reviewed.
 
-Each version must have release notes at `docs/releases/<version>.md`.
+Each version must have non-empty release notes at `docs/releases/<version>.md` **inside the frozen release candidate commit**.
 
 ## Publishing through GitHub Actions
 
-The repository provides `.github/workflows/release.yml` with a manual `workflow_dispatch` entry point.
+`.github/workflows/release.yml` intentionally has one publication entry point: manual `workflow_dispatch` from `main`.
 
-A release is published from a **frozen release branch** so later commits to `main` cannot silently change the contents of an already-reviewed release candidate.
+A release is published from a **frozen release branch** so later commits to `main` cannot silently change the reviewed candidate, while release tooling itself always comes from the current protected/hardened `main` workflow definition. Tag-push is deliberately not a publication trigger because GitHub runs the workflow version stored at the event ref; an old frozen tag must not be able to select obsolete release tooling.
 
 To publish a version:
 
-1. merge the release candidate into `main` and confirm its normal CI is green;
+1. merge the release candidate into `main` and confirm normal CI/security are green;
 2. create `release/<version>` at the exact reviewed commit, for example `release/v0.1.0`;
-3. keep `docs/releases/<version>.md` on `main`;
+3. ensure `docs/releases/<version>.md` is non-empty in that frozen commit;
 4. open **Actions -> release -> Run workflow** on `main`;
-5. enter a pre-v1 SemVer tag such as `v0.1.0` and choose prerelease status;
-6. the workflow resolves `release/<version>`, verifies that commit is an ancestor of `main`, then checks out the frozen SHA;
-7. it re-runs module consistency, `go test ./...`, and `go vet ./...` on that frozen candidate;
-8. on success, `gh release create` creates the tag at the frozen SHA and publishes the GitHub Release using `docs/releases/<version>.md` from release tooling on `main`.
+5. enter the SemVer tag and desired GitHub prerelease flag;
+6. the workflow validates the version before using it in refs, fetches the exact remote `main` and `release/<version>` refs, rejects an existing remote tag, and requires the candidate to be an ancestor of remote `main`;
+7. it rejects missing/empty candidate release notes and an already existing GitHub Release;
+8. the current reusable `ci` and `security` workflows are called with the frozen candidate SHA so release verification cannot silently become weaker than the normal verification DAG;
+9. binaries, SBOM and checksums are built from that exact SHA;
+10. `gh release create --target <frozen-sha>` creates the release exactly once using the candidate release notes; there is no generated-notes or upload/clobber fallback;
+11. after publication the workflow fetches the created tag, resolves it to a commit, and fails unless it equals the frozen candidate SHA.
 
-The workflow refuses malformed versions, duplicate tags, missing release notes, missing frozen branches, candidates that are not ancestors of `main`, and dispatches from a branch other than `main`.
+A failed release is not implicitly repaired by overwriting an existing release or assets. Recovery requires an explicit future recovery procedure/task so the exceptional path is reviewable instead of hidden inside the normal publisher.
+
+The workflow refuses malformed versions, duplicate tags, existing releases, missing/empty release notes, missing frozen branches, candidates that are not ancestors of `main`, and dispatches from a ref other than `main`.
 
 ## v0.1.0 release checklist
 
@@ -85,8 +90,8 @@ The workflow refuses malformed versions, duplicate tags, missing release notes, 
 - [x] Current usability audit exists and the July report is marked superseded.
 - [x] `CHANGELOG.md` and `docs/releases/v0.1.0.md` are prepared.
 - [x] Release-readiness PR is merged into `main` with green CI.
-- [x] Frozen `release/v0.1.0` branch exists at the reviewed baseline.
-- [ ] `release` workflow is executed for `v0.1.0`.
+- [x] Frozen `release/v0.1.0` branch exists at the reviewed baseline and contains its release notes.
+- [ ] `release` workflow is executed for `v0.1.0` after current release-hardening gates are green.
 
 Changes merged after the frozen candidate, including durable retry, runtime-query validation, and task supersession, belong to `Unreleased` and do not retroactively change the `v0.1.0` contract.
 
@@ -110,11 +115,4 @@ Completed after the frozen v0.1.0 baseline:
 - stable runtime-query namespace validation on canonical Plan/Open/New paths;
 - transactional pending-task supersession for `concurrency: first/latest`.
 
-Next priorities:
-
-1. runtime policy `catch:` dispatch;
-2. wall-clock timer scheduler contract;
-3. AXM multi-file import resolver/linker;
-4. distributed execution ownership/coordination contract;
-5. operational recovery tooling/runbook for stuck leases and failed executions;
-6. root public API classification and cleanup before `v1.0.0`.
+The authoritative implementation backlog now lives only in [`../MASTER_PLAN.md`](../MASTER_PLAN.md). Historical priority lists in older documents are reference material, not a second execution roadmap.
