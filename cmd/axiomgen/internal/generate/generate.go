@@ -412,8 +412,9 @@ func mergeActivityStubs(target string, newStubs []byte) (bool, error) {
 		return false, nil // nothing to add
 	}
 
-	// Append new methods at the end of the file.
-	f, err := os.OpenFile(target, os.O_APPEND|os.O_WRONLY, 0o644)
+	// Append new methods at the end of the file. No O_CREATE flag is used, so
+	// the mode argument is intentionally zero: existing permissions are preserved.
+	f, err := os.OpenFile(target, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		return false, err
 	}

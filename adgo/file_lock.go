@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+const privateLockFileMode = 0o600
+
 type fileLockRecord struct {
 	Owner      string    `json:"owner"`
 	AcquiredAt time.Time `json:"acquiredAt"`
@@ -66,7 +68,7 @@ func withOwnedFileLock(ctx context.Context, locksDir, filename string, staleAfte
 		return err
 	}
 	for {
-		file, openErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		file, openErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, privateLockFileMode)
 		if openErr == nil {
 			record := fileLockRecord{Owner: owner, AcquiredAt: time.Now().UTC()}
 			if err := writeFileLockRecord(file, record); err != nil {

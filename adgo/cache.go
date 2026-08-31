@@ -263,7 +263,7 @@ func (c *FileActivityCache) withLock(ctx context.Context, key string, fn func() 
 	sum := sha256.Sum256([]byte(key))
 	path := filepath.Join(locks, "cache-"+hex.EncodeToString(sum[:12])+".lock")
 	for {
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, privateLockFileMode)
 		if err == nil {
 			_, _ = fmt.Fprintf(file, "%d\n", time.Now().UTC().UnixNano())
 			_ = file.Sync()

@@ -370,7 +370,7 @@ func (s *FileStore) withExecutionLock(ctx context.Context, id string, fn func() 
 		return err
 	}
 	for {
-		f, openErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		f, openErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, privateLockFileMode)
 		if openErr == nil {
 			record := fileLockRecord{Owner: owner, AcquiredAt: time.Now().UTC()}
 			if err := writeFileLockRecord(f, record); err != nil {

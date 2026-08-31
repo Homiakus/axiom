@@ -254,7 +254,7 @@ func (s *FileScheduleStore) withLock(ctx context.Context, id string, fn func() e
 	lockDir := filepath.Join(s.root, "locks")
 	path := filepath.Join(lockDir, "schedule-"+safeName(id)+".lock")
 	for {
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, privateLockFileMode)
 		if err == nil {
 			_, _ = fmt.Fprintf(file, "%d\n", time.Now().UTC().UnixNano())
 			_ = file.Sync()
