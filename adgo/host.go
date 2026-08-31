@@ -20,11 +20,11 @@ type PlanRef struct {
 // executions pinned to many immutable plan versions while workers poll them
 // through a single process-level API.
 type Host struct {
-	store Store
-	mu    sync.RWMutex
+	store    Store
+	mu       sync.RWMutex
 	byDigest map[string]*Engine
-	order []string
-	next atomic.Uint64
+	order    []string
+	next     atomic.Uint64
 }
 
 func NewHost(store Store) (*Host, error) {
@@ -138,6 +138,13 @@ type HostedWorkItem struct {
 	Work       *WorkItem `json:"work"`
 }
 
+func hostRoundRobinSlot(sequence uint64, count uint64) uint64 {
+	if count == 0 {
+		return 0
+	}
+	return sequence % count
+}
+
 // Poll performs round-robin fairness across registered plan versions. Fairness
 // within one plan is handled by Engine.Poll's execution aging/utility score.
 func (h *Host) Poll(ctx context.Context, spec WorkerSpec) (*HostedWorkItem, error) {
@@ -151,9 +158,10 @@ func (h *Host) Poll(ctx context.Context, spec WorkerSpec) (*HostedWorkItem, erro
 	if len(order) == 0 {
 		return nil, ErrNoWork
 	}
-	start := int(h.next.Add(1)-1) % len(order)
-	for i := 0; i < len(order); i++ {
-		digest := order[(start+i)%len(order)]
+	count := uint64(len(order))
+	start := hostRoundRobinSlot(h.next.Add(1)-1, count)
+	for offset := uint64(0); offset < count; offset++ {
+		digest := order[(start+offset)%count]
 		work, err := engines[digest].Poll(ctx, spec)
 		if err == nil {
 			return &HostedWorkItem{PlanDigest: digest, Work: work}, nil
@@ -203,7 +211,7 @@ func (h *Host) RunCoordinator(ctx context.Context) error {
 		for _, id := range ids {
 			engine, execution, err := h.engineForExecution(ctx, id)
 			if err != nil {
-				continue // an execution may belong to a plan version not loaded in this host
+				continue
 			}
 			if terminal(execution.Status) {
 				continue

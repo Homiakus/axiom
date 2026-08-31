@@ -82,15 +82,14 @@ jobs:
       - name: Run gosec
         shell: bash
         run: |
-          # G101, G104 and G404 are enabled repository-wide. Two reviewed false
-          # positives are path-scoped here, then separately constrained by
-          # executable checks: deterministic retry jitter (G404) and the public
-          # HTTP protocol version (G101).
+          # G101, G104, G115 and G404 are enabled repository-wide. Reviewed
+          # false positives / structurally bounded internal conversions are
+          # path-scoped here and independently constrained by executable checks.
           go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 \
             -exclude-dir=examples \
             -exclude-dir=internal/testutil \
-            -exclude=G115,G301,G302,G304,G306,G703 \
-            -exclude-rules='adgo/runtime\.go:G404;adgo/http_worker\.go:G101' \
+            -exclude=G301,G302,G304,G306,G703 \
+            -exclude-rules='adgo/runtime\.go:G404;adgo/http_worker\.go:G101;internal/runtime/fast_vm\.go:G115;internal/runtime/expr_vm\.go:G115;internal/runtime/engine\.go:G115;internal/compiler/module\.go:G115' \
             -nosec-require-rules \
             -nosec-require-justification \
             -fmt=text \
@@ -99,3 +98,7 @@ jobs:
       - name: Verify scoped G101 false positive
         shell: bash
         run: bash scripts/verify_g101_false_positive.sh
+
+      - name: Verify scoped G115 internal ID conversions
+        shell: bash
+        run: bash scripts/verify_g115_internal_ids.sh

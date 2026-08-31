@@ -3,6 +3,7 @@ package typedconv
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -139,7 +140,6 @@ func buildInputFields(structType reflect.Type, baseIndex []int) ([]fieldInputPla
 
 		fieldIdx := append(append([]int(nil), baseIndex...), i)
 
-		// Handle anonymous embedded struct without explicit tag
 		axiomTag := sf.Tag.Get("axiom")
 		jsonTag := sf.Tag.Get("json")
 		if sf.Anonymous && sf.Type.Kind() == reflect.Struct && axiomTag == "" && (jsonTag == "" || jsonTag == ",inline") {
@@ -160,7 +160,6 @@ func buildInputFields(structType reflect.Type, baseIndex []int) ([]fieldInputPla
 			continue
 		}
 
-		// Candidate keys for matching input
 		keys := []string{tagKey}
 		lowerKey := toLowerCamel(sf.Name)
 		if lowerKey != tagKey && lowerKey != "-" {
@@ -233,7 +232,9 @@ func buildFieldSetter(targetType reflect.Type) (fieldSetter, *inputPlan, error) 
 				s = fmt.Sprintf("%v", v)
 			}
 			if isPtr {
-				target.Set(reflect.ValueOf(&s))
+				ptr := reflect.New(curr)
+				ptr.Elem().SetString(s)
+				target.Set(ptr)
 			} else {
 				target.SetString(s)
 			}
@@ -257,7 +258,9 @@ func buildFieldSetter(targetType reflect.Type) (fieldSetter, *inputPlan, error) 
 				return fmt.Errorf("cannot convert %T to bool", raw)
 			}
 			if isPtr {
-				target.Set(reflect.ValueOf(&b))
+				ptr := reflect.New(curr)
+				ptr.Elem().SetBool(b)
+				target.Set(ptr)
 			} else {
 				target.SetBool(b)
 			}
@@ -273,12 +276,17 @@ func buildFieldSetter(targetType reflect.Type) (fieldSetter, *inputPlan, error) 
 			if err != nil {
 				return err
 			}
+			value := reflect.New(curr).Elem()
+			if value.OverflowInt(n) {
+				return fmt.Errorf("value %v overflows %s", raw, curr)
+			}
+			value.SetInt(n)
 			if isPtr {
 				ptr := reflect.New(curr)
-				ptr.Elem().SetInt(n)
+				ptr.Elem().Set(value)
 				target.Set(ptr)
 			} else {
-				target.SetInt(n)
+				target.Set(value)
 			}
 			return nil
 		}, nil, nil
@@ -292,12 +300,17 @@ func buildFieldSetter(targetType reflect.Type) (fieldSetter, *inputPlan, error) 
 			if err != nil {
 				return err
 			}
+			value := reflect.New(curr).Elem()
+			if value.OverflowUint(n) {
+				return fmt.Errorf("value %v overflows %s", raw, curr)
+			}
+			value.SetUint(n)
 			if isPtr {
 				ptr := reflect.New(curr)
-				ptr.Elem().SetUint(n)
+				ptr.Elem().Set(value)
 				target.Set(ptr)
 			} else {
-				target.SetUint(n)
+				target.Set(value)
 			}
 			return nil
 		}, nil, nil
@@ -311,12 +324,17 @@ func buildFieldSetter(targetType reflect.Type) (fieldSetter, *inputPlan, error) 
 			if err != nil {
 				return err
 			}
+			value := reflect.New(curr).Elem()
+			if value.OverflowFloat(f) {
+				return fmt.Errorf("value %v overflows %s", raw, curr)
+			}
+			value.SetFloat(f)
 			if isPtr {
 				ptr := reflect.New(curr)
-				ptr.Elem().SetFloat(f)
+				ptr.Elem().Set(value)
 				target.Set(ptr)
 			} else {
-				target.SetFloat(f)
+				target.Set(value)
 			}
 			return nil
 		}, nil, nil
@@ -332,7 +350,6 @@ func buildFieldSetter(targetType reflect.Type) (fieldSetter, *inputPlan, error) 
 			}
 			m, ok := raw.(map[string]any)
 			if !ok {
-				// Fallback to JSON conversion if not a map[string]any
 				data, err := json.Marshal(raw)
 				if err != nil {
 					return err
@@ -438,7 +455,7 @@ func buildFieldSetter(targetType reflect.Type) (fieldSetter, *inputPlan, error) 
 			return nil
 		}, nil, nil
 
-	default: // reflect.Interface or any
+	default:
 		return func(target reflect.Value, raw any) error {
 			if raw != nil {
 				target.Set(reflect.ValueOf(raw))
@@ -456,11 +473,9 @@ func convertValue(raw any, targetType reflect.Type) (reflect.Value, error) {
 	if rawVal.Type().AssignableTo(targetType) {
 		return rawVal, nil
 	}
-	if rawVal.Type().ConvertibleTo(targetType) {
-		return rawVal.Convert(targetType), nil
-	}
 
-	// Fallback conversion for numbers
+	// Numeric targets must never use reflect.Convert: Go permits narrowing and
+	// signed/unsigned wraparound there. Normalize through checked coercion first.
 	switch targetType.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		n, err := coerceToInt64(raw)
@@ -468,6 +483,9 @@ func convertValue(raw any, targetType reflect.Type) (reflect.Value, error) {
 			return reflect.Value{}, err
 		}
 		res := reflect.New(targetType).Elem()
+		if res.OverflowInt(n) {
+			return reflect.Value{}, fmt.Errorf("value %v overflows %s", raw, targetType)
+		}
 		res.SetInt(n)
 		return res, nil
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
@@ -476,6 +494,9 @@ func convertValue(raw any, targetType reflect.Type) (reflect.Value, error) {
 			return reflect.Value{}, err
 		}
 		res := reflect.New(targetType).Elem()
+		if res.OverflowUint(n) {
+			return reflect.Value{}, fmt.Errorf("value %v overflows %s", raw, targetType)
+		}
 		res.SetUint(n)
 		return res, nil
 	case reflect.Float32, reflect.Float64:
@@ -484,9 +505,17 @@ func convertValue(raw any, targetType reflect.Type) (reflect.Value, error) {
 			return reflect.Value{}, err
 		}
 		res := reflect.New(targetType).Elem()
+		if res.OverflowFloat(f) {
+			return reflect.Value{}, fmt.Errorf("value %v overflows %s", raw, targetType)
+		}
 		res.SetFloat(f)
 		return res, nil
-	case reflect.String:
+	}
+
+	if rawVal.Type().ConvertibleTo(targetType) {
+		return rawVal.Convert(targetType), nil
+	}
+	if targetType.Kind() == reflect.String {
 		res := reflect.New(targetType).Elem()
 		res.SetString(fmt.Sprintf("%v", raw))
 		return res, nil
@@ -504,82 +533,66 @@ func convertValue(raw any, targetType reflect.Type) (reflect.Value, error) {
 }
 
 func coerceToInt64(raw any) (int64, error) {
-	switch v := raw.(type) {
-	case int:
-		return int64(v), nil
-	case int64:
-		return v, nil
-	case int32:
-		return int64(v), nil
-	case int16:
-		return int64(v), nil
-	case int8:
-		return int64(v), nil
-	case uint:
-		return int64(v), nil
-	case uint64:
-		return int64(v), nil
-	case uint32:
-		return int64(v), nil
-	case uint16:
-		return int64(v), nil
-	case uint8:
-		return int64(v), nil
-	case float64:
-		return int64(v), nil
-	case float32:
-		return int64(v), nil
-	case json.Number:
-		return v.Int64()
-	case string:
-		return strconv.ParseInt(v, 10, 64)
+	value := reflect.ValueOf(raw)
+	switch value.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return value.Int(), nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		n := value.Uint()
+		if n > math.MaxInt64 {
+			return 0, fmt.Errorf("cannot coerce %T (%v) to int64: out of range", raw, raw)
+		}
+		return int64(n), nil
+	case reflect.Float32, reflect.Float64:
+		n := value.Float()
+		limit := math.Exp2(63)
+		if math.IsNaN(n) || math.IsInf(n, 0) || n < -limit || n >= limit {
+			return 0, fmt.Errorf("cannot coerce %T (%v) to int64: out of range", raw, raw)
+		}
+		return int64(n), nil
+	case reflect.String:
+		return strconv.ParseInt(value.String(), 10, 64)
 	default:
 		return 0, fmt.Errorf("cannot coerce %T (%v) to int64", raw, raw)
 	}
 }
 
 func coerceToUint64(raw any) (uint64, error) {
-	switch v := raw.(type) {
-	case uint:
-		return uint64(v), nil
-	case uint64:
-		return v, nil
-	case uint32:
-		return uint64(v), nil
-	case uint16:
-		return uint64(v), nil
-	case uint8:
-		return uint64(v), nil
-	case int:
-		return uint64(v), nil
-	case int64:
-		return uint64(v), nil
-	case float64:
-		return uint64(v), nil
-	case json.Number:
-		n, err := v.Int64()
-		return uint64(n), err
-	case string:
-		return strconv.ParseUint(v, 10, 64)
+	value := reflect.ValueOf(raw)
+	switch value.Kind() {
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return value.Uint(), nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		n := value.Int()
+		if n < 0 {
+			return 0, fmt.Errorf("cannot coerce %T (%v) to uint64: negative value", raw, raw)
+		}
+		return uint64(n), nil
+	case reflect.Float32, reflect.Float64:
+		n := value.Float()
+		limit := math.Exp2(64)
+		if math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n >= limit {
+			return 0, fmt.Errorf("cannot coerce %T (%v) to uint64: out of range", raw, raw)
+		}
+		return uint64(n), nil
+	case reflect.String:
+		return strconv.ParseUint(value.String(), 10, 64)
 	default:
 		return 0, fmt.Errorf("cannot coerce %T (%v) to uint64", raw, raw)
 	}
 }
 
 func coerceToFloat64(raw any) (float64, error) {
-	switch v := raw.(type) {
-	case float64:
-		return v, nil
-	case float32:
-		return float64(v), nil
-	case int:
-		return float64(v), nil
-	case int64:
-		return float64(v), nil
-	case json.Number:
-		return v.Float64()
-	case string:
-		return strconv.ParseFloat(v, 64)
+	value := reflect.ValueOf(raw)
+	switch value.Kind() {
+	case reflect.Float32, reflect.Float64:
+		return value.Float(), nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return float64(value.Int()), nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return float64(value.Uint()), nil
+	case reflect.String:
+		return strconv.ParseFloat(value.String(), 64)
 	default:
 		return 0, fmt.Errorf("cannot coerce %T (%v) to float64", raw, raw)
 	}
