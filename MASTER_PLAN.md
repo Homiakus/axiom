@@ -4,7 +4,7 @@ Status: **ACTIVE — authoritative execution source of truth**
 
 Repository: `Homiakus/axiom`  
 Target branch: `main`  
-Last qualified implementation HEAD: `03c6d6e9d8e2058335885eaccdc5c6ee3aac0c34`  
+Last qualified implementation HEAD: `5e8046f226a00024d59f4b8e884421f99d4c2b59`  
 Last reconciliation: 2026-09-01
 
 > This file is the only execution roadmap. Historical audits and topic-specific plans are evidence inputs, not parallel roadmaps. Observable behavior, reproducible tests, security/correctness invariants and code outrank stale prose.
@@ -39,6 +39,7 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 - Typed `Flow` and `adgo` remain separate orchestration surfaces; do not merge them into a mega-runtime.
 - Share only behavior-identical low-level durable primitives after executable characterization.
 - The shared semantic-time leaf is `internal/durabletime.NowSource { Now() time.Time }`; timer ownership remains an explicitly richer concern and does not leak into now-only engine clocks.
+- Retry/backoff arithmetic remains engine-owned unless exact output equivalence is executable proof: Core currently uses exact integer `time.Duration` growth with a hard 30 s cap and no jitter; ADGO uses configurable caps, `float64` growth and deterministic jitter.
 - External effects are **at-least-once**, never falsely exactly-once; idempotency and reconciliation are explicit.
 - Durable intents/tasks are persisted before external execution where required.
 - Durable Flow state + `EventHandled` + `EffectPending[]` are atomically and synchronously committed before effect delivery.
@@ -74,9 +75,10 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 
 - `MASTER_PLAN.md` is authoritative; active repository instructions are primarily `CONTRIBUTING.md` and `DEVELOPMENT.md`.
 - GitHub reports `main` protection disabled; T-010 remains an external blocker.
-- `03c6d6e9d8e2058335885eaccdc5c6ee3aac0c34` is fully push-qualified: `ci`, `security`, `quality-loop`, and `module-checksum` PASS; qualification PR #38 also passed the exact T-021 head before fast-forward to `main`.
+- `5e8046f226a00024d59f4b8e884421f99d4c2b59` is fully push-qualified: `ci`, `security`, `quality-loop`, and `module-checksum` PASS; qualification PR #40 also passed exact-head CI/security/quality-loop, full race, changed-code mutation and Boundary Shuffle before fast-forward to `main`.
 - T-020 durable-primitives inventory is complete; its semantic-time boundary audit exposed F-026, which was fixed forward rather than hidden or rerun away.
 - T-021 established the first intentionally tiny shared durable leaf: `durabletime.NowSource`; Core and ADGO retain their package-local minimal `Clock` contracts and timer-capable `durabletime.Clock` remains richer.
+- T-022 retry/backoff characterization proved the two engines' delay arithmetic is not behavior-identical: Core exact integer duration doubling + hard cap differs from ADGO configurable `float64` growth + deterministic jitter; the current retry/backoff implementation is therefore `KEEP SEPARATE`.
 - Security workflow has **zero global gosec `-exclude=<rule>` suppressions**.
 - G404/G101/G104/G115/G302/G301/G306/G703/G304 are enabled repository-wide; reviewed exceptions/findings are mechanically constrained by exact counter-scans/source sentinels where required.
 - Current intentional scanner contracts include: G115 `5+4+3+4` internal-ID conversions; one G301 public codegen directory; four G306 public artifacts; 14 reviewed G703 path-provenance findings; 17 reviewed G304 arbitrary/confined path findings after removal of the real artifact traversal defect.
@@ -103,11 +105,11 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 **Status:** RESOLVED by T-003/T-004.
 
 ### F-005 — Core and ADGO duplicate durable primitives without executable anti-drift boundary
-**Status:** OPEN / narrowed by T-020 and T-021  
+**Status:** OPEN / narrowed by T-020/T-021/T-022 characterization  
 **Category:** Architecture  
 **Severity:** High  
 **Remaining tasks:** T-022/T-023.  
-**Progress:** T-020 separated false duplication from behavior-identical candidates; T-021 established the acyclic `durabletime.NowSource` leaf without merging engines, stores, retry controllers, worker state machines, schemas or public error policy.
+**Progress:** T-020 separated false duplication from behavior-identical candidates; T-021 established the acyclic `durabletime.NowSource` leaf without merging engines, stores, retry controllers, worker state machines, schemas or public error policy. T-022 retry characterization at `5e8046f226a00024d59f4b8e884421f99d4c2b59` proved retry/backoff arithmetic is not behavior-identical, so that candidate is now `KEEP SEPARATE`; lease/fencing predicates are the next characterization target.
 
 ### F-006 — Durable Flow crash boundaries lacked comprehensive equivalence proof
 **Status:** RESOLVED by T-030/T-031/T-032  
@@ -257,7 +259,7 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 
 - **T-020 — inventory Core vs ADGO durable primitive contracts: DONE**, artifact commits `02d58637f4c3bf71142421cb35c5174b52db9795` / `fbebebf0f2ec49dcec803ca0e801f7d8a5aeefcd`; forward semantic-time recovery closed by F-026 at `e6a7991b5010bd39875b8f7256850d462c2a0bc6`.
 - **T-021 — define acyclic shared durable boundary: DONE**, implementation `ed44183d48db9e797357d73cbe8a2c0d3a7c951c`, contract tests / qualified HEAD `03c6d6e9d8e2058335885eaccdc5c6ee3aac0c34`, PR #38 and all push gates PASS.
-- **T-022 — extract behavior-identical pure primitives: READY**, P2, depends T-021. First selected sub-step is retry/backoff **characterization**, not extraction by assumption: prove Core fixed/exponential/cap behavior and ADGO exponential/max-delay/deterministic-jitter behavior at attempt/cap/overflow boundaries. Extract only the smallest pure arithmetic helper whose outputs remain exactly engine-equivalent; keep `NextAttemptAt`, history, failure classes, `RetryAfter`, budgets, scheduling and retry state machines engine-owned.
+- **T-022 — extract behavior-identical pure primitives: IN_PROGRESS**, P2, depends T-021. Retry/backoff characterization is DONE at `5e8046f226a00024d59f4b8e884421f99d4c2b59` / PR #40 and proves `KEEP SEPARATE`: Core uses exact integer duration arithmetic, fixed/exponential policy and a hard 30 s cap; ADGO uses configurable max delay, `float64` exponential arithmetic and deterministic identity-seeded jitter, including an executable `2^53+1 ns` precision sentinel. No shared retry helper, controller, `NextAttemptAt`, history, failure class, `RetryAfter`, budget or scheduler state is authorized. **Next selected sub-step:** characterize lease/fencing predicates at exact expiry, zero lease, wrong worker/attempt, reissue and clock-domain boundaries before considering any shared predicate.
 - **T-023 — architecture anti-drift tests: TODO**, P2, depends T-021; after each successful T-022 extraction, prevent engine-local reimplementation and preserve the leaf dependency direction.
 
 ### M4 — Security boundary reduction
@@ -304,7 +306,7 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 - REJECTED: expose a public failpoint API before a stable external testing contract is justified.
 - REJECTED: pretend `MemoryFlowStore` provides crash durability for backend-equivalence tests.
 - REJECTED: replace deterministic retry jitter with cryptographic randomness merely to silence SAST.
-- REJECTED: unify Core and ADGO retry controllers/policies merely because both use exponential backoff; only proven behavior-identical pure arithmetic may be shared.
+- REJECTED: unify Core and ADGO retry controllers/policies/backoff arithmetic merely because both use exponential language; T-022 executable characterization proved their current outputs are not behavior-identical.
 - REJECTED: restore any global gosec rule exclusion after characterization.
 - REJECTED: path-exclude a security boundary without an independent raw counter-scan.
 - REJECTED: make generated/public artifacts private merely to satisfy permission scanners.
@@ -331,3 +333,4 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 10. **T-020** — Core/ADGO durable primitive inventory and rejection of mega-runtime/store unification; `02d58637f4c3bf71142421cb35c5174b52db9795` / `fbebebf0f2ec49dcec803ca0e801f7d8a5aeefcd`; qualification exposed F-026 rather than being accepted as green by assumption.
 11. **F-026 forward recovery** — one semantic-time snapshot per ADGO `Advance` decision boundary plus deterministic deadline-crossing regression; `4c54c0551f3dcf9d53d95f89be2453b836702e29` / `e6a7991b5010bd39875b8f7256850d462c2a0bc6`; PR #37 and all push gates PASS.
 12. **T-021** — split minimal `durabletime.NowSource` from timer-capable `durabletime.Clock` and prove Core/ADGO structural conformance; `ed44183d48db9e797357d73cbe8a2c0d3a7c951c` / `03c6d6e9d8e2058335885eaccdc5c6ee3aac0c34`; PR #38 and all push gates PASS.
+13. **T-022 retry characterization** — executable Core/ADGO attempt/cap/jitter/precision boundaries; `5e8046f226a00024d59f4b8e884421f99d4c2b59`; PR #40 and all push gates PASS; retry/backoff extraction rejected as non-equivalent, next candidate is lease/fencing characterization.
