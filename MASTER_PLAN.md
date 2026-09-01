@@ -4,7 +4,7 @@ Status: **ACTIVE — authoritative execution source of truth**
 
 Repository: `Homiakus/axiom`  
 Target branch: `main`  
-Last qualified implementation HEAD: `d5747471db6260d240943ca93da4b1eadb02ae97`  
+Last qualified implementation HEAD: `dfa7e583b66c9e0a58268798303ac7ae259b066b`  
 Last reconciliation: 2026-09-01
 
 > This file is the only execution roadmap. Historical audits and topic-specific plans are evidence inputs, not parallel roadmaps. Observable behavior, reproducible tests, security/correctness invariants and code outrank stale prose.
@@ -44,6 +44,7 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 - Durable Flow crash windows are deterministically injectable through internal, execution-scoped context failpoints; no global mutable failpoint state and no exported testing API were introduced.
 - The six canonical Flow failpoint stages are: before/after state+intent commit, before/after effect delivery, before/after acknowledgement commit.
 - Stable durable effect IDs are the downstream idempotency key; duplicate delivery attempts after an ambiguous crash are valid, duplicate business application is the downstream concern.
+- Real-Pebble crash qualification proves pending intents survive reopen, reducer state is not re-applied during effect recovery, acknowledgement failures redeliver the same stable ID, and acknowledged intents do not resurrect after reopen.
 - Stale workers cannot commit through fencing.
 - Execution/plan/schema identity is explicit; incompatible persisted formats fail closed.
 - Same-execution mutation is serialized/validated; independent executions may progress concurrently.
@@ -66,7 +67,7 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 
 - `MASTER_PLAN.md` is authoritative; active repository instructions are primarily `CONTRIBUTING.md` and `DEVELOPMENT.md`.
 - GitHub reports `main` protection disabled; T-010 remains an external blocker.
-- `d5747471db6260d240943ca93da4b1eadb02ae97` is fully push-qualified: security, CI Completion Gate/full race and OS matrix, quality-loop and module checksum PASS.
+- `dfa7e583b66c9e0a58268798303ac7ae259b066b` is fully push-qualified: security, CI Completion Gate/full race and OS matrix, quality-loop and module checksum PASS; its qualification PR also passed changed-code mutation testing.
 - Security workflow has **zero global gosec `-exclude=<rule>` suppressions**.
 - G404/G101/G104/G115/G302/G301/G306/G703/G304 are enabled repository-wide; reviewed exceptions/findings are mechanically constrained by exact counter-scans/source sentinels where required.
 - Current intentional scanner contracts include: G115 `5+4+3+4` internal-ID conversions; one G301 public codegen directory; four G306 public artifacts; 14 reviewed G703 path-provenance findings; 17 reviewed G304 arbitrary/confined path findings after removal of the real artifact traversal defect.
@@ -99,11 +100,11 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 **Tasks:** T-020..T-023.
 
 ### F-006 — Durable Flow crash boundaries lack comprehensive equivalence proof
-**Status:** OPEN / partially reduced by T-030  
+**Status:** OPEN / substantially reduced by T-030/T-031  
 **Category:** Persistence / reliability  
 **Severity:** High  
-**Evidence now closed:** T-030 provides six deterministic failpoints, exact boundary-state assertions and Pebble reopen recovery after state+intent commit.  
-**Remaining work:** T-031 full crash/recovery matrix; T-032 no-resurrection/backend/crash equivalence; T-033 operational outbox contracts.
+**Evidence now closed:** T-030 provides six deterministic failpoints and exact boundary-state/reopen assertions. T-031 proves the full real-Pebble intent/effect/ack crash matrix, stable effect IDs, acknowledgement-failure recovery, recovery interruption, and no post-ack redelivery.  
+**Remaining work:** T-032 generalized no-resurrection/backend/crash equivalence properties; T-033 operational outbox contracts.
 
 ### F-007 — Broad global gosec exclusions reduced security signal
 **Status:** RESOLVED by T-040/T-042/T-043/T-044/T-045/T-046/T-047/T-048/T-049.  
@@ -216,22 +217,33 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 6. PR qualification passed CI/security/race/shuffle/mutation. First push then exposed independent F-025; forward recovery fixed the CI harness and fully push-qualified the combined HEAD.
 
 #### T-031 — Flow intent/effect/ack crash matrix
-**Status:** READY  
+**Status:** DONE  
 **Priority:** P1  
-**Depends:** T-030  
-**Goal:** prove recovery outcomes at every meaningful durable boundary on real Pebble without claiming exactly-once delivery.  
-**Required matrix:**
-1. Crash before state+intent commit: nothing durable/effected; re-dispatch commits exactly one state transition.
-2. Crash after state+intent commit / before effect: pending intent survives reopen; `DrainEffects` delivers once without reducer re-application.
-3. Ambiguous failure during effect: first attempt may have applied externally and returned error; retry uses the same effect ID.
-4. Crash after effect success / before acknowledgement: redelivery is allowed; stable ID must permit one idempotent business application despite multiple delivery attempts.
-5. Acknowledgement commit failure: real Pebble-backed wrapper fails completion append once; reopen/redrain repeats same effect ID and eventually commits completion.
-6. Crash after acknowledgement commit: reopen/redrain must not redeliver.
-7. Crash during recovery itself: pending item survives another reopen and completes later.
-8. Assert exact state, history sequence/types, pending/completed status, delivery attempts, unique idempotent business applications and stable effect ID in each case.
-9. No sleeps/timing races; use T-030 failpoints and explicit store failure injection.
+**Qualified SHA:** `dfa7e583b66c9e0a58268798303ac7ae259b066b`  
+**Delivered:**
+1. Test-only real-Pebble crash/recovery matrix; no production API/code change.
+2. Covered pre-commit crash, post-commit/pre-effect crash, ambiguous external application plus handler failure, post-effect/pre-ack crash, acknowledgement commit failure, post-ack crash, and recovery interrupted before delivery.
+3. Exact state/history/pending/completion assertions across close/reopen cycles.
+4. Stable effect ID assertions across every redelivery path.
+5. Separate delivery-attempt and unique idempotent-business-application counters, proving at-least-once delivery without a false exactly-once claim.
+6. Qualification PR #32 passed CI/security/race/Boundary Shuffle and changed-code mutation testing; exact SHA then fast-forwarded to `main` without force and all push gates passed.
 
-- **T-032 — no-resurrection/backend/crash equivalence properties:** TODO, P1/P2, depends T-030/T-031.
+#### T-032 — No-resurrection/backend/crash equivalence properties
+**Status:** READY  
+**Priority:** P1/P2  
+**Depends:** T-030/T-031  
+**Goal:** generalize T-031 examples into reusable properties proving that durable Flow recovery cannot resurrect completed effects or diverge semantically across supported store paths.  
+**Required work:**
+1. Characterize current Memory vs Pebble durable-store capabilities; do not invent durability guarantees for memory-only stores.
+2. Build table/property-style traces over reducer events and 0..N effects with deterministic interruption at each T-030 failpoint stage.
+3. Compare uninterrupted execution with crash/reopen execution by committed state, ordered business history, pending/completed effect set and stable effect identities.
+4. Prove monotonic completion: once `EffectCompleted(id)` is durably visible, future drain/reopen cycles never invoke that ID again.
+5. Prove no pending resurrection after repeated close/reopen/drain cycles.
+6. Prove no reducer re-application during recovery of already committed pending effects.
+7. Where a second synchronous durable backend is unavailable, factor backend-independent history/outbox properties separately from Pebble crash persistence rather than faking backend equivalence.
+8. Add randomized/property traces only with deterministic seeds/reproducible counterexamples; no wall-clock dependence.
+9. Keep production behavior/API unchanged unless a characterization uncovers a real defect.
+
 - **T-033 — Flow backlog/backpressure/observability contracts:** TODO, P2, depends T-031.
 
 ### M3 — Shared durable primitives without merging engines
@@ -308,36 +320,37 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 9. **T-030** — deterministic Flow durable failpoints: commits `492f3cc955e0d26283fdaaba027eda581ea13315`, `c992c3eb704de891063b614b52cc354afe3d5986`, `5759426697e5a95208ab055d24a604e32e2ad26c`; PR #30 passed CI/security/shuffle/mutation and exact SHA was fast-forwarded to `main`.
 10. **F-025 discovered during T-030 push qualification** — first push CI failed only TRIZ fuzz smoke after 163,201 successful executions with `context deadline exceeded` at the 5s budget. Failure was not rerun.
 11. **F-025 forward recovery** — `d5747471db6260d240943ca93da4b1eadb02ae97` changed PR/push fuzz smoke to `10000x`, retained nightly 60s deep fuzzing, passed PR preflight then was fast-forwarded without force. Push security, full CI including Linux/macOS/Windows/race/fuzz, quality-loop and module checksum all PASS.
+12. **T-031** — test-only real-Pebble crash/recovery matrix; `dfa7e583b66c9e0a58268798303ac7ae259b066b`. PR #32 passed CI/security/race/Boundary Shuffle and changed-code mutation testing. Exact SHA was fast-forwarded to `main`; push module-checksum, security, CI Completion Gate/full OS/race/fuzz and quality-loop all PASS.
 
 ---
 
 ## 6. Continuation checkpoint
 
-CURRENT QUALIFIED IMPLEMENTATION HEAD: `d5747471db6260d240943ca93da4b1eadb02ae97`  
-CURRENT QUALIFIED MILESTONE: release correctness closed; all broad global gosec exclusions closed; T-030 deterministic durable Flow failpoint infrastructure closed; F-025 CI nondeterminism closed.
+CURRENT QUALIFIED IMPLEMENTATION HEAD: `dfa7e583b66c9e0a58268798303ac7ae259b066b`  
+CURRENT QUALIFIED MILESTONE: release correctness closed; all broad global gosec exclusions closed; T-030 deterministic durable failpoints and T-031 full real-Pebble crash matrix closed; F-025 CI nondeterminism closed.
 
 OPEN CRITICAL/HIGH:
 - F-002 unprotected `main` — external GitHub configuration blocker;
 - F-005 Core/ADGO durable primitive duplication;
-- F-006 remaining Flow crash/equivalence proof gap;
+- F-006 generalized Flow no-resurrection/backend equivalence proof gap;
 - F-008 no mechanical API compatibility gate.
 
 NEXT TASK AFTER THIS DOCUMENT CHECKPOINT QUALIFIES:
-- **T-031 — Flow intent/effect/ack crash matrix on real Pebble.**
+- **T-032 — no-resurrection/backend/crash equivalence properties.**
 
-T-031 SELECTION RATIONALE:
-- T-030 now makes all six runtime boundaries deterministically interruptible;
-- the highest remaining code-addressable reliability risk is proving exact recovery outcomes, especially ambiguous external success before durable acknowledgement;
-- T-031 directly validates the documented at-least-once contract without pretending external effects are exactly-once;
-- T-031 is the prerequisite for T-032 no-resurrection/backend equivalence and T-033 operational outbox work.
+T-032 SELECTION RATIONALE:
+- T-031 proves every named crash window with concrete real-Pebble scenarios; the next reliability step is converting those examples into reusable monotonic/no-resurrection properties;
+- generalized equivalence catches interaction bugs across multiple events/effects that a fixed seven-case matrix may miss;
+- the task can remain test-only unless characterization reveals a real defect;
+- T-032 finishes the correctness proof layer needed before T-033 operational backlog/backpressure work.
 
-VERIFICATION FOR T-031:
-- real Pebble close/reopen for every persisted crash case;
-- exact history/state assertions and stable effect IDs;
-- separate delivery-attempt vs idempotent-business-application counters;
-- acknowledgement commit fault injection over real Pebble;
-- recovery interrupted and resumed again;
-- no sleeps or wall-clock race dependence;
+VERIFICATION FOR T-032:
+- deterministic property/table traces over multiple events/effects;
+- uninterrupted vs interrupted committed-state/history equivalence;
+- monotonic completion/no post-completion delivery;
+- repeated reopen/drain no-resurrection;
+- no reducer re-application during pending-effect recovery;
+- backend-independent history/outbox properties separated from Pebble crash persistence if no second synchronous durable backend exists;
+- reproducible seeds/counterexamples only; no sleeps or wall-clock dependence;
 - changed-code mutation testing where applicable;
-- race and Boundary Shuffle PASS;
 - pushed SHA green on `security`, full `ci`, `quality-loop`, and `module-checksum`.
