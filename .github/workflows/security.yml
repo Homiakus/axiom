@@ -82,45 +82,19 @@ jobs:
       - name: Run gosec
         shell: bash
         run: |
-          # G101, G104, G115, G301, G302 and G404 are enabled repository-wide.
-          # Reviewed false positives / structurally bounded internal conversions
-          # are path-scoped here and independently constrained by executable checks.
+          # G101, G104, G115, G301, G302, G306 and G404 are enabled
+          # repository-wide. Reviewed false positives / structurally bounded
+          # internal conversions / intentionally shareable artifacts are
+          # path-scoped here and independently constrained by executable checks.
           go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 \
             -exclude-dir=examples \
             -exclude-dir=internal/testutil \
-            -exclude=G304,G306,G703 \
-            -exclude-rules='adgo/runtime\.go:G404;adgo/http_worker\.go:G101;internal/runtime/fast_vm\.go:G115;internal/runtime/expr_vm\.go:G115;internal/runtime/engine\.go:G115;internal/compiler/module\.go:G115;cmd/axiomgen/internal/generate/generate\.go:G301' \
+            -exclude=G304,G703 \
+            -exclude-rules='adgo/runtime\.go:G404;adgo/http_worker\.go:G101;internal/runtime/fast_vm\.go:G115;internal/runtime/expr_vm\.go:G115;internal/runtime/engine\.go:G115;internal/compiler/module\.go:G115;cmd/axiomgen/internal/generate/generate\.go:G301;cmd/axiombench/main\.go:G306;cmd/axiomgen/internal/generate/generate\.go:G306' \
             -nosec-require-rules \
             -nosec-require-justification \
             -fmt=text \
             ./...
-
-      - name: Characterize remaining G304/G306/G703
-        shell: bash
-        run: |
-          tmp="$(mktemp)"
-          trap 'rm -f "$tmp"' EXIT
-          go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 \
-            -exclude-dir=examples \
-            -exclude-dir=internal/testutil \
-            -include=G304,G306,G703 \
-            -no-fail \
-            -fmt=json \
-            ./... >"$tmp"
-          python3 - "$tmp" <<'PY'
-          import collections
-          import json
-          import sys
-
-          with open(sys.argv[1], "r", encoding="utf-8") as fh:
-              data = json.load(fh)
-          issues = [i for i in data.get("Issues", []) if i.get("rule_id") in {"G304", "G306", "G703"}]
-          counts = collections.Counter(i.get("rule_id") for i in issues)
-          print("REMAINING_GOSEC_COUNTS " + " ".join(f"{rule}={counts[rule]}" for rule in ("G304", "G306", "G703")))
-          for issue in sorted(issues, key=lambda i: (i.get("rule_id", ""), i.get("file", ""), str(i.get("line", "")))):
-              path = str(issue.get("file", "")).replace("\\", "/")
-              print(f"REMAINING_GOSEC_ISSUE {issue.get('rule_id')} {path}:{issue.get('line')} :: {issue.get('details')}")
-          PY
 
       - name: Verify scoped G101 false positive
         shell: bash
@@ -133,3 +107,7 @@ jobs:
       - name: Verify scoped G301 public codegen directory
         shell: bash
         run: bash scripts/verify_g301_codegen_directory.sh
+
+      - name: Verify scoped G306 public artifacts
+        shell: bash
+        run: bash scripts/verify_g306_public_artifacts.sh
