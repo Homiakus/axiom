@@ -4,8 +4,8 @@ Status: **ACTIVE — authoritative execution source of truth**
 
 Repository: `Homiakus/axiom`  
 Target branch: `main`  
-Last qualified implementation HEAD: `5e8046f226a00024d59f4b8e884421f99d4c2b59`  
-Last reconciliation: 2026-09-01
+Last qualified implementation HEAD: `cd9ab2243c29583aa19ffa106c6ae402e4616d17`  
+Last reconciliation: 2026-09-02
 
 > This file is the only execution roadmap. Historical audits and topic-specific plans are evidence inputs, not parallel roadmaps. Observable behavior, reproducible tests, security/correctness invariants and code outrank stale prose.
 
@@ -40,6 +40,7 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 - Share only behavior-identical low-level durable primitives after executable characterization.
 - The shared semantic-time leaf is `internal/durabletime.NowSource { Now() time.Time }`; timer ownership remains an explicitly richer concern and does not leak into now-only engine clocks.
 - Retry/backoff arithmetic remains engine-owned unless exact output equivalence is executable proof: Core currently uses exact integer `time.Duration` growth with a hard 30 s cap and no jitter; ADGO uses configurable caps, `float64` growth and deterministic jitter.
+- Lease/fencing state machines remain engine-owned. For non-zero leases both engines treat `deadline <= now` as stale, but Core treats a zero external-worker lease as stale and evaluates operational leases against real UTC wall time, while ADGO currently accepts zero `LeaseUntil` in claim validation and evaluates leases against the semantic runtime clock.
 - External effects are **at-least-once**, never falsely exactly-once; idempotency and reconciliation are explicit.
 - Durable intents/tasks are persisted before external execution where required.
 - Durable Flow state + `EventHandled` + `EffectPending[]` are atomically and synchronously committed before effect delivery.
@@ -75,10 +76,11 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 
 - `MASTER_PLAN.md` is authoritative; active repository instructions are primarily `CONTRIBUTING.md` and `DEVELOPMENT.md`.
 - GitHub reports `main` protection disabled; T-010 remains an external blocker.
-- `5e8046f226a00024d59f4b8e884421f99d4c2b59` is fully push-qualified: `ci`, `security`, `quality-loop`, and `module-checksum` PASS; qualification PR #40 also passed exact-head CI/security/quality-loop, full race, changed-code mutation and Boundary Shuffle before fast-forward to `main`.
+- `cd9ab2243c29583aa19ffa106c6ae402e4616d17` is fully push-qualified: `ci` #154, `security` #156, `quality-loop` #64 and `module-checksum` #176 PASS; qualification PR #42 also passed exact-head CI/security/quality-loop, full race, changed-code mutation and Boundary Shuffle before fast-forward to `main`.
 - T-020 durable-primitives inventory is complete; its semantic-time boundary audit exposed F-026, which was fixed forward rather than hidden or rerun away.
 - T-021 established the first intentionally tiny shared durable leaf: `durabletime.NowSource`; Core and ADGO retain their package-local minimal `Clock` contracts and timer-capable `durabletime.Clock` remains richer.
-- T-022 retry/backoff characterization proved the two engines' delay arithmetic is not behavior-identical: Core exact integer duration doubling + hard cap differs from ADGO configurable `float64` growth + deterministic jitter; the current retry/backoff implementation is therefore `KEEP SEPARATE`.
+- T-022 retry/backoff characterization proved the two engines' delay arithmetic is not behavior-identical: Core exact integer duration doubling + hard cap differs from ADGO configurable `float64` growth + deterministic jitter; retry/backoff remains `KEEP SEPARATE`.
+- T-022 lease/fencing characterization at `cd9ab2243c29583aa19ffa106c6ae402e4616d17` likewise proves `KEEP SEPARATE`: only the non-zero closed expiry relation is common; zero-lease policy, clock domain, claim/recovery lifecycle and state-machine ownership differ.
 - Security workflow has **zero global gosec `-exclude=<rule>` suppressions**.
 - G404/G101/G104/G115/G302/G301/G306/G703/G304 are enabled repository-wide; reviewed exceptions/findings are mechanically constrained by exact counter-scans/source sentinels where required.
 - Current intentional scanner contracts include: G115 `5+4+3+4` internal-ID conversions; one G301 public codegen directory; four G306 public artifacts; 14 reviewed G703 path-provenance findings; 17 reviewed G304 arbitrary/confined path findings after removal of the real artifact traversal defect.
@@ -109,7 +111,7 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 **Category:** Architecture  
 **Severity:** High  
 **Remaining tasks:** T-022/T-023.  
-**Progress:** T-020 separated false duplication from behavior-identical candidates; T-021 established the acyclic `durabletime.NowSource` leaf without merging engines, stores, retry controllers, worker state machines, schemas or public error policy. T-022 retry characterization at `5e8046f226a00024d59f4b8e884421f99d4c2b59` proved retry/backoff arithmetic is not behavior-identical, so that candidate is now `KEEP SEPARATE`; lease/fencing predicates are the next characterization target.
+**Progress:** T-020 separated false duplication from behavior-identical candidates; T-021 established the acyclic `durabletime.NowSource` leaf without merging engines, stores, retry controllers, worker state machines, schemas or public error policy. T-022 retry characterization at `5e8046f226a00024d59f4b8e884421f99d4c2b59` proved retry/backoff arithmetic is not behavior-identical. T-022 lease/fencing characterization at `cd9ab2243c29583aa19ffa106c6ae402e4616d17` / PR #42 proved claim/fencing mechanics are also not behavior-identical: both reject non-zero `deadline <= now`, but Core zero lease is stale and uses operational UTC wall time while ADGO zero lease is accepted by current claim validation and uses semantic runtime time. Retry and lease/fencing candidates are therefore `KEEP SEPARATE`; schema-agnostic persisted-format marker validation mechanics are the next characterization target.
 
 ### F-006 — Durable Flow crash boundaries lacked comprehensive equivalence proof
 **Status:** RESOLVED by T-030/T-031/T-032  
@@ -259,7 +261,7 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 
 - **T-020 — inventory Core vs ADGO durable primitive contracts: DONE**, artifact commits `02d58637f4c3bf71142421cb35c5174b52db9795` / `fbebebf0f2ec49dcec803ca0e801f7d8a5aeefcd`; forward semantic-time recovery closed by F-026 at `e6a7991b5010bd39875b8f7256850d462c2a0bc6`.
 - **T-021 — define acyclic shared durable boundary: DONE**, implementation `ed44183d48db9e797357d73cbe8a2c0d3a7c951c`, contract tests / qualified HEAD `03c6d6e9d8e2058335885eaccdc5c6ee3aac0c34`, PR #38 and all push gates PASS.
-- **T-022 — extract behavior-identical pure primitives: IN_PROGRESS**, P2, depends T-021. Retry/backoff characterization is DONE at `5e8046f226a00024d59f4b8e884421f99d4c2b59` / PR #40 and proves `KEEP SEPARATE`: Core uses exact integer duration arithmetic, fixed/exponential policy and a hard 30 s cap; ADGO uses configurable max delay, `float64` exponential arithmetic and deterministic identity-seeded jitter, including an executable `2^53+1 ns` precision sentinel. No shared retry helper, controller, `NextAttemptAt`, history, failure class, `RetryAfter`, budget or scheduler state is authorized. **Next selected sub-step:** characterize lease/fencing predicates at exact expiry, zero lease, wrong worker/attempt, reissue and clock-domain boundaries before considering any shared predicate.
+- **T-022 — extract behavior-identical pure primitives: IN_PROGRESS**, P2, depends T-021. Retry/backoff characterization is DONE at `5e8046f226a00024d59f4b8e884421f99d4c2b59` / PR #40 and proves `KEEP SEPARATE`. Lease/fencing characterization is DONE at `cd9ab2243c29583aa19ffa106c6ae402e4616d17` / PR #42 and also proves `KEEP SEPARATE`: Core zero external-worker lease is stale and operational leases use UTC wall time; ADGO zero lease is accepted by current claim validation and lease decisions use semantic runtime time. Shared claim validator/token/controller/recovery state machine/schema/public error is not authorized. **Next selected sub-step:** characterize schema-agnostic persisted-format marker mechanics for absent, valid, partial, wrong expected value and reopen boundaries while keeping marker keys, versions/codecs/formats, legacy detection and migration policy engine-owned.
 - **T-023 — architecture anti-drift tests: TODO**, P2, depends T-021; after each successful T-022 extraction, prevent engine-local reimplementation and preserve the leaf dependency direction.
 
 ### M4 — Security boundary reduction
@@ -307,6 +309,7 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 - REJECTED: pretend `MemoryFlowStore` provides crash durability for backend-equivalence tests.
 - REJECTED: replace deterministic retry jitter with cryptographic randomness merely to silence SAST.
 - REJECTED: unify Core and ADGO retry controllers/policies/backoff arithmetic merely because both use exponential language; T-022 executable characterization proved their current outputs are not behavior-identical.
+- REJECTED: unify Core and ADGO lease/fencing claim validation merely because both use a closed non-zero expiry boundary; T-022 executable characterization proved zero-lease policy, clock domain and lifecycle semantics differ.
 - REJECTED: restore any global gosec rule exclusion after characterization.
 - REJECTED: path-exclude a security boundary without an independent raw counter-scan.
 - REJECTED: make generated/public artifacts private merely to satisfy permission scanners.
@@ -333,4 +336,5 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 10. **T-020** — Core/ADGO durable primitive inventory and rejection of mega-runtime/store unification; `02d58637f4c3bf71142421cb35c5174b52db9795` / `fbebebf0f2ec49dcec803ca0e801f7d8a5aeefcd`; qualification exposed F-026 rather than being accepted as green by assumption.
 11. **F-026 forward recovery** — one semantic-time snapshot per ADGO `Advance` decision boundary plus deterministic deadline-crossing regression; `4c54c0551f3dcf9d53d95f89be2453b836702e29` / `e6a7991b5010bd39875b8f7256850d462c2a0bc6`; PR #37 and all push gates PASS.
 12. **T-021** — split minimal `durabletime.NowSource` from timer-capable `durabletime.Clock` and prove Core/ADGO structural conformance; `ed44183d48db9e797357d73cbe8a2c0d3a7c951c` / `03c6d6e9d8e2058335885eaccdc5c6ee3aac0c34`; PR #38 and all push gates PASS.
-13. **T-022 retry characterization** — executable Core/ADGO attempt/cap/jitter/precision boundaries; `5e8046f226a00024d59f4b8e884421f99d4c2b59`; PR #40 and all push gates PASS; retry/backoff extraction rejected as non-equivalent, next candidate is lease/fencing characterization.
+13. **T-022 retry characterization** — executable Core/ADGO attempt/cap/jitter/precision boundaries; `5e8046f226a00024d59f4b8e884421f99d4c2b59`; PR #40 and all push gates PASS; retry/backoff extraction rejected as non-equivalent.
+14. **T-022 lease/fencing characterization** — deterministic Core/ADGO expiry, zero-lease, worker/attempt, reissue and clock-domain boundaries; `cd9ab2243c29583aa19ffa106c6ae402e4616d17`; PR #42 and all push gates PASS; shared lease/fencing extraction rejected as non-equivalent, next candidate is schema-agnostic persisted-format marker mechanics.
