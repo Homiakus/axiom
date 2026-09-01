@@ -10,10 +10,19 @@ import (
 // ErrNegativeAdvance is returned when a ManualClock is asked to move backwards.
 var ErrNegativeAdvance = errors.New("durabletime: negative clock advance")
 
-// Clock is the minimal time source required by durable orchestration code.
-// Implementations must be safe for concurrent use.
-type Clock interface {
+// NowSource is the minimal semantic time source shared by durable orchestration
+// boundaries. Implementations must be safe for concurrent use.
+//
+// NowSource intentionally does not require timer creation. Runtime packages may
+// accept lightweight semantic clocks while richer code can opt into Clock.
+type NowSource interface {
 	Now() time.Time
+}
+
+// Clock extends NowSource with timer creation capability for orchestration code
+// that owns waiting behavior.
+type Clock interface {
+	NowSource
 	NewTimer(time.Duration) Timer
 }
 
