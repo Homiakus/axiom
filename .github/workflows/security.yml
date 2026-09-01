@@ -95,6 +95,33 @@ jobs:
             -fmt=text \
             ./...
 
+      - name: Characterize remaining G304/G306/G703
+        shell: bash
+        run: |
+          tmp="$(mktemp)"
+          trap 'rm -f "$tmp"' EXIT
+          go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 \
+            -exclude-dir=examples \
+            -exclude-dir=internal/testutil \
+            -include=G304,G306,G703 \
+            -no-fail \
+            -fmt=json \
+            ./... >"$tmp"
+          python3 - "$tmp" <<'PY'
+          import collections
+          import json
+          import sys
+
+          with open(sys.argv[1], "r", encoding="utf-8") as fh:
+              data = json.load(fh)
+          issues = [i for i in data.get("Issues", []) if i.get("rule_id") in {"G304", "G306", "G703"}]
+          counts = collections.Counter(i.get("rule_id") for i in issues)
+          print("REMAINING_GOSEC_COUNTS " + " ".join(f"{rule}={counts[rule]}" for rule in ("G304", "G306", "G703")))
+          for issue in sorted(issues, key=lambda i: (i.get("rule_id", ""), i.get("file", ""), str(i.get("line", "")))):
+              path = str(issue.get("file", "")).replace("\\", "/")
+              print(f"REMAINING_GOSEC_ISSUE {issue.get('rule_id')} {path}:{issue.get('line')} :: {issue.get('details')}")
+          PY
+
       - name: Verify scoped G101 false positive
         shell: bash
         run: bash scripts/verify_g101_false_positive.sh
