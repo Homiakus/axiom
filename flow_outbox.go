@@ -53,7 +53,7 @@ func (e *FlowEffectDeliveryError) Error() string {
 	return fmt.Sprintf("axiom: durable flow effect %s (%s) delivery failed after state commit: %v", e.EffectID, e.Name, e.Err)
 }
 
-func (e *FlowEffectDeliveryError) Unwrap() error { return e.Err }
+func (e *FlowEffectDeliveryError) Unwrap() error        { return e.Err }
 func (e *FlowEffectDeliveryError) StateCommitted() bool { return true }
 
 // FlowEffectAcknowledgeError means the effect handler returned success but its
@@ -69,7 +69,7 @@ func (e *FlowEffectAcknowledgeError) Error() string {
 	return fmt.Sprintf("axiom: durable flow effect %s (%s) acknowledgement failed; delivery may repeat: %v", e.EffectID, e.Name, e.Err)
 }
 
-func (e *FlowEffectAcknowledgeError) Unwrap() error { return e.Err }
+func (e *FlowEffectAcknowledgeError) Unwrap() error        { return e.Err }
 func (e *FlowEffectAcknowledgeError) StateCommitted() bool { return true }
 
 type flowEffectIDContextKey struct{}
@@ -197,7 +197,13 @@ func (e *FlowExecution[S]) dispatchDurableLocked(ctx context.Context, event any)
 	}
 	// Transactional-outbox boundary: state and effect intents become durable
 	// before any external effect is allowed to run.
+	if err := e.hitDurableFlowFailpoint(ctx, flowFailpointBeforeStateIntentCommit, eventSequence, nil); err != nil {
+		return err
+	}
 	if err := store.SaveStateAndAppend(ctx, e.engine.flow.name, e.id, data, entries); err != nil {
+		return err
+	}
+	if err := e.hitDurableFlowFailpoint(ctx, flowFailpointAfterStateIntentCommit, eventSequence, nil); err != nil {
 		return err
 	}
 	return e.drainDurableEffectsLocked(ctx, store)
@@ -261,9 +267,15 @@ func (e *FlowExecution[S]) drainDurableEffectsLocked(ctx context.Context, store 
 		if err != nil {
 			return err
 		}
+		if err := e.hitDurableFlowFailpoint(ctx, flowFailpointBeforeEffectDelivery, entry.Sequence, &intent); err != nil {
+			return err
+		}
 		effectCtx := context.WithValue(ctx, flowEffectIDContextKey{}, intent.ID)
 		if err := handler(effectCtx, command); err != nil {
 			return &FlowEffectDeliveryError{EffectID: intent.ID, Name: intent.Name, Err: err}
+		}
+		if err := e.hitDurableFlowFailpoint(ctx, flowFailpointAfterEffectDelivery, entry.Sequence, &intent); err != nil {
+			return err
 		}
 		completion := FlowHistoryEntry{
 			Sequence:  historyLength + 1,
@@ -272,8 +284,14 @@ func (e *FlowExecution[S]) drainDurableEffectsLocked(ctx context.Context, store 
 			Data:      FlowEffectCompletion{ID: intent.ID},
 			CreatedAt: time.Now().UTC(),
 		}
+		if err := e.hitDurableFlowFailpoint(ctx, flowFailpointBeforeAcknowledgeCommit, completion.Sequence, &intent); err != nil {
+			return err
+		}
 		if err := store.SaveStateAndAppend(ctx, e.engine.flow.name, e.id, state, []FlowHistoryEntry{completion}); err != nil {
 			return &FlowEffectAcknowledgeError{EffectID: intent.ID, Name: intent.Name, Err: err}
+		}
+		if err := e.hitDurableFlowFailpoint(ctx, flowFailpointAfterAcknowledgeCommit, completion.Sequence, &intent); err != nil {
+			return err
 		}
 		historyLength++
 		completed[intent.ID] = struct{}{}
