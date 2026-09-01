@@ -4,7 +4,7 @@ Status: **ACTIVE — authoritative execution source of truth**
 
 Repository: `Homiakus/axiom`  
 Target branch: `main`  
-Last qualified implementation HEAD: `33be44e7ccd947f03782d73c430b413fffec4a41`  
+Last qualified implementation HEAD: `3bc47a9219a7409980bda4360d7900284fd82552`  
 Last reconciliation: 2026-09-01
 
 > This file is the only execution roadmap. Historical audits and topic-specific plans are evidence inputs, not parallel roadmaps. Observable behavior, reproducible tests, security/correctness invariants and code outrank stale prose.
@@ -49,6 +49,7 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 - Uninterrupted and interrupted/reopened durable Flow traces must converge to equivalent committed state, normalized ordered history and idempotent business applications.
 - Once `EffectCompleted(id)` is durably visible, repeated drain/reopen cycles must never deliver `id` again.
 - Operational outbox controls must remain a Flow concern only: do not build a second scheduler/worker runtime inside Flow.
+- Durable Flow outbox diagnostics are read-only aggregate snapshots; bounded draining uses an explicit positive delivery budget and reports attempted, durably acknowledged and remaining work while preserving legacy drain-all compatibility.
 - Stale workers cannot commit through fencing.
 - Execution/plan/schema identity is explicit; incompatible persisted formats fail closed.
 - Same-execution mutation is serialized/validated; independent executions may progress concurrently.
@@ -71,7 +72,7 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 
 - `MASTER_PLAN.md` is authoritative; active repository instructions are primarily `CONTRIBUTING.md` and `DEVELOPMENT.md`.
 - GitHub reports `main` protection disabled; T-010 remains an external blocker.
-- `33be44e7ccd947f03782d73c430b413fffec4a41` is fully push-qualified: security, CI Completion Gate/full race and OS matrix, quality-loop and module checksum PASS; its qualification PR also passed changed-code mutation testing.
+- `3bc47a9219a7409980bda4360d7900284fd82552` is fully push-qualified: security, CI Completion Gate/full race and Linux/Windows/macOS matrix, quality-loop and module checksum PASS; qualification PR #34 also passed changed-code mutation testing.
 - Security workflow has **zero global gosec `-exclude=<rule>` suppressions**.
 - G404/G101/G104/G115/G302/G301/G306/G703/G304 are enabled repository-wide; reviewed exceptions/findings are mechanically constrained by exact counter-scans/source sentinels where required.
 - Current intentional scanner contracts include: G115 `5+4+3+4` internal-ID conversions; one G301 public codegen directory; four G306 public artifacts; 14 reviewed G703 path-provenance findings; 17 reviewed G304 arbitrary/confined path findings after removal of the real artifact traversal defect.
@@ -109,7 +110,7 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 **Severity:** High  
 **Resolution:** six deterministic crash boundaries, full real-Pebble intent/effect/ack recovery matrix, stable effect-ID/redelivery assertions, generalized uninterrupted-vs-crash/reopen equivalence traces, monotonic completion and repeated no-resurrection cycles. Memory is explicitly classified ephemeral rather than presented as a second durable backend.  
 **Qualified implementation:** `33be44e7ccd947f03782d73c430b413fffec4a41`.  
-**Operational follow-up:** T-033 backlog/backpressure/observability is a separate P2 production-operability task, not an unresolved crash-correctness proof.
+**Operational follow-up:** T-033 is DONE at `3bc47a9219a7409980bda4360d7900284fd82552`; bounded outbox diagnostics/draining are now explicit without changing the crash-correctness claim or persisted format.
 
 ### F-007 — Broad global gosec exclusions reduced security signal
 **Status:** RESOLVED by T-040/T-042/T-043/T-044/T-045/T-046/T-047/T-048/T-049.  
@@ -228,26 +229,22 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 7. Qualification PR #33 passed CI/security/race/Boundary Shuffle and changed-code mutation testing; exact SHA was fast-forwarded to `main` without force and all push gates passed.
 
 #### T-033 — Flow outbox backlog/backpressure/observability contract
-**Status:** READY  
+**Status:** DONE  
 **Priority:** P2  
+**Qualified SHA:** `3bc47a9219a7409980bda4360d7900284fd82552`  
 **Depends:** T-031/T-032  
-**Characterization:** current `drainDurableEffectsLocked` loads complete history, reconstructs the completed set, then walks every pending entry until all recoverable work is delivered. No explicit backlog diagnostic or bounded-drain API exists. Historical FLOW-002/FLOW-003 tasks remain TODO.  
-**Goal:** make durable Flow outbox state operationally inspectable and recovery work explicitly bounded without building a second scheduler/worker runtime or weakening delivery order.  
-**Required work:**
-1. Define a bounded-cardinality diagnostic snapshot derived from durable history: pending count, completed count relevant to the snapshot, oldest pending sequence/time, and whether recovery work remains. Do not label metrics with execution/effect IDs in aggregate telemetry contracts.
-2. Define a bounded drain primitive with an explicit maximum number of effect deliveries/acknowledgements per call; zero/negative/overflowing limits must fail clearly or use an explicitly documented semantic, never silently mean unlimited.
-3. Preserve strict pending-effect order and stable effect IDs under bounded draining.
-4. A bounded drain that reaches its limit must return enough state for the caller to know more work remains without treating the partial successful drain as an error.
-5. Existing `DrainEffects(ctx)` compatibility must remain intact; it may delegate to the bounded primitive with the legacy drain-all behavior if that does not create ambiguous semantics.
-6. `Dispatch` must continue draining older pending effects before reducing a new event. Do not silently change dispatch ordering or allow new business events to leapfrog backlog.
-7. Add tests for 0, 1, N and >N pending effects, partial drain/reopen/resume, failure on an item before the limit, completion monotonicity, and no duplicate delivery after the final page.
-8. Add a large-history characterization/benchmark before optimizing history scans. Do not add indexes/compaction/persisted-format changes in the same iteration unless measurement proves they are necessary.
-9. Prefer a minimal stable API surface. If an exported diagnostic/bounded-drain API is required, document its compatibility status and avoid embedding worker/scheduler policy.
-10. Keep persisted format unchanged unless a separately planned compatibility task is created.
+**Delivered:**
+1. Added read-only `FlowOutboxStatus` / `OutboxStatus(ctx)` with history length, pending/completed counts, oldest pending sequence/time and `HasPending()`; no per-effect metric-label surface was introduced.
+2. Added `DrainEffectsLimit(ctx, maxDeliveries)` with an explicit positive delivery budget, strict pending order and `FlowOutboxDrainResult{Attempted, Acknowledged, Remaining}` so partial success is not an error and ambiguous acknowledgement is observable.
+3. Preserved legacy `DrainEffects(ctx)` drain-all behavior and preserved `Dispatch` ordering: older pending effects are still drained before reducing a later business event.
+4. Delivery and acknowledgement failures return typed errors together with work accounting; acknowledgement failure keeps the item pending while stable effect IDs allow downstream idempotency on retry.
+5. Added deterministic tests for partial 2/2/1 draining, read-only status, invalid limits, delivery failure, acknowledgement ambiguity, no reducer replay, completion/no-redelivery, and real-Pebble close/reopen/resume.
+6. Added a 9,500-history-entry characterization benchmark. Full-history scanning remains explicit technical debt for later scale/performance work; T-033 deliberately did not add an index, compaction scheme or persisted-format change.
+7. Qualification PR #34 passed CI/security/full race/Boundary Shuffle and changed-code mutation testing; exact SHA was fast-forwarded to `main` without force and all push gates passed.
 
 ### M3 — Shared durable primitives without merging engines
 
-- **T-020 — inventory Core vs ADGO durable primitive contracts:** TODO, P1.
+- **T-020 — inventory Core vs ADGO durable primitive contracts:** READY, P1.
 - **T-021 — define acyclic shared durable boundary:** TODO, P1/P2, depends T-020.
 - **T-022 — extract behavior-identical pure primitives:** TODO, P2, depends T-021.
 - **T-023 — architecture anti-drift tests:** TODO, P2, depends T-021.
@@ -318,35 +315,4 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 6. **F-025/T-030 forward recovery** — push fuzz deadline flake was fixed, not rerun; qualified combined HEAD `d5747471db6260d240943ca93da4b1eadb02ae97`.
 7. **T-031** — real-Pebble seven-case crash/recovery matrix; `dfa7e583b66c9e0a58268798303ac7ae259b066b`; PR #32 and all push gates PASS.
 8. **T-032** — capability classification + synchronous model monotonicity + 10 real-Pebble uninterrupted/crash equivalence scenarios; `33be44e7ccd947f03782d73c430b413fffec4a41`; PR #33 mutation/security/CI/shuffle PASS, exact SHA fast-forwarded to `main`, all push gates PASS.
-
----
-
-## 6. Continuation checkpoint
-
-CURRENT QUALIFIED IMPLEMENTATION HEAD: `33be44e7ccd947f03782d73c430b413fffec4a41`  
-CURRENT QUALIFIED MILESTONE: release correctness closed; all broad global gosec exclusions closed; durable Flow crash correctness is closed through deterministic failpoints, concrete recovery matrix and generalized no-resurrection/equivalence properties.
-
-OPEN CRITICAL/HIGH:
-- F-002 unprotected `main` — external GitHub configuration blocker;
-- F-005 Core/ADGO durable primitive duplication;
-- F-008 no mechanical API compatibility gate.
-
-NEXT TASK AFTER THIS DOCUMENT CHECKPOINT QUALIFIES:
-- **T-033 — Flow outbox backlog/backpressure/observability contract.**
-
-T-033 SELECTION RATIONALE:
-- crash correctness is now proven; the remaining Flow gap is operational inspectability and explicitly bounded recovery work;
-- current drain loads/scans complete history and drains all pending effects in one call, with no explicit backlog status or caller-controlled work bound;
-- closing this task completes the Flow-specific stabilization chain before returning to broader architecture/API work;
-- the task must remain a thin reducer-outbox capability and must not evolve Flow into a worker engine.
-
-VERIFICATION FOR T-033:
-- capability/API characterization before code changes;
-- pending/backlog snapshot with bounded-cardinality semantics;
-- bounded drain preserving order, stable IDs and acknowledgement monotonicity;
-- partial drain + reopen + resume tests;
-- failure before/at limit tests;
-- legacy `DrainEffects` compatibility;
-- large-history benchmark/characterization before any indexing or persisted-format optimization;
-- changed-code mutation testing where applicable;
-- pushed SHA green on `security`, full `ci`, `quality-loop`, and `module-checksum`.
+9. **T-033** — bounded durable-Flow outbox diagnostics/draining + adversarial recovery tests + large-history characterization benchmark; `3bc47a9219a7409980bda4360d7900284fd82552`; PR #34 mutation/security/CI/shuffle PASS, exact SHA fast-forwarded to `main`, all push gates PASS.
