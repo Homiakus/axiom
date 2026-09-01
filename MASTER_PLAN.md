@@ -4,8 +4,8 @@ Status: **ACTIVE — authoritative execution source of truth**
 
 Repository: `Homiakus/axiom`  
 Target branch: `main`  
-Last qualified HEAD: `80c78cdb611cac857ce2dc1a674e952118a945ea`  
-Last reconciliation: 2026-08-31
+Last qualified HEAD: `abb08b7381ad7ff5eaa750ccf1e6fc2081c4454e`  
+Last reconciliation: 2026-09-01
 
 > This file is the only execution roadmap. Historical plans, audits and topic-specific documents are evidence inputs, not parallel execution plans. Observable behavior, reproducible tests, security/correctness invariants and code outrank stale prose.
 
@@ -18,14 +18,13 @@ Last reconciliation: 2026-08-31
 1. Reconstruct state from remote `main`, this file, repository instructions and current CI before substantial work.
 2. Substantial work uses `T-XXX`; substantial unexpected information uses `F-XXX` before architecture/API/security/persistence behavior is changed.
 3. Red `main` blocks unrelated work. Flaky `FAIL -> retry -> PASS` is not qualification.
-4. One logical iteration = one logical commit with implementation, executable evidence, relevant docs and plan reconciliation whenever technically possible.
+4. One logical iteration should remain atomic and reversible; implementation, executable evidence and relevant documentation belong together whenever practical.
 5. Never force-push.
-6. Prefer root-cause fixes, executable invariants, fail-closed behavior and small reversible transitions.
-7. Use mutation testing where it distinguishes semantic contracts; use deterministic clocks/schedulers plus race/shuffle for timing/concurrency contracts.
-8. Security suppressions must be narrow, mechanically constrained and justified. A path-scoped false-positive exception must have an executable counter-scan when the path could later contain real findings of the same rule.
+6. Prefer root-cause fixes, executable invariants and fail-closed behavior over scanner/test suppression.
+7. Use deterministic clocks/schedulers plus race/shuffle for timing and concurrency contracts; use mutation testing when it distinguishes semantics.
+8. Security exceptions must be narrow, mechanically constrained and justified. A path exception that can hide future findings of the same rule requires an independent counter-scan.
 9. Performance work requires measurement first.
-10. Iteration logs use `Commit: <this commit>` when the commit SHA cannot yet be embedded; the next checkpoint records the verified SHA.
-11. An iteration is qualified only after remote HEAD plus relevant `ci`, `security`, `quality-loop`, and `module-checksum` gates are green.
+10. An iteration is qualified only after the pushed SHA has green `ci`, `security`, `quality-loop`, and `module-checksum` gates.
 
 Task states: `TODO`, `READY`, `IN_PROGRESS`, `VERIFYING`, `BLOCKED`, `DONE`, `DEFERRED`, `REJECTED`.  
 Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK`, `REJECTED`.
@@ -37,36 +36,40 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 - Declarative Go `model`, AXM and TOML converge on the canonical compiled Axiom runtime.
 - Typed `Flow` and `adgo` remain separate orchestration surfaces; do not merge them into a mega-runtime.
 - Share only behavior-identical low-level durable primitives after executable characterization.
-- External effects are at-least-once, never falsely exactly-once; idempotency/reconciliation is explicit.
+- External effects are at-least-once, never falsely exactly-once; idempotency and reconciliation are explicit.
 - Durable intents/tasks are persisted before external execution where required.
 - Stale workers cannot commit through fencing.
 - Execution/plan/schema identity is explicit; incompatible persisted formats fail closed.
 - Same-execution mutation is serialized/validated; independent executions may progress concurrently.
 - Semantic durable time uses explicit clock abstractions; governing timers are armed before an operation becomes observably started.
-- Retry jitter is deterministic by execution/node identity and attempt and is never used as security entropy.
+- Retry jitter is deterministic by execution/node identity and attempt and is never security entropy.
 - Security-sensitive random identifiers use cryptographic randomness.
 - Production credentials are external inputs, never intentional source literals.
-- Public protocol/version identifiers are not credentials; if a scanner misclassifies one, the exception must not create a blind spot for future credentials.
-- Budget aggregation is fail-closed: invalid, negative, non-finite or overflowing usage from any executed speculative variant invalidates the aggregate instead of silently selecting a winner with partial accounting.
-- Cleanup errors from durable-store initialization and explicit close paths are not silently discarded when they can be returned or joined with the primary failure.
+- Public protocol/version identifiers are not credentials; scanner exceptions for them must not create credential blind spots.
+- Budget aggregation is fail-closed: invalid, negative, non-finite or overflowing usage from any executed speculative variant invalidates the aggregate.
+- Cleanup errors from durable-store initialization and explicit close paths are not silently discarded when they can be returned or joined with a primary failure.
 - Typed numeric boundaries reject sign changes, narrowing overflow and non-finite/out-of-domain float-to-integer conversion rather than accepting Go wraparound semantics.
-- Internal uint32 runtime/compiler IDs may use reviewed narrowing only where their domain is structurally derived from in-memory slice indexes; the exact G115 finding multiset is independently counter-scanned so any expansion fails CI.
-- Private file-backed runtime state and coordination files are created owner-only (`0600`) unless an explicit sharing policy states otherwise. Cross-principal sharing requires external ACL/permission configuration; generated source and publication artifacts are a separate permission domain and may intentionally be readable by other users.
+- Internal `uint32` runtime/compiler IDs may use reviewed narrowing only where structurally derived from in-memory slice indexes; the exact G115 finding multiset is independently counter-scanned.
+- Private file-backed runtime state and coordination **files** are owner-only (`0600`) unless an explicit sharing contract states otherwise.
+- Private file-backed runtime state and coordination **directories** are owner-only/traversable only by the owner (`0700`) unless an explicit sharing contract states otherwise.
+- Generated source/publication artifacts are a separate permission domain. The axiomgen output directory intentionally remains `0755`; its sole G301 exception is independently counter-scanned repo-wide and cannot silently expand.
+- Cross-principal shared-filesystem deployments require explicit external ACL/permission configuration; private defaults are not a substitute for a multi-principal ACL design.
 - Parsed syntax is not a runtime guarantee until executable behavior proves it.
 - Cross-platform/race/security/quality gates are never weakened merely to regain green.
 
 Repository/process state:
 
-- `MASTER_PLAN.md` is authoritative; `AGENTS.md` is absent; active instructions are primarily `CONTRIBUTING.md` and `DEVELOPMENT.md`.
+- `MASTER_PLAN.md` is authoritative; `AGENTS.md` is absent; active repository instructions are primarily `CONTRIBUTING.md` and `DEVELOPMENT.md`.
 - GitHub reports `main` protection disabled; T-010 remains an external blocker.
-- `80c78cdb611cac857ce2dc1a674e952118a945ea` is fully qualified: full CI/race, security, quality-loop and module checksum PASS.
+- `abb08b7381ad7ff5eaa750ccf1e6fc2081c4454e` is fully qualified: security, full CI/race, quality-loop and module checksum PASS.
 - G404 is enabled repository-wide with one path-scoped, sentinel-constrained deterministic-jitter exception.
-- G101 is enabled repository-wide. `adgo/http_worker.go` has one reviewed path-scoped G101 false positive, but a dedicated counter-scan re-runs G101 on `adgo` and permits exactly one finding tied to `HTTPWorkerProtocolVersion`; any additional G101 finding fails CI.
-- G104 is enabled repository-wide with no path or inline suppressions; ignored-error debt found by exact v2.28.0 characterization was handled directly.
-- G115 is enabled repository-wide. Six real boundary findings were removed; the remaining 16 structurally bounded internal-ID conversions are path-scoped across four files and independently counter-scanned as an exact `5+4+3+4` multiset.
-- G302 is enabled repository-wide with no path or inline suppressions. ADGO coordination lock files use an explicit `0600` invariant; the axiomgen append path passes mode `0` because it does not create files and therefore preserves existing generated-source permissions.
-- Exact gosec v2.28.0 characterization at `aa823e1613a44445fd552a634f8abc399116f39d` measured 92 findings across the then-remaining exclusions: `G104=8`, `G115=22`, `G301=20`, `G302=6`, `G304=18`, `G306=4`, `G703=14`.
-- Current remaining global gosec exclusions: `G301,G304,G306,G703`.
+- G101 is enabled repository-wide; the one public HTTP worker protocol-version false positive is path-scoped and independently counter-scanned.
+- G104 is enabled repository-wide with no path or inline suppression.
+- G115 is enabled repository-wide; 16 structurally bounded internal-ID conversions remain only across four reviewed paths and are counter-scanned as the exact `5+4+3+4` multiset.
+- G302 is enabled repository-wide with no G302 suppression; ADGO lock files use `0600`.
+- G301 is enabled repository-wide; 19 ADGO private-state directory findings were eliminated with `0700`. The one intentional `axiomgen` `0755` output-directory finding is path-scoped and independently constrained to exactly one repo-wide G301 finding.
+- Exact gosec v2.28.0 characterization at `aa823e1613a44445fd552a634f8abc399116f39d` measured: `G104=8`, `G115=22`, `G301=20`, `G302=6`, `G304=18`, `G306=4`, `G703=14`.
+- Current remaining global gosec exclusions: **`G304,G306,G703`**.
 - No GitHub Release had been published at the audited baseline.
 
 ---
@@ -81,7 +84,6 @@ Repository/process state:
 **Status:** OPEN / external configuration  
 **Category:** Governance / CI integrity  
 **Severity:** Critical process risk  
-**Evidence:** branch metadata reports `protected=false`.  
 **Task:** T-010.
 
 ### F-003 — Manual release selected caller HEAD instead of frozen candidate
@@ -108,9 +110,8 @@ Repository/process state:
 **Status:** OPEN  
 **Category:** Security / signal quality  
 **Severity:** High  
-**Remaining global exclusions:** `G301,G304,G306,G703`.  
-**Characterization evidence:** exact v2.28.0 informational scan at `aa823e1613a44445fd552a634f8abc399116f39d`: `G104=8`, `G115=22`, `G301=20`, `G302=6`, `G304=18`, `G306=4`, `G703=14`.  
-**Direction:** one rule per atomic iteration, based on actual finding/signal analysis; do not mass-enable noisy rules.
+**Remaining global exclusions:** `G304,G306,G703`.  
+**Direction:** remove one rule family per atomic iteration after exact finding/provenance classification; never bulk-enable noisy rules.
 
 ### F-008 — Public compatibility promises lack a mechanical API gate
 **Status:** OPEN  
@@ -138,60 +139,56 @@ Repository/process state:
 
 ### F-014 — Hedged activity timer-registration race
 **Status:** RESOLVED by T-004  
-**Evidence:** quality-loop shuffle seed `1788202523607722540`; fixed by arming first timer before primary launch.  
+**Evidence:** quality-loop shuffle seed `1788202523607722540`; fixed by arming the first timer before primary launch.  
 **Qualified commit:** `3a0ba3034f9202a38108fe412286f4e337a90f21`.
 
 ### F-015 — One deterministic `math/rand` use caused repository-wide G404 blindness
 **Status:** RESOLVED by T-040  
 **Severity:** High  
-**Resolution:** G404 enabled globally; only `adgo/runtime.go` is path-scoped, with executable policy that fails if math/rand usage expands.  
 **Qualified commit:** `d611198a92f17011e487f5dba942bd2933da4a7a`.
 
 ### F-016 — G101 hardcoded-credential detection was globally disabled
 **Status:** RESOLVED by T-042  
 **Category:** Security / credential leakage / signal quality  
 **Severity:** High  
-**Root cause:** inherited broad SAST exclusion outlived its justification.  
-**Resolution:** G101 removed from global `-exclude`; global re-suppression is rejected by `scripts/test_gosec_policy.sh`.  
 **Qualified commit:** `668c8f77f0619aa8b88cc7dc0002d31651deedcf`.
 
 ### F-017 — G101 misclassifies the public HTTP worker protocol version as a credential
 **Status:** RESOLVED by T-042 failure recovery  
 **Category:** Security / scanner signal quality  
 **Severity:** Medium process risk; not a product vulnerability  
-**Evidence:** gosec v2.28 reported `adgo/http_worker.go` `HTTPWorkerProtocolVersion = "adgo-worker-v1"` as G101/CWE-798 with LOW confidence.  
-**Root cause:** G101 heuristic treats the public protocol-version constant as credential-like even though it carries no authentication secret.  
-**Rejected fix:** restore G101 global exclusion or silently exclude the whole file without compensating evidence.  
-**Resolution:** main scan excludes only `G101` for `adgo/http_worker.go`; `scripts/verify_g101_false_positive.sh` independently re-runs G101 on `adgo` and requires exactly one G101 finding, in `http_worker.go`, referencing `HTTPWorkerProtocolVersion`. A second credential-like finding therefore fails CI.  
-**Test-of-tests:** expected fixture PASS; second-G101 mutant KILLED; wrong-path mutant KILLED; global-G101-restoration mutant KILLED; missing-counter-scan mutant KILLED.  
+**Resolution:** one path-scoped false-positive exception plus exact independent G101 counter-scan; any second credential-like G101 in `adgo` fails CI.  
 **Qualified commit:** `668c8f77f0619aa8b88cc7dc0002d31651deedcf`.
 
 ### F-018 — Speculative budget aggregation ignored validation failure
 **Status:** RESOLVED by T-043  
-**Category:** Correctness / budget safety / security signal  
+**Category:** Correctness / budget safety  
 **Severity:** High  
-**Evidence:** exact G104 characterization reported `adgo/speculation.go:213` ignoring the return value from `addBudget(&budget, value.result.Budget)`. `addBudget` rejects invalid negative/non-finite usage and arithmetic overflow, so discarding its error allowed a speculative winner to be selected after failed budget aggregation.  
-**Root cause:** speculative result selection treated budget accumulation as infallible even though the shared accounting helper is explicitly fallible.  
-**Resolution:** fail immediately when any executed variant returns invalid budget usage; regression test proves an invalid variant cannot produce a speculative winner or partial aggregate. All seven scanner-reported cleanup/close findings were handled directly, and adjacent explicit cleanup discards in Pebble initialization / production construction were joined with their primary failures for consistent semantics.  
+**Resolution:** speculative result selection now propagates `addBudget` validation failure; cleanup/close findings were handled directly rather than suppressed.  
 **Qualified commit:** `8560aca04db9dde1777d079404ec69d1ce080044`.
 
 ### F-019 — Unchecked numeric narrowing and round-robin counter rollover under G115
 **Status:** RESOLVED by T-044  
 **Category:** Correctness / numeric safety / long-running runtime safety  
 **Severity:** High  
-**Evidence:** exact G115 characterization exposed unsafe `uint64 -> int64`, signed-to-unsigned and narrow destination conversions in `internal/typedconv`, plus `uint64 -> int` narrowing in `Host.Poll`. At counter rollover the former Host expression could narrow `MaxUint64` to `-1` on 64-bit systems and produce a negative order index.  
-**Root cause:** Go conversion semantics were treated as validation at external numeric boundaries, and the round-robin sequence was narrowed before modulo reduction.  
-**Resolution:** typed conversions now validate sign, target width, NaN/Inf and integer domains before assignment; numeric targets bypass unchecked `reflect.Convert`; Host keeps sequence/modulo arithmetic unsigned through indexing. Regression tests cover signed/unsigned/narrow/float boundaries and forced `atomic.Uint64` rollover. The 16 remaining G115 findings are internal IDs structurally derived from bounded in-memory indexes and are accepted only through an exact counter-scan that fails on any changed or additional G115 finding.  
+**Resolution:** typed numeric conversion is checked; Host round-robin stays unsigned through modulo; 16 structural internal-ID conversions are exact-counter-scanned.  
 **Qualified commit:** `685a2b8f478ac57fd90af613f30a684c12c99f0a`.
 
 ### F-020 — ADGO coordination lock files were created world-readable
 **Status:** RESOLVED by T-045  
-**Category:** Security / filesystem confidentiality / scanner signal quality  
+**Category:** Security / filesystem confidentiality  
 **Severity:** Medium  
-**Evidence:** exact G302 characterization reported five ADGO coordination lock creation sites using `0644`, plus one axiomgen append call whose mode is ignored because `O_CREATE` is absent. Lock records contain owner/coordination metadata and should follow the same private local-state boundary as durable files.  
-**Root cause:** generic `0644` defaults were copied into private coordination paths, while the generator supplied a meaningless mode argument to a non-creating `OpenFile` call.  
-**Resolution:** introduced `privateLockFileMode = 0600` and applied it to all five ADGO lock creation sites; POSIX regression evidence verifies created owned locks are `0600`; axiomgen append now uses mode `0`, preserving existing generated-source permissions. G302 is globally enabled with no G302 path or inline suppressions.  
+**Resolution:** all five ADGO lock creation sites use `privateLockFileMode = 0600`; axiomgen append uses mode `0` because it does not create files.  
 **Qualified commit:** `80c78cdb611cac857ce2dc1a674e952118a945ea`.
+
+### F-021 — ADGO private runtime/durable directories were group/world traversable
+**Status:** RESOLVED by T-046  
+**Category:** Security / filesystem confidentiality / deployment boundary  
+**Severity:** Medium  
+**Evidence:** exact G301 characterization contained 20 findings: 19 ADGO runtime/durable state or coordination directories created `0755`, plus one intentionally shareable `axiomgen` output directory.  
+**Root cause:** the same generic directory mode was used for two distinct permission domains: private runtime state and generated source output.  
+**Resolution:** introduced `privateStateDirMode = 0700` and applied it to all 19 ADGO findings, including execution state, inbox/commits, locks, cache, schedules, provider health, admission state, artifact content-addressed storage and production roots. POSIX regression tests verify actual directory modes. `axiomgen` remains `0755` under one path-scoped exception; `verify_g301_codegen_directory.sh` re-runs exact G301 repo-wide and permits exactly that one finding.  
+**Qualified commit:** `abb08b7381ad7ff5eaa750ccf1e6fc2081c4454e`.
 
 ---
 
@@ -200,13 +197,13 @@ Repository/process state:
 ### M0 — Trustworthy execution process
 
 - **T-001 — authoritative `MASTER_PLAN.md`: DONE**, commit `414f01c84ec215b29784cbfa7e5987cb35cdea41`.
-- **T-004 — deterministic hedge timing: DONE**, commit `3a0ba3034f9202a38108fe412286f4e337a90f21`, all gates PASS.
+- **T-004 — deterministic hedge timing: DONE**, commit `3a0ba3034f9202a38108fe412286f4e337a90f21`.
 - **T-010 — protect `main`: BLOCKED**, external GitHub repository setting.
 
 ### M1 — Release correctness and provenance
 
 - **T-002 — frozen release metadata resolution: DONE**, commit `094de51e4e42d72d4bdb4f813f342cee71f9ac87`.
-- **T-003 — single fail-closed publication/verification contract: DONE**, commit `8e1b11560305d56010049c992968c11f3197ca9e`, qualified after independent F-014 was removed.
+- **T-003 — single fail-closed publication/verification contract: DONE**, commit `8e1b11560305d56010049c992968c11f3197ca9e`.
 
 ### M2 — Durable correctness closure
 
@@ -224,82 +221,20 @@ Repository/process state:
 
 ### M4 — Security boundary reduction
 
-#### T-040 — Enable G404 globally and constrain deterministic retry-jitter exception
-**Status:** DONE  
-**Finding:** F-015  
-**Qualified commit:** `d611198a92f17011e487f5dba942bd2933da4a7a`.
+- **T-040 — G404 globally + deterministic-jitter exception contract: DONE**, qualified `d611198a92f17011e487f5dba942bd2933da4a7a`.
+- **T-042 — G101 globally + fail-closed protocol-version false-positive contract: DONE**, qualified `668c8f77f0619aa8b88cc7dc0002d31651deedcf`.
+- **T-043 — G104 globally + ignored-error closure: DONE**, qualified `8560aca04db9dde1777d079404ec69d1ce080044`.
+- **T-044 — G115 globally + checked numeric boundaries: DONE**, qualified `685a2b8f478ac57fd90af613f30a684c12c99f0a`.
+- **T-045 — G302 globally + private lock-file permissions: DONE**, qualified `80c78cdb611cac857ce2dc1a674e952118a945ea`.
+- **T-046 — G301 globally + private state-directory permissions: DONE**, qualified `abb08b7381ad7ff5eaa750ccf1e6fc2081c4454e`.
 
-#### T-042 — Enable G101 globally with a fail-closed false-positive contract
-**Status:** DONE  
-**Priority:** P1  
-**Findings:** F-016, F-017  
-**Activation commit:** `f98e049bc323c780cf4c780a9d4b2c94ab6cb3d5` — exposed F-017 and correctly failed security qualification.  
-**Recovery/qualified commit:** `668c8f77f0619aa8b88cc7dc0002d31651deedcf`.
-
-Acceptance satisfied:
-- G101 absent from global `-exclude`;
-- global G101/G404 restoration is sentinel-blocked;
-- G404 deterministic-jitter exception remains constrained;
-- the G101 public-protocol false positive is path-scoped and independently counter-scanned;
-- any second G101 in `adgo` fails the targeted contract;
-- production Go code and public API were unchanged by the recovery commit;
-- security, full CI/race, quality-loop and module-checksum all PASS.
-
-#### T-043 — Enable G104 globally and close ignored-error findings
-**Status:** DONE  
-**Priority:** P1  
-**Finding:** F-018  
-**Characterization commit:** `aa823e1613a44445fd552a634f8abc399116f39d` — exact v2.28.0 scan, fully qualified.  
-**Implementation/qualified commit:** `8560aca04db9dde1777d079404ec69d1ce080044`.
-
-Acceptance satisfied:
-- G104 removed from global `-exclude` and added to the anti-regression policy sentinel;
-- no G104 path or inline suppressions introduced;
-- speculative budget aggregation fails closed on `addBudget` validation errors;
-- all seven scanner-reported cleanup/close findings are handled directly; adjacent explicit Pebble/production cleanup discards are also eliminated;
-- temporary informational characterization step removed after evidence capture;
-- focused regression test catches the former ignored-budget error;
-- exact G104-enabled gosec v2.28.0 scan PASS;
-- security, Linux/macOS/Windows tests, race, lint/fuzz/examples/codegen/downstream/release/benchmark, quality-loop, module checksum and CI Completion Gate all PASS.
-
-#### T-044 — Enable G115 globally and close unsafe numeric boundaries
-**Status:** DONE  
-**Priority:** P1  
-**Finding:** F-019  
-**Implementation/qualified commit:** `685a2b8f478ac57fd90af613f30a684c12c99f0a`.
-
-Acceptance satisfied:
-- G115 removed from global `-exclude`; policy sentinel blocks restoration of a broad G115 exclusion;
-- typed numeric conversion rejects signed/unsigned crossings, target-width overflow and non-finite/out-of-domain float-to-integer conversion;
-- numeric target conversion cannot bypass validation through `reflect.Convert`;
-- Host round-robin performs modulo reduction without `uint64 -> int` narrowing and survives forced counter rollover;
-- no inline G115 suppressions were introduced;
-- only the four reviewed internal compiler/runtime ID paths are G115 path-scoped;
-- `verify_g115_internal_ids.sh` independently re-runs exact gosec v2.28.0 G115 and requires exactly 16 findings with the fixed `5+4+3+4` file multiset; any new or moved G115 finding fails CI;
-- security, Linux/macOS/Windows tests, race, lint/fuzz/examples/codegen/downstream/release/benchmark, Plan & Edge-Space, Boundary Shuffle & Sentinels, module checksum and CI Completion Gate all PASS.
-
-#### T-045 — Enable G302 globally and establish private lock-file permissions
-**Status:** DONE  
-**Priority:** P1  
-**Finding:** F-020  
-**Implementation/qualified commit:** `80c78cdb611cac857ce2dc1a674e952118a945ea`.
-
-Acceptance satisfied:
-- G302 removed from global `-exclude`; policy sentinel blocks restoration of broad G302 suppression;
-- no G302 path or inline suppressions were introduced;
-- all five ADGO lock creation sites create private coordination files with mode `0600`;
-- POSIX regression test verifies the owned lock-file mode on Linux/macOS and is intentionally skipped on Windows where POSIX mode bits are not the ACL contract;
-- axiomgen append uses mode `0` because no `O_CREATE` flag is present, so existing generated-source permissions are preserved rather than made private merely to satisfy SAST;
-- exact G302-enabled gosec v2.28.0 PASS;
-- security, Linux/macOS/Windows tests, race, lint/fuzz/examples/codegen/downstream/release/benchmark, Plan & Edge-Space, Boundary Shuffle & Sentinels, module checksum and CI Completion Gate all PASS.
-
-#### T-046 — Select and remove the next global gosec exclusion
+#### T-047 — Select and remove the next global gosec exclusion
 **Status:** READY  
 **Priority:** P1  
-**Evidence available:** `G301=20`, `G304=18`, `G306=4`, `G703=14`. T-045 established the private-runtime-vs-generated-artifact filesystem boundary. G301 is the leading candidate because many findings are private ADGO state/coordination directories, while the axiomgen output directory may need a distinct public/generated-artifact contract. G304/G703 require path provenance/root-containment analysis; G306 includes intentional generated/benchmark outputs and must not be “fixed” by making public artifacts private without product justification.
+**Candidates:** `G304=18`, `G306=4`, `G703=14` from the exact characterization baseline.  
+**Selection rule:** characterize actual current findings first. G306 is the leading low-complexity candidate only if its four findings are truly intentional generated/public outputs that can be captured by a narrow executable permission contract. G304/G703 may have higher security value but require path provenance/root-containment analysis and must not be path-excluded wholesale.
 
-#### T-041 — Supply-chain provenance, remaining workflow permission minimization, container digest pinning
-**Status:** TODO, P2.
+- **T-041 — supply-chain provenance, remaining workflow permission minimization, container digest pinning:** TODO, P2.
 
 ### M5 — API and compatibility freeze
 
@@ -325,15 +260,16 @@ Acceptance satisfied:
 
 - REJECTED: merge Core and ADGO into one mega-runtime.
 - REJECTED: exactly-once claims for external effects.
-- REJECTED: retry-away/disable/weaken tests or scanners to regain green.
-- REJECTED: replace deterministic jitter with crypto randomness or a home-grown PRNG merely to silence SAST.
+- REJECTED: retry-away, disable or weaken tests/scanners to regain green.
+- REJECTED: replace deterministic retry jitter with cryptographic randomness merely to silence SAST.
 - REJECTED: leave G404 globally disabled for one deterministic false positive.
 - REJECTED: restore G101 global suppression because one public protocol-version constant is misclassified.
-- REJECTED: path-exclude a G101-bearing credential boundary without an independent counter-scan.
-- REJECTED: suppress G104 cleanup errors or the speculative budget validation error instead of handling them.
-- REJECTED: restore G115 as a broad global exclusion or accept a G115 path exception without an exact independent counter-scan.
-- REJECTED: restore G302 globally or make generated source private merely to silence G302/G306.
-- REJECTED: enable permission/path/integer rules in bulk without classifying their distinct contracts.
+- REJECTED: path-exclude a credential boundary without an independent counter-scan.
+- REJECTED: suppress G104 cleanup/budget validation errors instead of handling them.
+- REJECTED: restore G115 globally or accept a G115 path exception without an exact counter-scan.
+- REJECTED: restore G302/G301 globally or make generated source private merely to satisfy permission scanners.
+- REJECTED: treat an entire generator/source subtree as trusted for G301; only the exact one-finding contract is accepted.
+- REJECTED: enable permission/path rules in bulk without classifying their distinct contracts.
 - REJECTED: tag-push as a second release publisher.
 - DEFERRED: generated typed-activity specialization until profiling proves value.
 
@@ -341,97 +277,41 @@ Acceptance satisfied:
 
 ## 5. Iteration log
 
-### Iteration 1 — T-001
-Authoritative plan established; commit `414f01c84ec215b29784cbfa7e5987cb35cdea41`; all gates PASS.
-
-### Iteration 2 — T-002
-Frozen release metadata made executable/testable; F-003/F-010 resolved; semantic mutants killed; commit `094de51e4e42d72d4bdb4f813f342cee71f9ac87`; all gates PASS.
-
-### Iteration 3 — T-003
-Release verification reuses current DAGs and publication is fail-closed/single-entrypoint; F-004/F-011/F-012/F-013 resolved; commit `8e1b11560305d56010049c992968c11f3197ca9e`.
-
-### Iteration 4 — T-004
-Pre-existing deterministic-clock flake found by quality-loop and root-caused to timer registration order; commit `3a0ba3034f9202a38108fe412286f4e337a90f21`; full CI/race/security/quality PASS.
-
-### Iteration 5 — T-040
-G404 enabled globally; deterministic retry-jitter exception constrained by executable sentinel; test-of-tests killed global-G404 and added-rand-API mutants; commit `d611198a92f17011e487f5dba942bd2933da4a7a`; all gates PASS.
-
-### Iteration 6 — T-042 activation
-- Pre-flight search found no obvious production credential literals.
-- Commit `f98e049bc323c780cf4c780a9d4b2c94ab6cb3d5` removed G101 from global exclusion and strengthened the policy sentinel.
-- Post-push security correctly FAILED: G101 exposed `HTTPWorkerProtocolVersion = "adgo-worker-v1"` as a LOW-confidence false positive.
-- Learning: code search cannot substitute for executing the exact scanner; false-positive characterization belongs in the failure-recovery loop.
-
-### Iteration 6A — T-042 failure recovery
-- Finding F-017 recorded conceptually before remediation: public protocol version misclassified as credential.
-- Rejected global rollback and unguarded file-level blindness.
-- Added exact path-scoped G101 exclusion plus `verify_g101_false_positive.sh` counter-scan.
-- Test-of-tests: normal fixture PASS; second-finding mutant KILLED; wrong-path mutant KILLED; global-G101 mutant KILLED; missing-guard mutant KILLED.
-- Commit `668c8f77f0619aa8b88cc7dc0002d31651deedcf`.
-- Qualification: G101 main scan PASS, targeted false-positive contract PASS, govulncheck PASS, Gitleaks PASS, Linux/macOS/Windows tests PASS, race PASS, lint/fuzz/examples/codegen/downstream/release/benchmark gates PASS, quality-loop PASS, module checksum PASS.
-- Process learning: a necessary path exclusion is acceptable only when a narrower executable counter-scan closes the blind spot.
-
-### Iteration 7 — T-043 characterization
-- Commit `aa823e1613a44445fd552a634f8abc399116f39d` added a temporary informational exact gosec v2.28.0 scan without weakening the enforced SAST scan.
-- Measured 92 findings: G104=8, G115=22, G301=20, G302=6, G304=18, G306=4, G703=14.
-- Full CI/race, security, quality-loop and module checksum PASS.
-- Selected G104 because one finding exposed F-018; G306, although smaller, is dominated by intentional public artifact permissions and needs a separate policy.
-
-### Iteration 7A — T-043 implementation and qualification
-- G104 removed from global suppression; policy sentinel prevents G104 from returning to the global exclude list.
-- F-018 fixed by propagating `addBudget` validation failure from speculative result selection.
-- Regression test asserts invalid speculative budget cannot produce a winner or partial budget result.
-- Pebble iterator/closer errors are propagated; Pebble/production startup cleanup errors are joined with primary initialization failures.
-- Temporary characterization step removed after evidence capture.
-- Commit `8560aca04db9dde1777d079404ec69d1ce080044`.
-- Qualification: G104-enabled gosec PASS, G101 counter-scan PASS, govulncheck/Gitleaks PASS, Linux/macOS/Windows PASS, race PASS, lint/fuzz/examples/codegen/downstream/release/benchmark PASS, Plan & Edge-Space PASS, Boundary Shuffle & Sentinels PASS, module checksum PASS, CI Completion Gate PASS.
-- Learning: rule-count alone is not the selection criterion; a slightly larger rule set with a real fail-closed defect can have higher engineering value than a smaller set dominated by intentional policy choices.
-
-### Iteration 8 — T-044 implementation and qualification
-- Selected G115 after exact finding review exposed two real boundary classes rather than treating all 22 findings uniformly.
-- `typedconv` now validates sign, target width and float domain before numeric assignment; named numeric types follow the same checked path and unchecked `reflect.Convert` no longer bypasses numeric validation.
-- `Host.Poll` keeps the round-robin sequence unsigned through modulo reduction; a regression test forces `atomic.Uint64` rollover and proves the old negative-index failure mode is gone.
-- The remaining 16 internal compiler/runtime ID conversions are intentionally retained to avoid redundant hot-path checks and public/state type churn; their exact four-file finding multiset is independently counter-scanned and expansion fails CI.
-- Commit `685a2b8f478ac57fd90af613f30a684c12c99f0a`.
-- Qualification: G115-enabled main gosec PASS, G101 counter-scan PASS, G115 internal-ID counter-scan PASS, Gitleaks/govulncheck PASS, Linux/macOS/Windows PASS, race PASS, lint/fuzz/examples/codegen/downstream/release/benchmark PASS, Plan & Edge-Space PASS, Boundary Shuffle & Sentinels PASS, module checksum PASS, CI Completion Gate PASS.
-- Learning: scanner debt should be split into real boundary defects and mechanically constrained invariants; neither blanket suppression nor hot-path checks added solely for SAST are acceptable defaults.
-
-### Iteration 9 — T-045 implementation and qualification
-- Selected G302 after separating private runtime coordination files from generated source artifacts.
-- Five ADGO lock creation sites now use the shared `privateLockFileMode = 0600`; durable JSON already used owner-only temp-file creation, so this aligns coordination metadata with the existing local-state boundary.
-- A POSIX regression test observes a live owned lock and requires mode `0600`; Windows skips this POSIX-specific assertion rather than pretending mode bits represent Windows ACL semantics.
-- The axiomgen append path now passes mode `0`: because `O_CREATE` is absent, the mode is not a creation policy and existing generated-source permissions remain unchanged.
-- G302 was removed from the global exclusion list and added to the anti-regression policy sentinel; no G302 suppression was introduced.
-- Commit `80c78cdb611cac857ce2dc1a674e952118a945ea`.
-- Qualification: G302-enabled main gosec PASS, G101/G115 counter-scans PASS, Gitleaks/govulncheck PASS, Linux/macOS/Windows PASS, race PASS, lint/fuzz/examples/codegen/downstream/release/benchmark PASS, Plan & Edge-Space PASS, Boundary Shuffle & Sentinels PASS, module checksum PASS, CI Completion Gate PASS.
-- Learning: permission scanners become useful when the repository first distinguishes private runtime state from intentionally shareable artifacts; meaningless mode arguments should be removed semantically rather than converted into arbitrary stricter permissions.
+1. **T-001** — authoritative plan established; `414f01c84ec215b29784cbfa7e5987cb35cdea41`; all gates PASS.
+2. **T-002** — frozen release metadata; `094de51e4e42d72d4bdb4f813f342cee71f9ac87`; all gates PASS.
+3. **T-003/T-004** — fail-closed single release path plus deterministic hedge-timer race fix; `8e1b11560305d56010049c992968c11f3197ca9e` / `3a0ba3034f9202a38108fe412286f4e337a90f21`.
+4. **T-040** — G404 global enablement with deterministic-jitter sentinel; `d611198a92f17011e487f5dba942bd2933da4a7a`.
+5. **T-042** — G101 activation exposed a real scanner false positive; recovery added exact counter-scan rather than global rollback; qualified `668c8f77f0619aa8b88cc7dc0002d31651deedcf`.
+6. **T-043** — exact SAST characterization (`aa823e1613a44445fd552a634f8abc399116f39d`) then G104 closure, including fail-closed speculative budget accounting; qualified `8560aca04db9dde1777d079404ec69d1ce080044`.
+7. **T-044** — G115 closure: checked typed numeric boundaries, Host rollover fix, exact internal-ID counter-scan; qualified `685a2b8f478ac57fd90af613f30a684c12c99f0a`.
+8. **T-045** — G302 closure: private lock files `0600`, meaningless generator append mode removed; qualified `80c78cdb611cac857ce2dc1a674e952118a945ea`.
+9. **T-046 characterization/implementation** — historical exact scan split 20 G301 findings into 19 private ADGO directories and one intentionally shareable axiomgen output directory. A malformed local Git-tree candidate (`669832323de3605f19b127b06d745565cf792420`) was caught by pre-push diff inspection and never moved to `main`. Corrected implementation `abb08b7381ad7ff5eaa750ccf1e6fc2081c4454e` introduced `privateStateDirMode = 0700`, POSIX mode regressions and exact repo-wide G301 one-finding counter-scan. Security, Linux/macOS/Windows, race, lint/fuzz/examples/codegen/downstream/release/benchmark, Plan & Edge-Space, Boundary Shuffle & Sentinels, module checksum and CI Completion Gate all PASS.
 
 ---
 
 ## 6. Continuation checkpoint
 
-CURRENT QUALIFIED HEAD: `80c78cdb611cac857ce2dc1a674e952118a945ea`  
-CURRENT QUALIFIED MILESTONE: release correctness closed; deterministic quality gate restored; G404/G101/G104/G115/G302 broad global suppression debt closed; four gosec rule families remain globally excluded.
+CURRENT QUALIFIED HEAD: `abb08b7381ad7ff5eaa750ccf1e6fc2081c4454e`  
+CURRENT QUALIFIED MILESTONE: release correctness closed; deterministic quality gate restored; broad global suppression debt for G404/G101/G104/G115/G302/G301 closed; **three** gosec rule families remain globally excluded.
 
 OPEN CRITICAL/HIGH:
 - F-002 unprotected `main` — external blocker;
 - F-005 Core/ADGO durable duplication;
 - F-006 Flow crash-boundary proof gap;
-- F-007 remaining global gosec exclusions `G301,G304,G306,G703`;
+- F-007 remaining global gosec exclusions `G304,G306,G703`;
 - F-008 no mechanical API compatibility gate.
 
 NEXT TASK:
-- T-046 — select and qualify the next global gosec exclusion from measured evidence.
+- **T-047 — characterize and qualify the next global gosec exclusion.**
 
-SELECTION GUIDANCE FOR T-046:
-- G301 is the leading next candidate because T-045 established an explicit private runtime filesystem boundary; classify all 20 directory findings into private state/coordination versus generated/public artifact directories before changing modes;
-- do not make axiomgen output or benchmark/generated artifacts private merely to satisfy a scanner; if their public readability/traversability is intentional, encode that as an explicit narrow contract;
-- G304/G703 require source-to-sink path provenance and root-containment analysis, not directory-wide suppressions;
-- G306 has only four findings but includes intentionally generated/benchmark outputs, so finding count alone is not a reason to choose it.
+SELECTION GUIDANCE FOR T-047:
+- run exact current G306/G304/G703 evidence before changing policy;
+- G306 may be the cleanest next step if all four findings belong to intentionally shareable generated/benchmark artifacts; encode an explicit executable public-artifact contract rather than changing them to private permissions;
+- G304/G703 require source/sink provenance and root-containment analysis and are higher-risk if addressed with broad path suppressions;
+- choose engineering/security value, not lowest finding count alone.
 
 VERIFICATION FOR NEXT ITERATION:
-- exact-rule evidence against current qualified HEAD;
-- executable regression tests for any real defect;
+- exact-rule evidence against the qualified checkpoint HEAD;
+- executable regression/counter-scan evidence for every retained exception;
 - no broad replacement suppression;
-- security workflow;
-- full `ci`, `quality-loop`, `module-checksum` qualification.
+- `security`, full `ci`, `quality-loop`, and `module-checksum` qualification.
