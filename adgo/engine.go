@@ -21,16 +21,16 @@ var (
 // Engine adds durable queues, external workers, heartbeats, fencing, fair
 // polling, adaptive provider routing and a coordinator service loop.
 type Engine struct {
-	plan               *Plan
-	store              Store
-	registry           *Registry
-	runtime            *Runtime
-	scheduler          Scheduler
-	router             *AdaptiveRouter
-	leaseTTL           time.Duration
-	pollInterval       time.Duration
+	plan                *Plan
+	store               Store
+	registry            *Registry
+	runtime             *Runtime
+	scheduler           Scheduler
+	router              *AdaptiveRouter
+	leaseTTL            time.Duration
+	pollInterval        time.Duration
 	coordinatorInterval time.Duration
-	maxLeaseRecoveries int
+	maxLeaseRecoveries  int
 
 	locksMu sync.Mutex
 	locks   map[string]*sync.Mutex
@@ -122,10 +122,10 @@ func NewEngine(plan *Plan, store Store, registry *Registry, opts ...EngineOption
 	return e, nil
 }
 
-func (e *Engine) Runtime() *Runtime                { return e.runtime }
-func (e *Engine) Router() *AdaptiveRouter          { return e.router }
-func (e *Engine) Store() Store                     { return e.store }
-func (e *Engine) Plan() *Plan                      { return e.plan }
+func (e *Engine) Runtime() *Runtime       { return e.runtime }
+func (e *Engine) Router() *AdaptiveRouter { return e.router }
+func (e *Engine) Store() Store            { return e.store }
+func (e *Engine) Plan() *Plan             { return e.plan }
 
 func (e *Engine) Start(ctx context.Context, id string, initial map[string]any, budget BudgetLimit) (*Execution, error) {
 	return e.runtime.Start(ctx, id, initial, budget)
@@ -231,7 +231,12 @@ func (e *Engine) Advance(ctx context.Context, executionID string) (AdvanceResult
 		return advanceResult(cur, progressed, nil, waitingNodes(cur)), nil
 	}
 
-	candidates, waiting, err := e.readyCandidates(ctx, cur)
+	// One coordinator super-step must make readiness and deadlock decisions from
+	// the same semantic-time snapshot. Otherwise a NotBefore deadline can expire
+	// between ready-set derivation and the pending-time check, making a runnable
+	// retry look deadlocked for one irreversible commit.
+	decisionNow := e.now()
+	candidates, waiting, err := e.readyCandidatesAt(ctx, cur, decisionNow)
 	if err != nil {
 		return AdvanceResult{}, err
 	}
@@ -276,7 +281,7 @@ func (e *Engine) Advance(ctx context.Context, executionID string) (AdvanceResult
 		}
 		return advanceResult(cur, true, nil, nil), nil
 	}
-	if len(waiting) > 0 || hasPendingTimeAt(cur, e.now()) {
+	if len(waiting) > 0 || hasPendingTimeAt(cur, decisionNow) {
 		if cur.Status != StatusWaiting && cur.Status != StatusHuman {
 			cur, err = e.mutate(ctx, executionID, func(x *Execution) error {
 				x.Status = StatusWaiting
@@ -321,7 +326,10 @@ func advanceResult(execution *Execution, progressed bool, queued, waiting []stri
 }
 
 func (e *Engine) readyCandidates(ctx context.Context, execution *Execution) ([]Candidate, []string, error) {
-	now := e.now()
+	return e.readyCandidatesAt(ctx, execution, e.now())
+}
+
+func (e *Engine) readyCandidatesAt(ctx context.Context, execution *Execution, now time.Time) ([]Candidate, []string, error) {
 	out := make([]Candidate, 0)
 	waiting := make([]string, 0)
 	ids := make([]string, 0, len(e.plan.Nodes))
