@@ -95,6 +95,17 @@ func (s *ContentAddressedStore) relativePath(ref ArtifactRef) (string, error) {
 	return filepath.Join(digest[:2], digest), nil
 }
 
+// path returns the validated on-disk artifact path for internal inspection and
+// permission tests. Reads still use os.OpenInRoot/OpenRoot so symlink traversal
+// cannot escape the content-addressed root.
+func (s *ContentAddressedStore) path(ref ArtifactRef) (string, error) {
+	rel, err := s.relativePath(ref)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(s.root, "sha256", rel), nil
+}
+
 func (s *ContentAddressedStore) Open(ref ArtifactRef) (io.ReadCloser, error) {
 	rel, err := s.relativePath(ref)
 	if err != nil {
