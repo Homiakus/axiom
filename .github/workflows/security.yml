@@ -82,14 +82,10 @@ jobs:
       - name: Run gosec
         shell: bash
         run: |
-          # G101, G104, G115, G301, G302, G306, G404 and G703 are enabled
-          # repository-wide. Reviewed false positives / structurally bounded
-          # internal conversions / intentionally shareable artifacts / durable
-          # path-provenance findings are path-scoped and independently checked.
+          # Characterization branch: G304 is intentionally enabled here to collect exact evidence.
           go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 \
             -exclude-dir=examples \
             -exclude-dir=internal/testutil \
-            -exclude=G304 \
             -exclude-rules='adgo/runtime\.go:G404;adgo/http_worker\.go:G101;internal/runtime/fast_vm\.go:G115;internal/runtime/expr_vm\.go:G115;internal/runtime/engine\.go:G115;internal/compiler/module\.go:G115;cmd/axiomgen/internal/generate/generate\.go:G301;cmd/axiombench/main\.go:G306;cmd/axiomgen/internal/generate/generate\.go:G306;adgo/catalog\.go:G703;adgo/file_lock\.go:G703;adgo/file_lock_heartbeat\.go:G703;adgo/store\.go:G703' \
             -nosec-require-rules \
             -nosec-require-justification \
