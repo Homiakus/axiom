@@ -40,6 +40,30 @@ type FlowEffectCompletion struct {
 	ID string `json:"id"`
 }
 
+// FlowOutboxStatus is a bounded-cardinality diagnostic snapshot of one durable
+// Flow execution. It intentionally exposes aggregate counts and the oldest
+// pending history position rather than per-effect labels.
+type FlowOutboxStatus struct {
+	HistoryLength         int
+	Pending               int
+	Completed             int
+	OldestPendingSequence int
+	OldestPendingAt       time.Time
+}
+
+// HasPending reports whether the durable outbox contains recoverable work.
+func (s FlowOutboxStatus) HasPending() bool { return s.Pending > 0 }
+
+// FlowOutboxDrainResult describes the durable work performed by one bounded
+// drain call. Attempted counts external handler invocations; Acknowledged counts
+// completion markers durably appended. Remaining is the number of pending
+// intents still unacknowledged when the call returned.
+type FlowOutboxDrainResult struct {
+	Attempted     int
+	Acknowledged int
+	Remaining    int
+}
+
 // FlowEffectDeliveryError means reducer state and the effect intent are already
 // committed, but the external handler failed. Retrying the business event would
 // apply the reducer again; call DrainEffects to retry only the pending effect.
@@ -209,35 +233,99 @@ func (e *FlowExecution[S]) dispatchDurableLocked(ctx context.Context, event any)
 	return e.drainDurableEffectsLocked(ctx, store)
 }
 
-// DrainEffects retries durable outbox items that have no EffectCompleted
-// acknowledgement. Delivery is at-least-once; use FlowEffectIDFromContext as
-// the downstream idempotency key when exactly-once business effects matter.
-func (e *FlowExecution[S]) DrainEffects(ctx context.Context) error {
-	if e == nil || e.engine == nil || e.id == "" {
-		return fmt.Errorf("axiom: valid flow execution is required")
+// OutboxStatus returns a read-only aggregate snapshot of the durable outbox for
+// this execution. It does not invoke effect handlers or modify durable state.
+func (e *FlowExecution[S]) OutboxStatus(ctx context.Context) (FlowOutboxStatus, error) {
+	if err := e.validateDurableOutboxExecution(); err != nil {
+		return FlowOutboxStatus{}, err
 	}
-	if !e.engine.durableEffects {
-		return fmt.Errorf("axiom: flow was not opened with WithDurableFlowEffects")
+	unlock := e.engine.locks.Lock(e.id)
+	defer unlock()
+	view, err := e.loadDurableOutboxLocked(ctx, e.engine.store.(DurableFlowStore))
+	if err != nil {
+		return FlowOutboxStatus{}, err
+	}
+	return view.status(), nil
+}
+
+// DrainEffects retries every currently pending durable outbox item. Delivery is
+// at-least-once; use FlowEffectIDFromContext as the downstream idempotency key
+// when exactly-once business effects matter.
+func (e *FlowExecution[S]) DrainEffects(ctx context.Context) error {
+	if err := e.validateDurableOutboxExecution(); err != nil {
+		return err
 	}
 	unlock := e.engine.locks.Lock(e.id)
 	defer unlock()
 	return e.drainDurableEffectsLocked(ctx, e.engine.store.(DurableFlowStore))
 }
 
-func (e *FlowExecution[S]) drainDurableEffectsLocked(ctx context.Context, store DurableFlowStore) error {
+// DrainEffectsLimit retries at most maxDeliveries pending durable effects in
+// strict outbox order. maxDeliveries must be positive. A successful partial
+// drain is not an error; inspect Remaining to schedule another bounded call.
+// The result is also returned alongside delivery/acknowledgement errors so the
+// caller can account for work already attempted or durably acknowledged.
+func (e *FlowExecution[S]) DrainEffectsLimit(ctx context.Context, maxDeliveries int) (FlowOutboxDrainResult, error) {
+	if err := e.validateDurableOutboxExecution(); err != nil {
+		return FlowOutboxDrainResult{}, err
+	}
+	if maxDeliveries <= 0 {
+		return FlowOutboxDrainResult{}, fmt.Errorf("axiom: durable flow drain limit must be positive")
+	}
+	unlock := e.engine.locks.Lock(e.id)
+	defer unlock()
+	return e.drainDurableEffectsLockedLimit(ctx, e.engine.store.(DurableFlowStore), maxDeliveries)
+}
+
+func (e *FlowExecution[S]) validateDurableOutboxExecution() error {
+	if e == nil || e.engine == nil || e.id == "" {
+		return fmt.Errorf("axiom: valid flow execution is required")
+	}
+	if !e.engine.durableEffects {
+		return fmt.Errorf("axiom: flow was not opened with WithDurableFlowEffects")
+	}
+	return nil
+}
+
+type durableFlowPending struct {
+	entry  FlowHistoryEntry
+	intent FlowEffectIntent
+}
+
+type durableFlowOutboxView struct {
+	state         []byte
+	historyLength int
+	completed     map[string]struct{}
+	pending       []durableFlowPending
+}
+
+func (v durableFlowOutboxView) status() FlowOutboxStatus {
+	status := FlowOutboxStatus{
+		HistoryLength: v.historyLength,
+		Pending:       len(v.pending),
+		Completed:     len(v.completed),
+	}
+	if len(v.pending) > 0 {
+		status.OldestPendingSequence = v.pending[0].entry.Sequence
+		status.OldestPendingAt = v.pending[0].entry.CreatedAt
+	}
+	return status
+}
+
+func (e *FlowExecution[S]) loadDurableOutboxLocked(ctx context.Context, store DurableFlowStore) (durableFlowOutboxView, error) {
 	state, historyLength, found, err := store.LoadState(ctx, e.engine.flow.name, e.id)
 	if err != nil {
-		return err
+		return durableFlowOutboxView{}, err
 	}
 	if !found {
-		return nil
+		return durableFlowOutboxView{completed: map[string]struct{}{}}, nil
 	}
 	history, err := store.LoadHistory(ctx, e.engine.flow.name, e.id)
 	if err != nil {
-		return err
+		return durableFlowOutboxView{}, err
 	}
 	if historyLength != len(history) {
-		return fmt.Errorf("axiom: durable flow store history length mismatch: state reports %d, history has %d", historyLength, len(history))
+		return durableFlowOutboxView{}, fmt.Errorf("axiom: durable flow store history length mismatch: state reports %d, history has %d", historyLength, len(history))
 	}
 
 	completed := make(map[string]struct{})
@@ -247,35 +335,75 @@ func (e *FlowExecution[S]) drainDurableEffectsLocked(ctx context.Context, store 
 		}
 		completion, err := decodeFlowHistoryData[FlowEffectCompletion](entry.Data)
 		if err != nil {
-			return fmt.Errorf("axiom: decode durable flow effect completion at sequence %d: %w", entry.Sequence, err)
+			return durableFlowOutboxView{}, fmt.Errorf("axiom: decode durable flow effect completion at sequence %d: %w", entry.Sequence, err)
 		}
 		completed[completion.ID] = struct{}{}
 	}
 
+	pending := make([]durableFlowPending, 0)
 	for _, entry := range history {
 		if entry.Type != flowHistoryEffectPending {
 			continue
 		}
 		intent, err := decodeFlowHistoryData[FlowEffectIntent](entry.Data)
 		if err != nil {
-			return fmt.Errorf("axiom: decode durable flow effect intent at sequence %d: %w", entry.Sequence, err)
+			return durableFlowOutboxView{}, fmt.Errorf("axiom: decode durable flow effect intent at sequence %d: %w", entry.Sequence, err)
 		}
 		if _, ok := completed[intent.ID]; ok {
 			continue
 		}
+		pending = append(pending, durableFlowPending{entry: entry, intent: intent})
+	}
+	return durableFlowOutboxView{
+		state:         state,
+		historyLength: historyLength,
+		completed:     completed,
+		pending:       pending,
+	}, nil
+}
+
+func (e *FlowExecution[S]) drainDurableEffectsLocked(ctx context.Context, store DurableFlowStore) error {
+	_, err := e.drainDurableEffectsLockedLimit(ctx, store, 0)
+	return err
+}
+
+// maxDeliveries == 0 is the internal compatibility sentinel for drain-all.
+// Public DrainEffectsLimit rejects non-positive limits.
+func (e *FlowExecution[S]) drainDurableEffectsLockedLimit(
+	ctx context.Context,
+	store DurableFlowStore,
+	maxDeliveries int,
+) (FlowOutboxDrainResult, error) {
+	view, err := e.loadDurableOutboxLocked(ctx, store)
+	if err != nil {
+		return FlowOutboxDrainResult{}, err
+	}
+	result := FlowOutboxDrainResult{Remaining: len(view.pending)}
+	if len(view.pending) == 0 {
+		return result, nil
+	}
+
+	historyLength := view.historyLength
+	for _, pending := range view.pending {
+		if maxDeliveries > 0 && result.Attempted >= maxDeliveries {
+			return result, nil
+		}
+		entry := pending.entry
+		intent := pending.intent
 		handler, command, err := e.engine.flow.effectForDurableIntent(intent)
 		if err != nil {
-			return err
+			return result, err
 		}
 		if err := e.hitDurableFlowFailpoint(ctx, flowFailpointBeforeEffectDelivery, entry.Sequence, &intent); err != nil {
-			return err
+			return result, err
 		}
 		effectCtx := context.WithValue(ctx, flowEffectIDContextKey{}, intent.ID)
+		result.Attempted++
 		if err := handler(effectCtx, command); err != nil {
-			return &FlowEffectDeliveryError{EffectID: intent.ID, Name: intent.Name, Err: err}
+			return result, &FlowEffectDeliveryError{EffectID: intent.ID, Name: intent.Name, Err: err}
 		}
 		if err := e.hitDurableFlowFailpoint(ctx, flowFailpointAfterEffectDelivery, entry.Sequence, &intent); err != nil {
-			return err
+			return result, err
 		}
 		completion := FlowHistoryEntry{
 			Sequence:  historyLength + 1,
@@ -285,18 +413,20 @@ func (e *FlowExecution[S]) drainDurableEffectsLocked(ctx context.Context, store 
 			CreatedAt: time.Now().UTC(),
 		}
 		if err := e.hitDurableFlowFailpoint(ctx, flowFailpointBeforeAcknowledgeCommit, completion.Sequence, &intent); err != nil {
-			return err
+			return result, err
 		}
-		if err := store.SaveStateAndAppend(ctx, e.engine.flow.name, e.id, state, []FlowHistoryEntry{completion}); err != nil {
-			return &FlowEffectAcknowledgeError{EffectID: intent.ID, Name: intent.Name, Err: err}
-		}
-		if err := e.hitDurableFlowFailpoint(ctx, flowFailpointAfterAcknowledgeCommit, completion.Sequence, &intent); err != nil {
-			return err
+		if err := store.SaveStateAndAppend(ctx, e.engine.flow.name, e.id, view.state, []FlowHistoryEntry{completion}); err != nil {
+			return result, &FlowEffectAcknowledgeError{EffectID: intent.ID, Name: intent.Name, Err: err}
 		}
 		historyLength++
-		completed[intent.ID] = struct{}{}
+		view.completed[intent.ID] = struct{}{}
+		result.Acknowledged++
+		result.Remaining--
+		if err := e.hitDurableFlowFailpoint(ctx, flowFailpointAfterAcknowledgeCommit, completion.Sequence, &intent); err != nil {
+			return result, err
+		}
 	}
-	return nil
+	return result, nil
 }
 
 func (f *Flow[S]) effectForDurableIntent(intent FlowEffectIntent) (flowEffectHandler, any, error) {
