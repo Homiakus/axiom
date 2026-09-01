@@ -70,25 +70,49 @@ func (s *ContentAddressedStore) Put(name, mediaType string, r io.Reader) (Artifa
 	}
 	return ArtifactRef{URI: uri, Digest: "sha256:" + digest, Size: n, MediaType: mediaType}, nil
 }
-func (s *ContentAddressedStore) path(ref ArtifactRef) (string, error) {
-	digest := strings.TrimPrefix(ref.Digest, "sha256:")
-	if len(digest) != 64 {
+
+func canonicalArtifactDigest(ref ArtifactRef) (string, error) {
+	const prefix = "sha256:"
+	if !strings.HasPrefix(ref.Digest, prefix) {
 		return "", fmt.Errorf("adgo: invalid artifact digest %q", ref.Digest)
 	}
-	return filepath.Join(s.root, "sha256", digest[:2], digest), nil
+	digest := strings.TrimPrefix(ref.Digest, prefix)
+	if len(digest) != sha256.Size*2 || strings.ToLower(digest) != digest {
+		return "", fmt.Errorf("adgo: invalid artifact digest %q", ref.Digest)
+	}
+	decoded, err := hex.DecodeString(digest)
+	if err != nil || len(decoded) != sha256.Size {
+		return "", fmt.Errorf("adgo: invalid artifact digest %q", ref.Digest)
+	}
+	return digest, nil
 }
+
+func (s *ContentAddressedStore) relativePath(ref ArtifactRef) (string, error) {
+	digest, err := canonicalArtifactDigest(ref)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(digest[:2], digest), nil
+}
+
 func (s *ContentAddressedStore) Open(ref ArtifactRef) (io.ReadCloser, error) {
-	path, err := s.path(ref)
+	rel, err := s.relativePath(ref)
 	if err != nil {
 		return nil, err
 	}
-	return os.Open(path)
+	return os.OpenInRoot(filepath.Join(s.root, "sha256"), rel)
 }
+
 func (s *ContentAddressedStore) Exists(ref ArtifactRef) bool {
-	path, err := s.path(ref)
+	rel, err := s.relativePath(ref)
 	if err != nil {
 		return false
 	}
-	_, err = os.Stat(path)
+	root, err := os.OpenRoot(filepath.Join(s.root, "sha256"))
+	if err != nil {
+		return false
+	}
+	defer root.Close()
+	_, err = root.Stat(rel)
 	return err == nil
 }
