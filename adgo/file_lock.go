@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -62,6 +63,9 @@ func readFileLockRecord(path string) (fileLockRecord, error) {
 // primitives should use this helper instead of implementing anonymous lock-file
 // removal independently.
 func withOwnedFileLock(ctx context.Context, locksDir, filename string, staleAfter time.Duration, fn func() error) error {
+	if filename == "" || filename == "." || filename == ".." || filepath.Base(filename) != filename || strings.ContainsAny(filename, `/\\`) {
+		return fmt.Errorf("adgo: lock filename must be one path component: %q", filename)
+	}
 	if err := os.MkdirAll(locksDir, privateStateDirMode); err != nil {
 		return err
 	}

@@ -82,15 +82,15 @@ jobs:
       - name: Run gosec
         shell: bash
         run: |
-          # G101, G104, G115, G301, G302, G306 and G404 are enabled
+          # G101, G104, G115, G301, G302, G306, G404 and G703 are enabled
           # repository-wide. Reviewed false positives / structurally bounded
-          # internal conversions / intentionally shareable artifacts are
-          # path-scoped here and independently constrained by executable checks.
+          # internal conversions / intentionally shareable artifacts / durable
+          # path-provenance findings are path-scoped and independently checked.
           go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 \
             -exclude-dir=examples \
             -exclude-dir=internal/testutil \
-            -exclude=G304,G703 \
-            -exclude-rules='adgo/runtime\.go:G404;adgo/http_worker\.go:G101;internal/runtime/fast_vm\.go:G115;internal/runtime/expr_vm\.go:G115;internal/runtime/engine\.go:G115;internal/compiler/module\.go:G115;cmd/axiomgen/internal/generate/generate\.go:G301;cmd/axiombench/main\.go:G306;cmd/axiomgen/internal/generate/generate\.go:G306' \
+            -exclude=G304 \
+            -exclude-rules='adgo/runtime\.go:G404;adgo/http_worker\.go:G101;internal/runtime/fast_vm\.go:G115;internal/runtime/expr_vm\.go:G115;internal/runtime/engine\.go:G115;internal/compiler/module\.go:G115;cmd/axiomgen/internal/generate/generate\.go:G301;cmd/axiombench/main\.go:G306;cmd/axiomgen/internal/generate/generate\.go:G306;adgo/catalog\.go:G703;adgo/file_lock\.go:G703;adgo/file_lock_heartbeat\.go:G703;adgo/store\.go:G703' \
             -nosec-require-rules \
             -nosec-require-justification \
             -fmt=text \
@@ -111,3 +111,7 @@ jobs:
       - name: Verify scoped G306 public artifacts
         shell: bash
         run: bash scripts/verify_g306_public_artifacts.sh
+
+      - name: Verify scoped G703 path provenance
+        shell: bash
+        run: bash scripts/verify_g703_path_provenance.sh

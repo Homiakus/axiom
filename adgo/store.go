@@ -209,9 +209,10 @@ func (s *FileStore) loadUnlocked(id string) (*Execution, error) {
 	}
 	names := make([]string, 0, len(entries))
 	for _, ent := range entries {
-		if !ent.IsDir() && strings.HasSuffix(ent.Name(), ".json") {
-			names = append(names, ent.Name())
+		if ent.IsDir() || ent.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(ent.Name(), ".json") {
+			continue
 		}
+		names = append(names, ent.Name())
 	}
 	if len(names) == 0 {
 		return nil, ErrExecutionNotFound
@@ -326,7 +327,7 @@ func (s *FileStore) ListInbox(ctx context.Context, id string) ([]Event, error) {
 	}
 	out := []Event{}
 	for _, ent := range entries {
-		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".json") {
+		if ent.IsDir() || ent.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(ent.Name(), ".json") {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(s.inboxDir(id), ent.Name()))
@@ -365,6 +366,9 @@ func (s *FileStore) withExecutionLock(ctx context.Context, id string, fn func() 
 	}
 	locksDir := filepath.Join(s.root, "locks")
 	path := filepath.Join(locksDir, EncodeDurableName(id)+".lock")
+	if !IsContainedPath(locksDir, path) {
+		return fmt.Errorf("adgo: execution lock path escaped private lock root")
+	}
 	owner, err := newFileLockOwner()
 	if err != nil {
 		return err

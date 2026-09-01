@@ -70,9 +70,10 @@ func (s *FileStore) ListExecutionIDs(_ context.Context) ([]string, error) {
 		}
 		names := make([]string, 0, len(files))
 		for _, f := range files {
-			if !f.IsDir() && strings.HasSuffix(f.Name(), ".json") {
-				names = append(names, f.Name())
+			if f.IsDir() || f.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(f.Name(), ".json") {
+				continue
 			}
+			names = append(names, f.Name())
 		}
 		if len(names) == 0 {
 			continue
