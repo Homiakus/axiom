@@ -5,58 +5,56 @@ Baseline: `4c2a03f937640666687dbff9dc240b77a000a199`
 Scope: Core Axiom vs `adgo` durable primitives  
 Non-goal: this document does **not** authorize extraction or engine/store unification.
 
-## 1. Why this inventory exists
+## 1. Purpose and decision vocabulary
 
-Core Axiom and ADGO both implement durable orchestration, so several mechanisms look similar by name: retry, leases, clocks, versions, persistence markers and errors. Similar names are not sufficient evidence that contracts are behavior-identical.
+Core Axiom and ADGO both implement durable orchestration, so retry, leases, clocks, versions, persistence markers and errors can look duplicated. Similar names are not evidence of behavior-identical contracts.
 
-The architectural invariant is therefore:
+The governing invariant is:
 
-> Share only behavior-identical low-level primitives after executable characterization. Keep runtime state machines, store schemas and orchestration policy owned by their current engine unless equivalence is proved.
+> Share only behavior-identical low-level primitives after executable characterization. Keep runtime state machines, store schemas and orchestration policy engine-owned unless equivalence is proved.
 
-T-020 classifies every candidate into one of four outcomes:
+T-020 classifies candidates as:
 
-- **SHARE CANDIDATE** — contract is already equivalent enough to design a common acyclic boundary in T-021.
-- **PROVE FIRST** — concepts overlap, but values, lifecycle or failure semantics differ; characterization/property tests are required before extraction.
-- **KEEP SEPARATE** — apparent duplication is actually engine-specific policy/state and must not be merged.
-- **DEFER** — the question belongs to another planned compatibility/API task.
+- **SHARE CANDIDATE** — equivalent enough to design an acyclic common boundary in T-021.
+- **PROVE FIRST** — overlapping concepts with materially different values/lifecycle/failure semantics.
+- **KEEP SEPARATE** — apparent duplication is engine-specific policy or state.
+- **DEFER** — belongs to another compatibility/API task.
 
-No source or persisted-format behavior is changed by T-020.
+No source behavior or persisted format changes in T-020.
 
 ---
 
 ## 2. Executive decision matrix
 
-| Primitive class | Core contract | ADGO contract | Equivalence | T-020 decision |
+| Primitive class | Core contract | ADGO contract | Equivalence | Decision |
 |---|---|---|---|---|
-| Clock abstraction | `internal/runtime.Clock { Now() time.Time }` | `adgo.Clock { Now() time.Time }` | Structurally identical semantic-time source | **SHARE CANDIDATE** |
-| Retry/backoff math | fixed/exponential, default 100 ms, hard 30 s cap, no jitter | exponential, policy max delay, deterministic jitter, retry-duration budget | Similar purpose; materially different math/policy | **PROVE FIRST** for pure math; orchestration **KEEP SEPARATE** |
-| Lease/fencing predicate | task `LockedBy`/`LockedUntil`, external-worker claim validation and retry-store lease memory | `TaskRunning + WorkerID + Attempt + LeaseUntil`, stale-worker rejection | Same safety objective; different token/state model | **PROVE FIRST** for pure stale/current predicate; state machines **KEEP SEPARATE** |
-| Durability capability | explicit `StoreDurability` levels + `DurabilityProvider`; production requires synchronous durability | durability is implicit in chosen ADGO store implementation; no equivalent public capability contract | Not duplicated today | **KEEP SEPARATE**; do not invent parity merely to share code |
-| Version/CAS semantics | Core `Store` exposes create/save/history/task operations; transaction support is a separate capability | `Store.Commit(id, expected uint64, mutate)` is central and returns `ErrConflict` on version mismatch | Different store contracts and transaction boundaries | **KEEP SEPARATE**; only tiny pure version predicates may be reconsidered |
-| Persisted-format validation | Core Pebble pins schema version + codec and rejects incomplete/mismatched markers | ADGO Pebble pins its own store-format identity and rejects unsupported identity | Same fail-closed principle; different schema identity | **PROVE FIRST** only for generic marker-validation helper; formats **KEEP SEPARATE** |
-| Identity framing | execution/task/history/store keys and plan identity are owned by Core-specific schemas | plan digest, execution version, idempotency templates, schedule execution IDs and path-safe file identity are ADGO-specific | Shared need for unambiguous framing, but different domains | **PROVE FIRST** for pure canonical byte/string framing only |
-| Lock ownership | process-local keyed execution locking plus Core Pebble execution-scoped locks | FileStore owner-token locks, heartbeat, stale-lock recovery plus process locks | Different failure domains | **KEEP SEPARATE** |
-| Error classification | typed sentinels plus diagnostic-code contracts; retryability currently recognizes `AX505` forms | explicit `FailureClass` and `DefaultClassify`, with transient/rate-limit/permanent policy | Semantically different public behavior | **DEFER** to T-051; no shared taxonomy in T-020/T-022 |
+| Minimal semantic time source | `internal/runtime.Clock { Now() time.Time }` | `adgo.Clock { Now() time.Time }` | Structurally identical | **SHARE CANDIDATE** |
+| Retry/backoff | fixed/exponential; default 100 ms; hard 30 s cap; no jitter; durable `NextAttemptAt` | exponential; policy max; deterministic jitter; retry-duration budget; failure classes | Same purpose, different math and controller | pure math **PROVE FIRST**; controller **KEEP SEPARATE** |
+| Lease/fencing | `LockedBy`/`LockedUntil`, external-worker ownership validation, task attempt/lifecycle | `TaskRunning + WorkerID + Attempt + LeaseUntil`, stale-worker rejection | Same safety objective, different token/state model | predicates **PROVE FIRST**; state machines **KEEP SEPARATE** |
+| Durability capability | explicit `StoreDurability` + `DurabilityProvider`; production requires synchronous durability | durability implicit in chosen store/assembly; no equivalent capability | Not duplicated | **KEEP SEPARATE** |
+| Version/CAS | operation-oriented Store; transactions are separate capability | `Store.Commit(id, expectedVersion, mutate)` central to coordinator | Different transaction boundaries | **KEEP SEPARATE** |
+| Persisted-format validation | Core Pebble schema + codec markers, incomplete/mismatch fail closed | ADGO store-format identity, unsupported identity fails closed | Same principle, different persisted contract | mechanics **PROVE FIRST**; schemas **KEEP SEPARATE** |
+| Identity framing | Core execution/task/history/store/plan identities | ADGO plan digest, execution pinning, idempotency templates, scheduled IDs, path-safe IDs | Same need, different domains | pure framing **PROVE FIRST** |
+| Lock ownership | process-local keyed execution locks + Core Pebble execution-scoped locking | ADGO FileStore owner-token files, heartbeat and stale-lock recovery | Different failure domains | **KEEP SEPARATE** |
+| Error classification | typed sentinels + stable diagnostics; retryability recognizes `AX505` forms | explicit `FailureClass`/`DefaultClassify` plus coordinator errors | User-visible semantics differ | **DEFER** to T-051 |
 
 ### Net result
 
-The inventory does **not** support a generic `internal/durable` mega-package containing stores, engines, retries and workers.
+The evidence does **not** support a generic `internal/durable` mega-package containing stores, engines, retries and workers.
 
-The currently justified shared surface is very small:
+The justified common surface is intentionally small:
 
-1. a semantic `Clock` contract / clock adapter boundary;
-2. possibly pure identity-framing helpers;
-3. possibly pure retry-delay math only after equivalence tests identify a common parameter subset;
-4. possibly pure lease/fencing predicates only after token semantics are explicitly modeled;
-5. possibly generic fail-closed marker helpers that contain no Core/ADGO schema knowledge.
+1. minimal semantic `Now()` time source;
+2. possibly pure lease/fencing predicates after characterization;
+3. possibly pure retry-delay math after characterization;
+4. possibly schema-agnostic fail-closed marker helpers;
+5. possibly canonical component framing after concrete duplicate code is identified.
 
-Everything else stays owned by its engine.
+Everything else remains engine-owned.
 
 ---
 
-## 3. Contract-by-contract evidence
-
-## 3.1 Clock abstraction
+## 3. Clock abstraction
 
 ### Core
 
@@ -68,11 +66,11 @@ type Clock interface {
 }
 ```
 
-`Engine.SetClock` injects the semantic clock. Retry scheduling uses the engine clock, while timer waiting is handled separately by the engine timer abstraction. `internal/durabletime` already contains deterministic clock infrastructure and the machine-reviewed time inventory.
+`Engine.SetClock` injects the semantic source. Retry deadline calculation uses this semantic time while waiting/timer creation is a separate Core concern.
 
 ### ADGO
 
-`adgo/clock.go` defines the same structural contract:
+`adgo/clock.go` defines the same minimal structural contract:
 
 ```go
 type Clock interface {
@@ -80,284 +78,280 @@ type Clock interface {
 }
 ```
 
-`WithClock` injects it into `Runtime`; runtime durability decisions such as budget checks, retry deadlines, lease recovery and repair paths use the injected semantic time where wired.
+`WithClock` injects it into `Runtime`; durable decisions such as budget checks, retry deadlines, lease recovery and repair use semantic time where wired.
+
+### Existing `internal/durabletime` nuance
+
+`internal/durabletime/clock.go` already provides deterministic clock infrastructure, but its `Clock` is **strictly richer**:
+
+```go
+type Clock interface {
+    Now() time.Time
+    NewTimer(time.Duration) Timer
+}
+```
+
+Therefore Core/ADGO `Clock` must **not** be directly aliased to `durabletime.Clock`: doing so would make every existing semantic-time implementation provide timer behavior it does not currently promise.
+
+T-021 should prefer one of these acyclic options:
+
+- introduce a minimal leaf `TimeSource`/`NowSource` in `internal/durabletime` and let the richer timer-capable `Clock` embed it; or
+- keep the current engine interfaces and use compile-time/adaptor conformance without moving the type.
 
 ### Decision
 
-**SHARE CANDIDATE — HIGH confidence.**
-
-T-021 should define an acyclic location for the minimal semantic clock interface/adapters. It must not merge timer/scheduler policy: Core has additional timer waiting behavior and ADGO has its own scheduling lifecycle.
+**SHARE CANDIDATE — HIGH confidence for `Now()` only.** Timer/scheduler policy remains separate.
 
 Required proof before extraction:
 
-- compile-time interface conformance for both engines;
-- deterministic-clock behavior remains unchanged;
-- no new dependency from low-level durable helpers back into either runtime package.
+- compile-time conformance for both engines;
+- deterministic `Now()` substitution unchanged;
+- existing `durabletime.ManualClock` remains timer-capable;
+- no dependency from the leaf package back into Core runtime or ADGO.
 
 ---
 
-## 3.2 Retry and backoff
+## 4. Retry and backoff
 
-### Core
+### Core contract
 
-`internal/runtime/retry_store.go` owns durable retry orchestration around the Core `Store`:
+`internal/runtime/retry_store.go` owns durable retry around Core `Store`:
 
-- a retryable activity failure is currently recognized through the `AX505` diagnostic contract;
-- retry state is materialized by returning the task to `TaskPending`;
+- retryability currently recognizes the `AX505` diagnostic contract;
+- failed retryable tasks are durably returned to `TaskPending`;
 - `NextAttemptAt` is persisted;
-- `ActivityRetryScheduled` / `ActivityRetryExhausted` history is appended;
-- `RetryScheduledError` is a typed persisted-retry checkpoint and `ShouldCommitState() == true`;
-- `Run` may wait until the persisted retry deadline while low-level `RunUntilIdle` exposes the boundary.
+- retry scheduled/exhausted history is appended;
+- `RetryScheduledError` is a typed persisted checkpoint with `ShouldCommitState() == true`;
+- high-level `Run` may wait for the next deadline while low-level `RunUntilIdle` exposes it.
 
 Core delay math:
 
-- default base: 100 ms;
-- fixed or exponential policy;
-- hard cap: 30 s;
+- default base 100 ms;
+- fixed or exponential;
+- hard 30 s cap;
 - no jitter in `retryDelay`;
-- delay derives from AXM/model policy expressions.
+- parameters originate in AXM/model policy expressions.
 
-### ADGO
+### ADGO contract
 
-`adgo/runtime.go` / `adgo/engine.go` own retry as part of the graph/task lifecycle:
+`adgo/runtime.go` / `adgo/engine.go` integrate retry into graph/task lifecycle:
 
-- retry policy includes max attempts, base delay, max delay and retry-duration constraints;
-- failure class participates in retryability;
-- `RetryAfter` can override the calculated delay for rate-limit/provider semantics;
-- `backoff` uses exponential growth and deterministic jitter seeded by execution/node identity;
-- retry is integrated with ADGO task state, throttling, budgets and graph progress.
+- policy has max attempts, base delay, max delay and max retry duration;
+- explicit failure class controls retryability;
+- provider/rate-limit `RetryAfter` may impose a later durable retry time;
+- `backoff` uses exponential growth plus deterministic jitter seeded by stable execution/node identity;
+- retry interacts with task state, throttling, budgets and graph progress.
 
 ### Decision
 
-**PROVE FIRST for pure math. KEEP SEPARATE for orchestration.**
+**PROVE FIRST for pure arithmetic; KEEP SEPARATE for orchestration.**
 
-The two retry controllers are not behavior-identical. A common `RetryPolicy` or common retry engine would silently change public semantics.
+A common retry engine or common public `RetryPolicy` would change semantics. A pure helper is allowed only if one parameterized function reproduces each engine’s existing outputs exactly for the subset it consumes.
 
-T-021/T-022 may only consider a pure helper if a common parameterized function can reproduce current outputs exactly for the subset each engine uses. Characterization must cover:
+Characterization required before T-022:
 
 - attempt 0/1/N;
-- zero/negative base delay;
-- cap boundaries and overflow-safe growth;
-- fixed vs exponential Core behavior;
-- ADGO deterministic jitter and `MaxDelay`;
-- `RetryAfter` being orchestration policy, not part of generic exponential math;
-- no change to `NextAttemptAt`, history or failure-class behavior.
+- zero/negative base;
+- cap boundary and overflow-safe growth;
+- Core fixed/exponential behavior;
+- ADGO `MaxDelay` and deterministic jitter;
+- `RetryAfter` remains controller policy, not generic exponential math;
+- no changes to Core `NextAttemptAt`, history or ADGO failure classes.
 
 ---
 
-## 3.3 Lease and fencing
+## 5. Lease and fencing
 
-### Core
+### Core contract
 
-Core external-worker execution is implemented through task ownership in the Core store:
+Core external-worker ownership is represented in Core task/store state:
 
 - `PollTaskWithLease(executionID, workerID, leaseTTL)` claims work;
-- task ownership uses `LockedBy` and `LockedUntil` plus the task attempt/lifecycle;
-- `internal/runtime/external_worker.go` rejects stale/wrong ownership before completion/heartbeat mutations;
-- inline activity execution is blocked for activities declared as externally worker-owned;
-- retry-store wrapping remembers the leased task locally only to drive retry bookkeeping; durable ownership remains in the underlying task/store state.
+- ownership uses `LockedBy` / `LockedUntil` plus task attempt/lifecycle;
+- external-worker completion/heartbeat validates current ownership before mutation;
+- inline execution is blocked for explicitly external-owned activities;
+- retry-store lease memory is bookkeeping around the durable underlying claim, not a second durable fence.
 
-### ADGO
+### ADGO contract
 
-ADGO makes fencing a first-class task protocol:
+ADGO fencing is a first-class task protocol:
 
 - claim commits `TaskRunning + WorkerID + Attempt + LeaseUntil`;
-- heartbeat extends only the currently fenced lease;
-- completion/failure must match current task identity, worker and attempt;
-- expired workers are recovered and old workers are rejected with stale/fenced errors;
-- multiple engine processes may share the same durable store.
+- heartbeat only extends the current fenced lease;
+- completion/failure must match the active task identity, worker and attempt;
+- expired work can be recovered and reissued;
+- stale workers are rejected after recovery/reissue;
+- multiple engine processes can share the durable store.
 
 ### Decision
 
-**PROVE FIRST for pure predicates. KEEP SEPARATE for claim/recovery state machines.**
+**PROVE FIRST for stateless predicates; KEEP SEPARATE for claim/heartbeat/recovery state machines.**
 
-The invariant is common — a stale worker must never commit — but the tokens and transitions are not identical.
-
-A future shared helper is allowed only if it is a stateless predicate/value helper such as “is lease expired at semantic time?” or “does this fence token match?”, with engine-owned adapters supplying their own fields. It must not own claim, heartbeat, retry or recovery transitions.
+Potential leaf helpers may answer only questions such as “is lease expired at semantic time?” or “does this fence token match?”. Engine adapters own fields and transitions.
 
 Required characterization:
 
-- boundary at exactly `LeaseUntil`;
+- exactly at `LeaseUntil`;
+- pre/post expiry;
 - zero lease;
 - worker mismatch;
 - attempt mismatch;
 - recovered/reissued task;
-- late completion and late heartbeat;
-- clock injection behavior.
+- late completion/heartbeat;
+- deterministic clock behavior.
 
 ---
 
-## 3.4 Durability capability
+## 6. Durability capability
 
 ### Core
 
-`internal/runtime/durability.go` defines an explicit durability capability separate from transaction support. The root facade exposes levels including:
-
-- ephemeral;
-- best effort;
-- buffered;
-- synchronous.
-
-Production-mode validation requires an acknowledged store to declare sufficient synchronous durability. This is a public behavioral contract.
+`internal/runtime/durability.go` deliberately separates durability from transaction support. The root facade exposes levels such as ephemeral, best-effort, buffered and synchronous; production-mode configuration requires sufficient synchronous durability for acknowledged commits.
 
 ### ADGO
 
-ADGO currently selects durability through concrete stores and production assembly. Its primary `Store` interface does not expose the Core `StoreDurability` capability model.
+ADGO chooses durability through concrete stores/production assembly. Its primary `Store` interface does not expose Core’s `StoreDurability` capability model.
 
 ### Decision
 
-**KEEP SEPARATE.**
-
-This is not current duplication. T-022 must not create an ADGO durability enum merely to make the code look symmetric. If a future production requirement needs a shared durability capability, that is a new behavioral/API task and must be separately characterized.
+**KEEP SEPARATE.** This is not current duplication. Do not manufacture an ADGO durability enum merely to make APIs symmetric. Any future shared capability is a new behavioral/API task.
 
 ---
 
-## 3.5 Version and CAS semantics
+## 7. Version and CAS semantics
 
 ### Core
 
-Core `internal/runtime.Store` is operation-oriented (`CreateExecution`, `SaveExecution`, history/task operations). Transaction support is modeled separately through `TransactionalStore`. Core Pebble then adds execution-scoped transaction/locking behavior behind that contract.
+Core `internal/runtime.Store` is operation-oriented (`CreateExecution`, `SaveExecution`, history/task operations). `TransactionalStore` is a separate capability; Core Pebble implements execution-scoped locking/transaction behavior behind those contracts.
 
 ### ADGO
 
-`adgo.Store` makes optimistic versioning explicit:
+`adgo.Store` makes optimistic aggregate versioning explicit:
 
 ```go
 Commit(context.Context, string, uint64, func(*Execution) error) (*Execution, error)
 ```
 
-The caller supplies the expected execution version; commit conflict is part of the normal coordinator/retry path.
+Expected-version conflict is part of normal coordinator retry behavior.
 
 ### Decision
 
-**KEEP SEPARATE.**
-
-Do not introduce a shared store/CAS interface. The transaction boundaries and persisted state ownership are different.
-
-At most, T-021 may define a dependency-free internal helper for monotonic-version validation if both implementations can consume it without changing errors, version increments or transaction atomicity. This is lower priority than Clock and fencing/backoff characterization.
+**KEEP SEPARATE.** Do not create a shared Store/CAS interface. At most, a tiny dependency-free monotonic-version predicate can be reconsidered if it preserves errors, version increments and atomicity exactly.
 
 ---
 
-## 3.6 Persisted-format version handling
+## 8. Persisted-format validation
 
 ### Core
 
-`internal/store/pebble/format.go` stores and verifies explicit Core format metadata. Core Pebble currently pins schema version and codec; incomplete markers and mismatches fail closed. JSON is the default codec and Gob is an opt-in alternative, so codec identity is part of the compatibility check.
+`internal/store/pebble/format.go` pins Core schema/codec metadata. Missing partial marker sets and mismatches fail closed. Codec identity matters because JSON is default and Gob is opt-in.
 
 ### ADGO
 
-`adgo/pebble_format.go` stores ADGO-specific format identity and rejects unsupported identities. ADGO execution records also carry plan identity/version information as part of their own persisted contract.
+`adgo/pebble_format.go` pins ADGO-specific store-format identity and rejects unsupported values. ADGO records also carry their own plan/execution identity contract.
 
-`internal/durableserial/inventory.go` is already the canonical machine-reviewable registry of serialized durable surfaces. It correctly keeps Core and ADGO records as separate persisted surfaces.
+`internal/durableserial/inventory.go` already treats Core and ADGO persisted surfaces as separate machine-reviewable compatibility entries.
 
 ### Decision
 
-**PROVE FIRST for generic marker mechanics; persisted schemas KEEP SEPARATE.**
+**PROVE FIRST for schema-agnostic marker mechanics; schemas and marker identities KEEP SEPARATE.**
 
-A shared helper may only cover schema-agnostic mechanics such as:
+Allowed generic behavior:
 
-- initialize marker if absent;
-- reject partially present marker sets;
-- compare expected immutable marker values;
-- return a typed mismatch without knowing Core/ADGO schema fields.
+- initialize absent marker set;
+- reject partially present set;
+- compare immutable expected values;
+- return narrow mismatch errors without knowing engine schema.
 
-Do not merge marker keys, schema versions, codecs, record structs or migration policy.
+Forbidden extraction:
+
+- shared marker keys;
+- shared schema versions/codecs;
+- shared record structs;
+- shared migration policy.
 
 ---
 
-## 3.7 Identity framing
+## 9. Identity framing
 
 ### Core
 
-Core durable identity spans execution IDs, task IDs, history sequence keys, store prefixes and canonical plan identity. Filesystem and Pebble boundaries already include path/key confinement work and serialized-surface inventory.
+Core durable identity covers execution/task/history/store keys and canonical plan identity; filesystem and Pebble boundaries already have path/key confinement and serialized-surface inventories.
 
 ### ADGO
 
-ADGO additionally owns:
-
-- immutable plan digest (`sha256:` canonical digest);
-- execution `PlanID` / `PlanVersion` / `PlanDigest` pinning;
-- idempotency-key templates containing execution/node/attempt/revision/plan identity;
-- deterministic scheduled execution IDs;
-- path-safe encoded IDs for file-backed stores and locks.
+ADGO additionally owns immutable plan digest, execution PlanID/Version/Digest pinning, idempotency templates, deterministic scheduled execution IDs and path-safe encoded identities for file-backed state/locks.
 
 ### Decision
 
-**PROVE FIRST for pure framing only.**
+**PROVE FIRST for pure framing only.** Do not create one universal durable-ID type.
 
-Do not create one universal “durable ID” type. Domain identities intentionally differ.
+A common primitive must be limited to unambiguous framing of ordered components (for example length-prefixing or equivalent canonical encoding) and must be justified by concrete duplicated framing code. Existing public strings and persisted keys must remain unchanged.
 
-A potential shared primitive must be limited to canonical collision-resistant framing of ordered components (for example length-prefixing or an equivalent unambiguous byte encoding) and must be justified by concrete duplicate implementations. Existing public string forms and persisted keys must not change as a side effect.
+Characterization must cover empty components, separators, Unicode, prefix ambiguity and repeatability.
 
 ---
 
-## 3.8 Lock ownership
+## 10. Lock ownership
 
 ### Core
 
-Core uses process-local keyed execution locks and Core Pebble execution-scoped locking/transactions to serialize mutation while allowing independent executions to progress concurrently.
+Core uses process-local keyed execution locks and Core Pebble execution-scoped locking/transactions to serialize same-execution mutation while allowing independent executions to progress concurrently.
 
 ### ADGO
 
-ADGO additionally has cross-process filesystem ownership semantics in `adgo/file_lock.go` and `adgo/file_lock_heartbeat.go`:
+ADGO FileStore additionally implements a cross-process crash-recoverable ownership protocol in `adgo/file_lock.go` / `adgo/file_lock_heartbeat.go`:
 
 - owner-token lock file;
 - heartbeat/freshness;
-- stale lock recovery;
-- backward compatibility for older timestamp-only lock files;
-- explicit ownership-lost error;
-- private file permissions and path-confinement invariants.
+- stale-lock recovery;
+- compatibility with older timestamp-only files;
+- ownership-lost error;
+- private-file and path-confinement invariants.
 
 ### Decision
 
-**KEEP SEPARATE.**
-
-These mechanisms operate in different failure domains. Extracting ADGO’s FileStore lock protocol into a generic durable package would broaden its contract without a Core consumer. Core’s process-local `internal/syncx.KeyedLocker` is already a small generic synchronization primitive and is not equivalent to ADGO crash-recoverable file ownership.
+**KEEP SEPARATE.** These mechanisms have different failure domains. Core `internal/syncx.KeyedLocker` is a generic process synchronization primitive, not equivalent to ADGO durable file ownership.
 
 ---
 
-## 3.9 Error classification
+## 11. Error classification
 
 ### Core
 
-Core combines typed sentinel/errors with stable diagnostic-code behavior. Durable retry currently recognizes retryability from `AX505` forms, and `RetryScheduledError` carries persisted retry metadata. External-worker paths have their own stale/ownership errors.
+Core combines typed errors/sentinels with stable diagnostic-code behavior. Durable retry currently recognizes `AX505` forms; `RetryScheduledError` carries persisted retry metadata; external worker paths own their stale/claim errors.
 
 ### ADGO
 
-ADGO has explicit `FailureClass` values and `DefaultClassify`, used by retries, compensation recovery and provider health/routing. It also has coordinator-specific errors such as conflict/stale-task/no-work/paused states.
+ADGO has explicit `FailureClass` / `DefaultClassify`, used by retries, compensation and provider health/routing, plus coordinator-specific conflict/stale/no-work/paused errors.
 
 ### Decision
 
-**DEFER to T-051.**
-
-The taxonomies are not equivalent and classification is user-visible policy. T-020/T-022 must not normalize these into a shared enum or shared error strings.
-
-Low-level future helpers may return their own narrow internal errors, but mapping those errors into Core diagnostics or ADGO `FailureClass` remains engine-owned.
+**DEFER to T-051.** Classification is user-visible policy, not a pure durable primitive. T-020/T-022 must not normalize these into a shared enum or shared strings.
 
 ---
 
-## 4. False-duplication findings
+## 12. False-duplication findings
 
-The audit materially narrows F-005. Several items previously described as “duplicated durable primitives” are only conceptually adjacent:
+The audit materially narrows F-005:
 
-1. **Store interfaces are intentionally different.** Core is operation/transaction-capability oriented; ADGO is versioned aggregate/CAS oriented.
-2. **Durability capability is currently a Core contract, not a duplicate ADGO contract.**
-3. **File lock ownership is ADGO-specific cross-process recovery, not the same thing as Core keyed execution locks.**
-4. **Error classification is public policy, not a pure durable primitive.**
-5. **Persisted formats must remain separately versioned even if marker-validation mechanics can share code.**
+1. **Store interfaces are intentionally different** — Core is operation/transaction-capability oriented; ADGO is versioned aggregate/CAS oriented.
+2. **Durability capability is currently Core-specific**, not duplicated in ADGO.
+3. **File lock ownership is ADGO cross-process recovery**, not Core keyed execution locking.
+4. **Error classification is public policy**, not a low-level durable primitive.
+5. **Persisted formats must remain separately versioned**, even if marker-validation mechanics can share code.
+6. **The existing `internal/durabletime.Clock` is a timer-capable superset**, not a drop-in replacement for the two minimal engine `Clock` interfaces.
 
-This means T-021 should design a **small leaf dependency**, not a replacement runtime foundation.
+T-021 must therefore design a **small leaf dependency**, not a replacement runtime foundation.
 
 ---
 
-## 5. Candidate dependency direction for T-021
-
-T-020 does not create the package, but it constrains the acceptable graph.
+## 13. Dependency constraint for T-021
 
 Allowed direction:
 
 ```text
-small dependency-free internal durable leaf
+small dependency-free durable leaf
         ^                     ^
         |                     |
 internal/runtime            adgo
@@ -369,71 +363,68 @@ Core stores/facades       ADGO stores/engine
 Forbidden direction:
 
 ```text
-internal/durable -> internal/runtime
-internal/durable -> adgo
+shared leaf -> internal/runtime
+shared leaf -> adgo
 internal/runtime <-> adgo
-shared store interface wrapping both engines
+shared Store interface wrapping both engines
 shared retry/worker state machine wrapping both engines
 ```
 
-The shared leaf should depend only on the Go standard library unless an existing lower-level internal package is demonstrably appropriate.
+The leaf should depend only on the Go standard library unless an existing lower-level internal package is demonstrably appropriate.
 
 ---
 
-## 6. Extraction priority for T-021/T-022
+## 14. Extraction priority
 
 ### Tier A — justified now
 
-1. **Semantic Clock contract/adapters** — highest-confidence equivalent contract.
+1. **Minimal semantic time source (`Now()` only)** — highest-confidence equivalent contract. Prefer adapting/splitting the existing `internal/durabletime` hierarchy rather than adding another time package.
 
-### Tier B — characterization required first
+### Tier B — characterize first
 
-2. **Lease/fencing pure predicates** — only stateless time/token checks.
-3. **Retry/backoff pure math** — only if a parameterized helper preserves both current algorithms exactly; otherwise leave separate.
-4. **Generic persisted-marker validation mechanics** — only schema-agnostic fail-closed behavior.
-5. **Canonical component framing** — only after concrete duplicate framing code is identified and persisted/public representations remain unchanged.
+2. Lease/fencing stateless predicates.
+3. Retry/backoff pure arithmetic.
+4. Schema-agnostic persisted-marker validation mechanics.
+5. Canonical component framing, only after concrete duplication is identified.
 
-### Tier C — explicitly not extraction targets
+### Tier C — not extraction targets
 
 - Store interfaces or transaction engines;
 - execution/task structs;
 - retry controllers;
-- worker polling/claim/heartbeat/recovery;
+- worker claim/heartbeat/recovery;
 - Core durability capability model;
-- ADGO FileStore lock ownership protocol;
+- ADGO FileStore lock protocol;
 - public error/failure taxonomy;
-- record schemas and persisted marker identities;
+- record schemas / marker identities;
 - scheduler/provider/budget/throttle policy.
 
 ---
 
-## 7. Required executable proof before T-022
+## 15. Required proof before T-022
 
-T-021 must turn each selected Tier B candidate into an explicit behavior table. T-022 may extract only after tests prove both old implementations agree with the proposed leaf primitive.
-
-Minimum proof matrix:
-
-| Candidate | Required proof |
+| Candidate | Required executable proof |
 |---|---|
-| Clock | compile-time conformance + deterministic `Now()` substitution in both engines |
-| Lease predicate | exact-expiry, pre-expiry, post-expiry, zero time, wrong worker, wrong attempt |
-| Backoff math | attempts, caps, zero/negative duration, overflow, deterministic jitter seed behavior |
-| Marker validation | absent, complete valid, partial marker, wrong schema/format/codec, reopen |
-| Identity framing | empty components, separators, Unicode, prefix ambiguity, deterministic repeatability |
+| Minimal time source | compile-time conformance; deterministic `Now()` substitution; timer-capable `durabletime.Clock` remains compatible |
+| Lease predicate | exact expiry, pre/post expiry, zero time, wrong worker, wrong attempt, reissue |
+| Backoff math | attempts, caps, zero/negative duration, overflow, deterministic jitter seed |
+| Marker validation | absent, valid, partial, wrong schema/format/codec, reopen |
+| Identity framing | empty components, separators, Unicode, prefix ambiguity, repeatability |
 
-Mutation testing is appropriate when the new shared function contains branching arithmetic/predicate behavior. Architecture tests in T-023 should then prevent either engine from reintroducing a second copy of an extracted primitive.
+Mutation testing is appropriate for extracted branching arithmetic/predicate behavior. T-023 should then prevent an engine from reintroducing a second copy of a successfully extracted primitive.
 
 ---
 
-## 8. T-020 completion criteria
+## 16. T-020 completion criteria
 
 T-020 is complete when:
 
-- all nine audited classes have Core and ADGO evidence;
+- all nine classes have Core and ADGO evidence;
 - false duplication is separated from behavior-identical duplication;
-- no production/persisted-format behavior is changed;
-- T-021 has an explicit acyclic dependency constraint;
+- the richer existing `durabletime.Clock` boundary is explicitly accounted for;
+- no production/persisted behavior changes;
+- T-021 has an acyclic dependency constraint;
 - every proposed extraction has a proof requirement;
-- store/runtime/error-taxonomy mega-unification is explicitly rejected.
+- Store/runtime/error-taxonomy mega-unification is explicitly rejected.
 
-The next task after qualification is **T-021 — define the acyclic shared durable boundary**. It should start with Clock and model Tier B candidates as contracts/tests before moving code.
+After qualification, the next task is **T-021 — define the acyclic shared durable boundary**. It should begin with the minimal time-source hierarchy, then model Tier B candidates as explicit contracts/tests before any T-022 extraction.
