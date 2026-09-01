@@ -176,11 +176,14 @@ jobs:
           go-version: '1.26.x'
           cache: true
 
+      # Push/PR smoke gates use an iteration budget so runner scheduling cannot
+      # turn a healthy fuzz target into a wall-clock deadline failure. Nightly
+      # keeps the longer time-based fuzz campaigns.
       - name: Fuzz parser smoke test
-        run: go test ./internal/lang -run=^$ -fuzz=^FuzzParse$ -fuzztime=5s
+        run: go test ./internal/lang -run=^$ -fuzz=^FuzzParse$ -fuzztime=10000x
 
       - name: Fuzz TRIZ normalizer smoke test
-        run: go test ./internal/triz -run=^$ -fuzz=^FuzzNormalize$ -fuzztime=5s
+        run: go test ./internal/triz -run=^$ -fuzz=^FuzzNormalize$ -fuzztime=10000x
 
   codegen-verify:
     name: Codegen CLI & Verification
