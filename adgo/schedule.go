@@ -135,10 +135,10 @@ func NewFileScheduleStore(root string) (*FileScheduleStore, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("adgo: schedule store root is required")
 	}
-	if err := os.MkdirAll(filepath.Join(root, "schedules"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "schedules"), privateStateDirMode); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Join(root, "locks"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "locks"), privateStateDirMode); err != nil {
 		return nil, err
 	}
 	return &FileScheduleStore{root: root, lockStaleAfter: 30 * time.Second}, nil

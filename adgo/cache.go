@@ -138,10 +138,10 @@ func NewFileActivityCache(root string) (*FileActivityCache, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("adgo: activity cache root is required")
 	}
-	if err := os.MkdirAll(filepath.Join(root, "activity-cache"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "activity-cache"), privateStateDirMode); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Join(root, "locks"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "locks"), privateStateDirMode); err != nil {
 		return nil, err
 	}
 	return &FileActivityCache{root: root, lockStaleAfter: 30 * time.Second}, nil

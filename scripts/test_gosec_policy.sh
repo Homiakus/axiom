@@ -5,6 +5,7 @@ workflow="${1:-.github/workflows/security.yml}"
 runtime="${2:-adgo/runtime.go}"
 g101_guard="${3:-scripts/verify_g101_false_positive.sh}"
 g115_guard="${4:-scripts/verify_g115_internal_ids.sh}"
+g301_guard="${5:-scripts/verify_g301_codegen_directory.sh}"
 
 fail() {
   echo "[gosec-policy] $*" >&2
@@ -15,20 +16,23 @@ fail() {
 [[ -f "$runtime" ]] || fail "missing runtime source: $runtime"
 [[ -f "$g101_guard" ]] || fail "missing G101 exception guard: $g101_guard"
 [[ -f "$g115_guard" ]] || fail "missing G115 internal-ID guard: $g115_guard"
+[[ -f "$g301_guard" ]] || fail "missing G301 codegen-directory guard: $g301_guard"
 
-for rule in G101 G104 G115 G302 G404; do
+for rule in G101 G104 G115 G301 G302 G404; do
   if grep -Eq -- "-exclude=[^[:space:]]*${rule}" "$workflow"; then
     fail "${rule} must not be globally excluded"
   fi
 done
 
-expected_exceptions="-exclude-rules='adgo/runtime\\.go:G404;adgo/http_worker\\.go:G101;internal/runtime/fast_vm\\.go:G115;internal/runtime/expr_vm\\.go:G115;internal/runtime/engine\\.go:G115;internal/compiler/module\\.go:G115'"
+expected_exceptions="-exclude-rules='adgo/runtime\\.go:G404;adgo/http_worker\\.go:G101;internal/runtime/fast_vm\\.go:G115;internal/runtime/expr_vm\\.go:G115;internal/runtime/engine\\.go:G115;internal/compiler/module\\.go:G115;cmd/axiomgen/internal/generate/generate\\.go:G301'"
 grep -Fq -- "$expected_exceptions" "$workflow" || \
-  fail "expected only reviewed path-scoped G404/G101/G115 exceptions"
+  fail "expected only reviewed path-scoped G404/G101/G115/G301 exceptions"
 grep -Fq -- 'run: bash scripts/verify_g101_false_positive.sh' "$workflow" || \
   fail "expected dedicated G101 false-positive verification step"
 grep -Fq -- 'run: bash scripts/verify_g115_internal_ids.sh' "$workflow" || \
   fail "expected dedicated G115 internal-ID verification step"
+grep -Fq -- 'run: bash scripts/verify_g301_codegen_directory.sh' "$workflow" || \
+  fail "expected dedicated G301 codegen-directory verification step"
 grep -Fq -- '-nosec-require-rules' "$workflow" || \
   fail "gosec must require rule IDs for inline suppressions"
 grep -Fq -- '-nosec-require-justification' "$workflow" || \
@@ -52,5 +56,6 @@ fi
 
 bash -n "$g101_guard" || fail "G101 exception guard has invalid shell syntax"
 bash -n "$g115_guard" || fail "G115 internal-ID guard has invalid shell syntax"
+bash -n "$g301_guard" || fail "G301 codegen-directory guard has invalid shell syntax"
 
 echo "gosec suppression policy: PASS"

@@ -153,10 +153,10 @@ func NewFileStore(root string) (*FileStore, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("adgo: file store root is required")
 	}
-	if err := os.MkdirAll(filepath.Join(root, "executions"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "executions"), privateStateDirMode); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Join(root, "locks"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "locks"), privateStateDirMode); err != nil {
 		return nil, err
 	}
 	return &FileStore{root: root, lockStaleAfter: 30 * time.Second}, nil
@@ -181,10 +181,10 @@ func (s *FileStore) Create(ctx context.Context, e *Execution) error {
 		} else if !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
-		if err := os.MkdirAll(s.commitsDir(e.ID), 0o755); err != nil {
+		if err := os.MkdirAll(s.commitsDir(e.ID), privateStateDirMode); err != nil {
 			return err
 		}
-		if err := os.MkdirAll(s.inboxDir(e.ID), 0o755); err != nil {
+		if err := os.MkdirAll(s.inboxDir(e.ID), privateStateDirMode); err != nil {
 			return err
 		}
 		return s.writeCommit(e)
@@ -263,7 +263,7 @@ func (s *FileStore) Commit(ctx context.Context, id string, expected uint64, muta
 
 func (s *FileStore) writeCommit(e *Execution) error {
 	dir := s.commitsDir(e.ID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, privateStateDirMode); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(e, "", "  ")
@@ -295,7 +295,7 @@ func (s *FileStore) PutInbox(ctx context.Context, id string, e Event) error {
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(s.inboxDir(id), 0o755); err != nil {
+		if err := os.MkdirAll(s.inboxDir(id), privateStateDirMode); err != nil {
 			return err
 		}
 		path := filepath.Join(s.inboxDir(id), EncodeDurableName(e.ID)+".json")

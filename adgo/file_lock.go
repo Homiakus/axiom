@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-const privateLockFileMode = 0o600
+const (
+	privateLockFileMode = 0o600
+	privateStateDirMode = 0o700
+)
 
 type fileLockRecord struct {
 	Owner      string    `json:"owner"`
@@ -59,7 +62,7 @@ func readFileLockRecord(path string) (fileLockRecord, error) {
 // primitives should use this helper instead of implementing anonymous lock-file
 // removal independently.
 func withOwnedFileLock(ctx context.Context, locksDir, filename string, staleAfter time.Duration, fn func() error) error {
-	if err := os.MkdirAll(locksDir, 0o755); err != nil {
+	if err := os.MkdirAll(locksDir, privateStateDirMode); err != nil {
 		return err
 	}
 	path := filepath.Join(locksDir, filename)

@@ -22,7 +22,7 @@ func NewContentAddressedStore(root string) (*ContentAddressedStore, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("adgo: artifact root is required")
 	}
-	if err := os.MkdirAll(filepath.Join(root, "sha256"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "sha256"), privateStateDirMode); err != nil {
 		return nil, err
 	}
 	return &ContentAddressedStore{root: root}, nil
@@ -50,7 +50,7 @@ func (s *ContentAddressedStore) Put(name, mediaType string, r io.Reader) (Artifa
 	}
 	digest := hex.EncodeToString(h.Sum(nil))
 	dir := filepath.Join(s.root, "sha256", digest[:2])
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, privateStateDirMode); err != nil {
 		return ArtifactRef{}, err
 	}
 	path := filepath.Join(dir, digest)

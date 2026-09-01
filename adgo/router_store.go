@@ -86,10 +86,10 @@ func NewFileProviderHealthStore(root string) (*FileProviderHealthStore, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("adgo: provider health store root is required")
 	}
-	if err := os.MkdirAll(filepath.Join(root, "provider-health"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "provider-health"), privateStateDirMode); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Join(root, "locks"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "locks"), privateStateDirMode); err != nil {
 		return nil, err
 	}
 	return &FileProviderHealthStore{root: root, lockStaleAfter: 30 * time.Second}, nil

@@ -172,10 +172,10 @@ func NewFileAdmissionController(root string, opts ...FileAdmissionOption) (*File
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("adgo: admission store root is required")
 	}
-	if err := os.MkdirAll(filepath.Join(root, "admission"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "admission"), privateStateDirMode); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Join(root, "locks"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "locks"), privateStateDirMode); err != nil {
 		return nil, err
 	}
 	c := &FileAdmissionController{root: root, lockStaleAfter: 30 * time.Second}

@@ -96,7 +96,7 @@ func OpenProduction(plan *Plan, registry *Registry, config ProductionConfig) (*P
 		production.close = func() error { return nil }
 
 	case BackendFile:
-		if err := os.MkdirAll(config.Root, 0o755); err != nil {
+		if err := os.MkdirAll(config.Root, privateStateDirMode); err != nil {
 			return nil, err
 		}
 		state, err := NewFileStore(filepath.Join(config.Root, "state"))
@@ -123,7 +123,7 @@ func OpenProduction(plan *Plan, registry *Registry, config ProductionConfig) (*P
 		production.close = func() error { return nil }
 
 	case BackendPebble:
-		if err := os.MkdirAll(config.Root, 0o755); err != nil {
+		if err := os.MkdirAll(config.Root, privateStateDirMode); err != nil {
 			return nil, err
 		}
 		pebbleOptions := []PebbleStoreOption{}
