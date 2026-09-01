@@ -8,6 +8,7 @@ g115_guard="${4:-scripts/verify_g115_internal_ids.sh}"
 g301_guard="${5:-scripts/verify_g301_codegen_directory.sh}"
 g306_guard="${6:-scripts/verify_g306_public_artifacts.sh}"
 g703_guard="${7:-scripts/verify_g703_path_provenance.sh}"
+g304_guard="${8:-scripts/verify_g304_path_contracts.sh}"
 
 fail() {
   echo "[gosec-policy] $*" >&2
@@ -21,16 +22,17 @@ fail() {
 [[ -f "$g301_guard" ]] || fail "missing G301 codegen-directory guard: $g301_guard"
 [[ -f "$g306_guard" ]] || fail "missing G306 public-artifact guard: $g306_guard"
 [[ -f "$g703_guard" ]] || fail "missing G703 path-provenance guard: $g703_guard"
+[[ -f "$g304_guard" ]] || fail "missing G304 path-contract guard: $g304_guard"
 
-for rule in G101 G104 G115 G301 G302 G306 G404 G703; do
+for rule in G101 G104 G115 G301 G302 G304 G306 G404 G703; do
   if grep -Eq -- "-exclude=[^[:space:]]*${rule}" "$workflow"; then
     fail "${rule} must not be globally excluded"
   fi
 done
 
-expected_exceptions="-exclude-rules='adgo/runtime\\.go:G404;adgo/http_worker\\.go:G101;internal/runtime/fast_vm\\.go:G115;internal/runtime/expr_vm\\.go:G115;internal/runtime/engine\\.go:G115;internal/compiler/module\\.go:G115;cmd/axiomgen/internal/generate/generate\\.go:G301;cmd/axiombench/main\\.go:G306;cmd/axiomgen/internal/generate/generate\\.go:G306;adgo/catalog\\.go:G703;adgo/file_lock\\.go:G703;adgo/file_lock_heartbeat\\.go:G703;adgo/store\\.go:G703'"
+expected_exceptions="-exclude-rules='adgo/runtime\\.go:G404;adgo/http_worker\\.go:G101;internal/runtime/fast_vm\\.go:G115;internal/runtime/expr_vm\\.go:G115;internal/runtime/engine\\.go:G115;internal/compiler/module\\.go:G115;cmd/axiomgen/internal/generate/generate\\.go:G301;cmd/axiombench/main\\.go:G306;cmd/axiomgen/internal/generate/generate\\.go:G306;adgo/catalog\\.go:G703;adgo/file_lock\\.go:G703;adgo/file_lock_heartbeat\\.go:G703;adgo/store\\.go:G703;table/toml\\.go:G304;cmd/qualityloop/main\\.go:G304;cmd/axiomgen/internal/generate/generate\\.go:G304;axm/axm\\.go:G304;axiom\\.go:G304;adgo/store\\.go:G304;adgo/schedule\\.go:G304;adgo/router_store\\.go:G304;adgo/replay\\.go:G304;adgo/file_lock\\.go:G304;adgo/catalog\\.go:G304;adgo/cache\\.go:G304'"
 grep -Fq -- "$expected_exceptions" "$workflow" || \
-  fail "expected only reviewed path-scoped G404/G101/G115/G301/G306/G703 exceptions"
+  fail "expected only reviewed path-scoped G404/G101/G115/G301/G306/G703/G304 exceptions"
 grep -Fq -- 'run: bash scripts/verify_g101_false_positive.sh' "$workflow" || \
   fail "expected dedicated G101 false-positive verification step"
 grep -Fq -- 'run: bash scripts/verify_g115_internal_ids.sh' "$workflow" || \
@@ -41,6 +43,8 @@ grep -Fq -- 'run: bash scripts/verify_g306_public_artifacts.sh' "$workflow" || \
   fail "expected dedicated G306 public-artifact verification step"
 grep -Fq -- 'run: bash scripts/verify_g703_path_provenance.sh' "$workflow" || \
   fail "expected dedicated G703 path-provenance verification step"
+grep -Fq -- 'run: bash scripts/verify_g304_path_contracts.sh' "$workflow" || \
+  fail "expected dedicated G304 path-contract verification step"
 grep -Fq -- '-nosec-require-rules' "$workflow" || \
   fail "gosec must require rule IDs for inline suppressions"
 grep -Fq -- '-nosec-require-justification' "$workflow" || \
@@ -67,5 +71,6 @@ bash -n "$g115_guard" || fail "G115 internal-ID guard has invalid shell syntax"
 bash -n "$g301_guard" || fail "G301 codegen-directory guard has invalid shell syntax"
 bash -n "$g306_guard" || fail "G306 public-artifact guard has invalid shell syntax"
 bash -n "$g703_guard" || fail "G703 path-provenance guard has invalid shell syntax"
+bash -n "$g304_guard" || fail "G304 path-contract guard has invalid shell syntax"
 
 echo "gosec suppression policy: PASS"
