@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Homiakus/axiom"
+	"github.com/Homiakus/axiom/adgo"
 )
 
 const counterSource = `domain CounterBench
@@ -50,17 +52,17 @@ type latencySummary struct {
 }
 
 type scenarioResult struct {
-	Scenario       string         `json:"scenario"`
-	Operations     int            `json:"operations"`
-	Concurrency    int            `json:"concurrency"`
-	DurationMS     float64        `json:"duration_ms"`
-	ThroughputOPS  float64        `json:"throughput_ops"`
-	Errors         int64          `json:"errors"`
-	InvariantOK    bool           `json:"invariant_ok"`
-	Expected       int            `json:"expected,omitempty"`
-	Actual         int            `json:"actual,omitempty"`
-	Latency        latencySummary `json:"latency"`
-	Notes          string         `json:"notes,omitempty"`
+	Scenario      string         `json:"scenario"`
+	Operations    int            `json:"operations"`
+	Concurrency   int            `json:"concurrency"`
+	DurationMS    float64        `json:"duration_ms"`
+	ThroughputOPS float64        `json:"throughput_ops"`
+	Errors        int64          `json:"errors"`
+	InvariantOK   bool           `json:"invariant_ok"`
+	Expected      int            `json:"expected,omitempty"`
+	Actual        int            `json:"actual,omitempty"`
+	Latency       latencySummary `json:"latency"`
+	Notes         string         `json:"notes,omitempty"`
 }
 
 type report struct {
@@ -72,6 +74,17 @@ type report struct {
 	Results     []scenarioResult `json:"results"`
 }
 
+type comparisonRow struct {
+	Scenario          string
+	BaselineThroughput float64
+	CurrentThroughput  float64
+	ThroughputDeltaPct float64
+	BaselineP99US      float64
+	CurrentP99US       float64
+	P99DeltaPct        float64
+	Regression         bool
+}
+
 type runMetrics struct {
 	latencies []int64
 	errors    int64
@@ -80,14 +93,16 @@ type runMetrics struct {
 
 func main() {
 	var (
-		memoryOps  = flag.Int("memory-ops", 20000, "operations per memory scenario")
-		pebbleOps  = flag.Int("pebble-ops", 1000, "operations per Pebble scenario")
-		replayOps  = flag.Int("replay-events", 1000, "events in replay history")
-		replayRuns = flag.Int("replay-runs", 200, "replay samples")
-		workers    = flag.Int("concurrency", 8, "parallel workers")
-		jsonPath   = flag.String("json", "benchmark-results.json", "JSON result path")
-		mdPath     = flag.String("markdown", "benchmark-results.md", "Markdown result path")
-		strict     = flag.Bool("strict", true, "exit non-zero on errors or invariant failure")
+		memoryOps      = flag.Int("memory-ops", 20000, "operations per memory scenario")
+		pebbleOps      = flag.Int("pebble-ops", 1000, "operations per Pebble scenario")
+		replayOps      = flag.Int("replay-events", 1000, "events in replay history")
+		replayRuns     = flag.Int("replay-runs", 200, "replay samples")
+		workers        = flag.Int("concurrency", 8, "parallel workers")
+		jsonPath       = flag.String("json", "benchmark-results.json", "JSON result path")
+		mdPath         = flag.String("markdown", "benchmark-results.md", "Markdown result path")
+		baselinePath   = flag.String("compare-baseline", "", "path to baseline JSON report for regression comparison")
+		maxRegressPct  = flag.Float64("max-regression-pct", 30.0, "maximum allowed regression percentage in strict mode")
+		strict         = flag.Bool("strict", true, "exit non-zero on errors or invariant failure")
 	)
 	flag.Parse()
 
@@ -95,7 +110,7 @@ func main() {
 		*workers = 1
 	}
 	ctx := context.Background()
-	results := make([]scenarioResult, 0, 8)
+	results := make([]scenarioResult, 0, 10)
 
 	results = append(results, runFlowDistinct(ctx, *memoryOps, *workers))
 	results = append(results, runFlowContended(ctx, *memoryOps, *workers))
@@ -104,9 +119,11 @@ func main() {
 	results = append(results, runRuntimeCold(ctx, max(1000, *memoryOps/4), *workers))
 	results = append(results, runPebbleCold(ctx, *pebbleOps, *workers, true))
 	results = append(results, runPebbleCold(ctx, max(100, *pebbleOps/4), *workers, false))
+	results = append(results, runPebbleReopen(ctx, max(100, *pebbleOps/5)))
 	results = append(results, runReplay(ctx, *replayOps, *replayRuns))
+	results = append(results, runADGOWorkflow(ctx, max(500, *memoryOps/10), *workers))
 
-	report := report{
+	rep := report{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		GoVersion:   runtime.Version(),
 		GOOS:        runtime.GOOS,
@@ -114,17 +131,37 @@ func main() {
 		CPUs:        runtime.NumCPU(),
 		Results:     results,
 	}
-	if err := writeReport(*jsonPath, *mdPath, report); err != nil {
+	if err := writeReport(*jsonPath, *mdPath, rep); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	fmt.Print(renderMarkdown(report))
+	fmt.Print(renderMarkdown(rep))
+
+	hasRegression := false
+	if *baselinePath != "" {
+		baselineRep, err := loadReport(*baselinePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to load baseline report: %v\n", err)
+			os.Exit(2)
+		}
+		comparisons := compareReports(baselineRep, rep, *maxRegressPct)
+		fmt.Print(renderComparisonMarkdown(comparisons, *maxRegressPct))
+		for _, row := range comparisons {
+			if row.Regression {
+				hasRegression = true
+			}
+		}
+	}
 
 	if *strict {
 		for _, result := range results {
 			if result.Errors != 0 || !result.InvariantOK {
 				os.Exit(1)
 			}
+		}
+		if hasRegression {
+			fmt.Fprintln(os.Stderr, "FAIL: benchmark regression exceeded threshold")
+			os.Exit(1)
 		}
 	}
 }
@@ -278,6 +315,35 @@ func runPebbleCold(ctx context.Context, operations, workers int, noSync bool) sc
 	return finish(name, operations, workers, metrics, 0, 0, "new durable execution for every operation")
 }
 
+func runPebbleReopen(ctx context.Context, reopens int) scenarioResult {
+	name := "pebble_reopen_durable"
+	dir, err := os.MkdirTemp("", "axiom-bench-reopen-")
+	if err != nil {
+		return failed(name, reopens, 1, err)
+	}
+	defer os.RemoveAll(dir)
+
+	module, err := compileCounter()
+	if err != nil {
+		return failed(name, reopens, 1, err)
+	}
+
+	metrics := runParallel(reopens, 1, func(_, _ int) error {
+		store, openErr := axiom.OpenPebble(dir, axiom.PebbleNoSync())
+		if openErr != nil {
+			return openErr
+		}
+		defer store.Close()
+		engine, newErr := axiom.New(module, axiom.WithStore(store), axiom.WithTraceLevel(axiom.TraceMinimal))
+		if newErr != nil {
+			return newErr
+		}
+		return engine.Execution("reopen-target").Dispatch(ctx, increment{By: 1})
+	})
+
+	return finish(name, reopens, 1, metrics, 0, 0, "open, dispatch, and close store per operation")
+}
+
 func runReplay(ctx context.Context, events, runs int) scenarioResult {
 	module, err := compileCounter()
 	if err != nil {
@@ -309,6 +375,48 @@ func runReplay(ctx context.Context, events, runs int) scenarioResult {
 		return replayErr
 	})
 	return finish("replay_history", runs, 1, metrics, events, actual, fmt.Sprintf("replay %d history events", events))
+}
+
+func runADGOWorkflow(ctx context.Context, operations, workers int) scenarioResult {
+	name := "adgo_memory_workflow"
+	plan, err := adgo.Compile(adgo.Definition{
+		ID:      "bench-adgo",
+		Version: "1",
+		Nodes: []adgo.Node{
+			{ID: "step1", Kind: adgo.NodeActivity, Activity: "step1", Next: []adgo.Transition{{To: "step2"}}},
+			{ID: "step2", Kind: adgo.NodeActivity, Activity: "step2"},
+		},
+	})
+	if err != nil {
+		return failed(name, operations, workers, err)
+	}
+
+	registry := adgo.NewRegistry()
+	registry.Activity("step1", func(context.Context, adgo.ActivityRequest) (adgo.ActivityResult, error) {
+		return adgo.ActivityResult{Facts: map[string]any{"v1": 1}}, nil
+	})
+	registry.Activity("step2", func(context.Context, adgo.ActivityRequest) (adgo.ActivityResult, error) {
+		return adgo.ActivityResult{Facts: map[string]any{"v2": 2}}, nil
+	})
+
+	store := adgo.NewMemoryStore()
+	engine, err := adgo.NewEngine(plan, store, registry)
+	if err != nil {
+		return failed(name, operations, workers, err)
+	}
+
+	metrics := runParallel(operations, workers, func(worker, sequence int) error {
+		id := fmt.Sprintf("adgo-exec-%d-%d", worker, sequence)
+		if _, startErr := engine.Start(ctx, id, nil, adgo.BudgetLimit{}); startErr != nil {
+			return startErr
+		}
+		_, runErr := engine.RunLocal(ctx, id, adgo.LocalRunOptions{
+			Worker: adgo.WorkerSpec{ID: "bench-worker", Concurrency: 4},
+		})
+		return runErr
+	})
+
+	return finish(name, operations, workers, metrics, 0, 0, "ADGO multi-step workflow execution")
 }
 
 func runParallel(operations, workers int, operation func(worker, sequence int) error) runMetrics {
@@ -352,12 +460,19 @@ func finish(name string, operations, workers int, metrics runMetrics, expected, 
 	if expected != 0 {
 		invariantOK = invariantOK && expected == actual
 	}
+	throughput := 0.0
+	if secs := metrics.duration.Seconds(); secs > 0 {
+		throughput = float64(operations) / secs
+		if math.IsInf(throughput, 0) || math.IsNaN(throughput) {
+			throughput = 0.0
+		}
+	}
 	return scenarioResult{
 		Scenario:      name,
 		Operations:    operations,
 		Concurrency:   workers,
 		DurationMS:    float64(metrics.duration) / float64(time.Millisecond),
-		ThroughputOPS: float64(operations) / metrics.duration.Seconds(),
+		ThroughputOPS: throughput,
 		Errors:        metrics.errors,
 		InvariantOK:   invariantOK,
 		Expected:      expected,
@@ -407,6 +522,54 @@ func writeReport(jsonPath, markdownPath string, value report) error {
 	return os.WriteFile(markdownPath, []byte(renderMarkdown(value)), 0o644)
 }
 
+func loadReport(path string) (report, error) {
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return report{}, err
+	}
+	var rep report
+	if err := json.Unmarshal(data, &rep); err != nil {
+		return report{}, err
+	}
+	return rep, nil
+}
+
+func compareReports(baseline, current report, maxRegressionPct float64) []comparisonRow {
+	baselineMap := make(map[string]scenarioResult)
+	for _, res := range baseline.Results {
+		baselineMap[res.Scenario] = res
+	}
+
+	var rows []comparisonRow
+	for _, cur := range current.Results {
+		base, exists := baselineMap[cur.Scenario]
+		if !exists {
+			continue
+		}
+		thruDelta := 0.0
+		if base.ThroughputOPS > 0 {
+			thruDelta = ((cur.ThroughputOPS - base.ThroughputOPS) / base.ThroughputOPS) * 100.0
+		}
+		p99Delta := 0.0
+		if base.Latency.P99US > 0 {
+			p99Delta = ((cur.Latency.P99US - base.Latency.P99US) / base.Latency.P99US) * 100.0
+		}
+		// Regression occurs if throughput dropped significantly or p99 latency spiked significantly
+		isRegression := thruDelta < -maxRegressionPct || p99Delta > maxRegressionPct
+		rows = append(rows, comparisonRow{
+			Scenario:           cur.Scenario,
+			BaselineThroughput: base.ThroughputOPS,
+			CurrentThroughput:  cur.ThroughputOPS,
+			ThroughputDeltaPct: thruDelta,
+			BaselineP99US:      base.Latency.P99US,
+			CurrentP99US:       cur.Latency.P99US,
+			P99DeltaPct:        p99Delta,
+			Regression:         isRegression,
+		})
+	}
+	return rows
+}
+
 func renderMarkdown(value report) string {
 	var output strings.Builder
 	fmt.Fprintf(&output, "# Axiom performance and resilience report\n\n")
@@ -428,6 +591,24 @@ func renderMarkdown(value report) string {
 		if result.Expected != 0 {
 			fmt.Fprintf(&output, "- `%s`: expected `%d`, actual `%d` — **%v**.\n", result.Scenario, result.Expected, result.Actual, result.InvariantOK)
 		}
+	}
+	return output.String()
+}
+
+func renderComparisonMarkdown(rows []comparisonRow, maxRegressionPct float64) string {
+	var output strings.Builder
+	output.WriteString("\n## Relative Baseline Comparison\n\n")
+	output.WriteString(fmt.Sprintf("Max allowed regression threshold: `%.1f%%`\n\n", maxRegressionPct))
+	output.WriteString("| Scenario | Base Ops/s | Cur Ops/s | Δ Ops/s % | Base p99 µs | Cur p99 µs | Δ p99 % | Status |\n")
+	output.WriteString("|---|---:|---:|---:|---:|---:|---:|:---:|\n")
+	for _, r := range rows {
+		status := "PASS"
+		if r.Regression {
+			status = "**REGRESSION**"
+		}
+		output.WriteString(fmt.Sprintf("| %s | %.0f | %.0f | %+.1f%% | %.1f | %.1f | %+.1f%% | %s |\n",
+			r.Scenario, r.BaselineThroughput, r.CurrentThroughput, r.ThroughputDeltaPct,
+			r.BaselineP99US, r.CurrentP99US, r.P99DeltaPct, status))
 	}
 	return output.String()
 }

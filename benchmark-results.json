@@ -1,0 +1,189 @@
+{
+  "generated_at": "2026-09-02T05:46:50Z",
+  "go_version": "go1.26.5",
+  "goos": "windows",
+  "goarch": "amd64",
+  "cpus": 8,
+  "results": [
+    {
+      "scenario": "flow_memory_distinct",
+      "operations": 10000,
+      "concurrency": 8,
+      "duration_ms": 14.0939,
+      "throughput_ops": 709526.8165660321,
+      "errors": 0,
+      "invariant_ok": true,
+      "expected": 10000,
+      "actual": 10000,
+      "latency": {
+        "mean_us": 11.275120000000001,
+        "p50_us": 0,
+        "p95_us": 0,
+        "p99_us": 503.8,
+        "max_us": 2010.6
+      },
+      "notes": "one execution per worker"
+    },
+    {
+      "scenario": "flow_memory_same_execution",
+      "operations": 10000,
+      "concurrency": 8,
+      "duration_ms": 17.5802,
+      "throughput_ops": 568821.7426422908,
+      "errors": 0,
+      "invariant_ok": true,
+      "expected": 10000,
+      "actual": 10000,
+      "latency": {
+        "mean_us": 13.31276,
+        "p50_us": 0,
+        "p95_us": 0,
+        "p99_us": 546,
+        "max_us": 1506.8
+      },
+      "notes": "all workers update one execution"
+    },
+    {
+      "scenario": "runtime_memory_distinct",
+      "operations": 10000,
+      "concurrency": 8,
+      "duration_ms": 142.2203,
+      "throughput_ops": 70313.45033022712,
+      "errors": 0,
+      "invariant_ok": true,
+      "expected": 10000,
+      "actual": 10000,
+      "latency": {
+        "mean_us": 111.05172,
+        "p50_us": 0,
+        "p95_us": 1001.4,
+        "p99_us": 1575,
+        "max_us": 10880.1
+      },
+      "notes": "compiled Plan, one execution per worker"
+    },
+    {
+      "scenario": "runtime_memory_same_execution",
+      "operations": 10000,
+      "concurrency": 8,
+      "duration_ms": 138.9504,
+      "throughput_ops": 71968.12675602229,
+      "errors": 0,
+      "invariant_ok": true,
+      "expected": 10000,
+      "actual": 10000,
+      "latency": {
+        "mean_us": 105.26274000000001,
+        "p50_us": 0,
+        "p95_us": 1004,
+        "p99_us": 1995.7,
+        "max_us": 3520.2
+      },
+      "notes": "all workers update one compiled execution"
+    },
+    {
+      "scenario": "runtime_memory_cold",
+      "operations": 2500,
+      "concurrency": 8,
+      "duration_ms": 46.3361,
+      "throughput_ops": 53953.61284182312,
+      "errors": 0,
+      "invariant_ok": true,
+      "latency": {
+        "mean_us": 143.85520000000002,
+        "p50_us": 0,
+        "p95_us": 1004.6,
+        "p99_us": 1504.6,
+        "max_us": 2184.7
+      },
+      "notes": "new execution for every operation"
+    },
+    {
+      "scenario": "runtime_pebble_nosync_cold",
+      "operations": 500,
+      "concurrency": 8,
+      "duration_ms": 44.0476,
+      "throughput_ops": 11351.35626004595,
+      "errors": 0,
+      "invariant_ok": true,
+      "latency": {
+        "mean_us": 571.186,
+        "p50_us": 0,
+        "p95_us": 2603.2,
+        "p99_us": 4053.5,
+        "max_us": 5007.5
+      },
+      "notes": "new durable execution for every operation"
+    },
+    {
+      "scenario": "runtime_pebble_sync_cold",
+      "operations": 125,
+      "concurrency": 8,
+      "duration_ms": 73.2959,
+      "throughput_ops": 1705.4159918904058,
+      "errors": 0,
+      "invariant_ok": true,
+      "latency": {
+        "mean_us": 4419.5784,
+        "p50_us": 4527.5,
+        "p95_us": 6032.7,
+        "p99_us": 6778,
+        "max_us": 7344
+      },
+      "notes": "new durable execution for every operation"
+    },
+    {
+      "scenario": "pebble_reopen_durable",
+      "operations": 100,
+      "concurrency": 1,
+      "duration_ms": 695.5926,
+      "throughput_ops": 143.76231144494636,
+      "errors": 0,
+      "invariant_ok": true,
+      "latency": {
+        "mean_us": 6955.926,
+        "p50_us": 5347.5,
+        "p95_us": 8062,
+        "p99_us": 62020.8,
+        "max_us": 77427
+      },
+      "notes": "open, dispatch, and close store per operation"
+    },
+    {
+      "scenario": "replay_history",
+      "operations": 50,
+      "concurrency": 1,
+      "duration_ms": 18.3277,
+      "throughput_ops": 2728.111001380424,
+      "errors": 0,
+      "invariant_ok": true,
+      "expected": 500,
+      "actual": 500,
+      "latency": {
+        "mean_us": 366.554,
+        "p50_us": 517.2,
+        "p95_us": 620.1,
+        "p99_us": 1000.8,
+        "max_us": 1000.8
+      },
+      "notes": "replay 500 history events"
+    },
+    {
+      "scenario": "adgo_memory_workflow",
+      "operations": 1000,
+      "concurrency": 8,
+      "duration_ms": 1991.9519,
+      "throughput_ops": 502.0201542015146,
+      "errors": 0,
+      "invariant_ok": true,
+      "latency": {
+        "mean_us": 15487.9985,
+        "p50_us": 8599.5,
+        "p95_us": 47677.6,
+        "p99_us": 53811.2,
+        "max_us": 59118.1
+      },
+      "notes": "ADGO multi-step workflow execution"
+    }
+  ]
+}

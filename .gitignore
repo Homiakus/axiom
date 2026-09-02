@@ -33,6 +33,7 @@ coverage.out
 *.dll
 *.so
 *.dylib
+test-artifacts/
 
 # Project-local built binaries
 /axiom-main/cmd/axiom/axiom
