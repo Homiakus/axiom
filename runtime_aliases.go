@@ -3,12 +3,13 @@ package axiom
 import runtimepkg "github.com/Homiakus/axiom/internal/runtime"
 
 type (
-	Run         = runtimepkg.Run
-	Status      = runtimepkg.Status
-	TaskStatus  = runtimepkg.TaskStatus
-	FactValue   = runtimepkg.FactValue
-	Explanation = runtimepkg.Explanation
-	EventNamer  = runtimepkg.EventNamer
+	Run               = runtimepkg.Run
+	Status            = runtimepkg.Status
+	TaskStatus        = runtimepkg.TaskStatus
+	FactValue         = runtimepkg.FactValue
+	Explanation       = runtimepkg.Explanation
+	ExecutionSnapshot = runtimepkg.ExecutionSnapshot
+	EventNamer        = runtimepkg.EventNamer
 )
 
 const (
