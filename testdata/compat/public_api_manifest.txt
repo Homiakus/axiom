@@ -1,0 +1,794 @@
+=== Package: . ===
+package axiom
+const TraceAggregate
+const TraceFull
+const TraceMinimal
+const ValueInvalid
+const ValueNull
+const ValueBool
+const ValueInt
+const ValueFloat
+const ValueString
+const ValueAny
+const StatusStarted
+const StatusRunning
+const StatusWaiting
+const StatusCompleted
+const StatusFailed
+const StatusCanceled
+const TaskPending
+const TaskRunning
+const TaskCompleted
+const TaskFailed
+const TaskSuperseded
+const DSLVersion
+var ErrExternalActivityClaimInvalid
+var ErrExternalActivityClaimStale
+var ErrExternalActivityWorkerRequired
+var ErrRetryScheduled
+var PebbleGobCodec
+var PebbleJSONCodec
+var PebbleNoSync
+var PebbleSyncEvery
+type Activity
+type ActivityID
+type ActivityRegistry
+type ActivityTask
+type AnalysisLevel
+type App
+func Load
+func MustLoad
+method (App) MustNew
+method (App) New
+type AtomID
+type BundleDiff
+type Clock
+type CompileOption
+func WithSourceName
+type Diagnostic
+type Diagnostics
+type DurabilityProvider
+type DurableFlowStore
+type Effect
+func Call
+type Engine
+func CompileAndNew
+func MustCompileAndNew
+func MustNew
+func New
+func NewEngine
+func NewWithExternalActivities
+func Open
+type Error
+type Errors
+type EventNamer
+type Execution
+func ReplayFromHistory
+type ExecutionState
+type Explanation
+type ExternalActivityClaim
+type ExternalActivityToken
+type FactValue
+type FieldID
+type Flow
+func NewFlow
+method (Flow) Analysis
+method (Flow) Name
+type FlowEffectAcknowledgeError
+method (FlowEffectAcknowledgeError) Error
+method (FlowEffectAcknowledgeError) StateCommitted
+method (FlowEffectAcknowledgeError) Unwrap
+type FlowEffectCompletion
+type FlowEffectDeliveryError
+method (FlowEffectDeliveryError) Error
+method (FlowEffectDeliveryError) StateCommitted
+method (FlowEffectDeliveryError) Unwrap
+type FlowEffectIntent
+type FlowEngine
+func OpenFlow
+method (FlowEngine) Execution
+type FlowExecution
+method (FlowExecution) Dispatch
+method (FlowExecution) DrainEffects
+method (FlowExecution) DrainEffectsLimit
+method (FlowExecution) History
+method (FlowExecution) OutboxStatus
+method (FlowExecution) State
+type FlowHistoryEntry
+type FlowOption
+func WithDurableFlowEffects
+func WithFlowStore
+type FlowOutboxDrainResult
+type FlowOutboxStatus
+method (FlowOutboxStatus) HasPending
+type FlowResult
+func Next
+type FlowStore
+type HistoryEntry
+type ImpactReport
+type IncrementalFlowStore
+type Input
+type MemoryFlowStore
+func NewMemoryFlowStore
+method (MemoryFlowStore) Durability
+method (MemoryFlowStore) Load
+method (MemoryFlowStore) LoadHistory
+method (MemoryFlowStore) LoadState
+method (MemoryFlowStore) Save
+method (MemoryFlowStore) SaveStateAndAppend
+type Module
+func Compile
+func CompileAny
+func LoadModule
+func MustCompile
+type ModuleBundle
+func CompileBundle
+method (ModuleBundle) Diff
+method (ModuleBundle) Impact
+method (ModuleBundle) ValidateCompatibility
+type Option
+func Act
+func ActTyped
+func Acts
+func Register
+func WithActivities
+func WithActivity
+func WithClock
+func WithProductionMode
+func WithStore
+func WithStrictFastRuntime
+func WithTraceLevel
+type Output
+type Patch
+type PebbleFlowStore
+func OpenPebbleFlowStore
+method (PebbleFlowStore) AtomicFlowCommit
+method (PebbleFlowStore) Close
+method (PebbleFlowStore) Durability
+method (PebbleFlowStore) Load
+method (PebbleFlowStore) LoadHistory
+method (PebbleFlowStore) LoadState
+method (PebbleFlowStore) Save
+method (PebbleFlowStore) SaveStateAndAppend
+type PebbleOption
+type PebbleStore
+func OpenPebble
+type Plan
+func CompilePlan
+func NewPlan
+method (Plan) CompilePlan
+method (Plan) Module
+method (Plan) New
+type PlanSource
+type RetryScheduledError
+type RuleID
+type Run
+type SignalID
+type SourceMapEntry
+type Status
+type Store
+func NewMemoryStore
+type StoreDurability
+type StoreTransaction
+type TRIZNormalization
+func NormalizeTRIZ
+type TaskStatus
+type TraceLevel
+type TransactionalStore
+type Value
+type ValueKind
+type WorkerOptions
+func AddClaim
+func EffectHandler
+func FlowEffectIDFromContext
+func Handle
+func RuntimeQueryProjectionNames
+func ValidateRuntimeQueryProjections
+
+=== Package: adgo ===
+package adgo
+const HTTPWorkerProtocolVersion
+var ErrNoWork
+var ErrStaleTask
+var ErrExecutionPaused
+var ErrScheduleNotFound
+var ErrScheduleExists
+var ErrExecutionNotFound
+var ErrExecutionExists
+var ErrConflict
+var ErrDeadlock
+var ErrBudgetExceeded
+var ErrAdmissionDenied
+var ErrCacheBusy
+var ErrProviderHealthNotFound
+type ActivityCache
+type ActivityHandler
+func NewEnsembleActivity
+func NewHedgedActivity
+func WithAdmission
+func WithResultCache
+type ActivityRequest
+type ActivityResult
+type ActivityVariant
+type AdaptiveRouter
+func NewAdaptiveRouter
+func NewDurableAdaptiveRouter
+method (AdaptiveRouter) ProviderForActivity
+method (AdaptiveRouter) Ranked
+method (AdaptiveRouter) Report
+method (AdaptiveRouter) ReportContext
+method (AdaptiveRouter) Reset
+method (AdaptiveRouter) ResetContext
+method (AdaptiveRouter) Resolve
+method (AdaptiveRouter) Snapshot
+method (AdaptiveRouter) SnapshotContext
+type AdmissionController
+type AdmissionDeniedError
+method (AdmissionDeniedError) Error
+method (AdmissionDeniedError) Unwrap
+type AdmissionLease
+type AdmissionPolicy
+type AdmissionSnapshot
+type AdvanceResult
+type ArchiveFunc
+func JSONArchive
+type ArtifactRef
+type ArtifactStore
+type AwaitOptions
+type Awaitable
+type BudgetLimit
+type BudgetUsage
+type CacheBusyError
+method (CacheBusyError) Error
+method (CacheBusyError) Unwrap
+type CacheLease
+type CachePolicy
+type CachedActivityResult
+type Candidate
+type ChildHandle
+type ChildOptions
+type ChildResult
+type Clock
+type CompensationEntry
+type CompensationHandler
+func WithCompensationPolicy
+type CompensationPolicy
+func DefaultCompensationPolicy
+type ContentAddressedStore
+func NewContentAddressedStore
+method (ContentAddressedStore) Exists
+method (ContentAddressedStore) Open
+method (ContentAddressedStore) Put
+type ContinueOptions
+type DecisionHandler
+type Definition
+type DependencyRepairPlanner
+method (DependencyRepairPlanner) PlanRepair
+type Diagnostic
+func AuditExecution
+type DiagnosticSeverity
+type Engine
+func NewEngine
+method (Engine) Advance
+method (Engine) Await
+method (Engine) Awaitable
+method (Engine) Cancel
+method (Engine) Complete
+method (Engine) ContinueAsNew
+method (Engine) Diagnostics
+method (Engine) Fail
+method (Engine) Get
+method (Engine) Heartbeat
+method (Engine) PatchData
+method (Engine) Pause
+method (Engine) Plan
+method (Engine) Poll
+method (Engine) RecoverCompensation
+method (Engine) RejectAwaitable
+method (Engine) ResolveAwaitable
+method (Engine) ResolveHuman
+method (Engine) Resume
+method (Engine) RewindFrom
+method (Engine) Router
+method (Engine) RunCoordinator
+method (Engine) RunLocal
+method (Engine) RunResilientCoordinator
+method (Engine) RunWorker
+method (Engine) Runtime
+method (Engine) Serve
+method (Engine) ServeResilient
+method (Engine) Signal
+method (Engine) SignalAndAdvance
+method (Engine) SignalDeterministic
+method (Engine) Start
+method (Engine) StartOrLoad
+method (Engine) Store
+method (Engine) UpdateBudget
+method (Engine) Watch
+type EngineOption
+func WithAdaptiveRouter
+func WithCoordinatorInterval
+func WithEngineClock
+func WithEngineLeaseTTL
+func WithEnginePollInterval
+func WithEngineRepairPlanner
+func WithEngineScheduler
+func WithMaxLeaseRecoveries
+type Event
+type Execution
+func InspectVersion
+func RunNestedLocal
+type ExecutionCatalog
+type ExecutionDeletionStore
+type ExecutionDiagnostics
+type ExecutionQuery
+type ExecutionStatus
+type ExecutionSummary
+func ListExecutionSummaries
+func QueryExecutions
+type Explanation
+func Explain
+method (Explanation) String
+type FailureClass
+func DefaultClassify
+type FailureError
+method (FailureError) Error
+method (FailureError) Unwrap
+type FanoutItem
+type FanoutResult
+func RunFanout
+type FileActivityCache
+func NewFileActivityCache
+method (FileActivityCache) Abort
+method (FileActivityCache) Claim
+method (FileActivityCache) Get
+method (FileActivityCache) Put
+type FileAdmissionController
+func NewFileAdmissionController
+method (FileAdmissionController) Acquire
+method (FileAdmissionController) Heartbeat
+method (FileAdmissionController) Release
+method (FileAdmissionController) Snapshot
+type FileAdmissionOption
+func WithFileAdmissionClock
+func WithFileAdmissionLockStaleAfter
+type FileProviderHealthStore
+func NewFileProviderHealthStore
+method (FileProviderHealthStore) DeleteProviderHealth
+method (FileProviderHealthStore) ListProviderHealth
+method (FileProviderHealthStore) LoadProviderHealth
+method (FileProviderHealthStore) UpdateProviderHealth
+type FileScheduleStore
+func NewFileScheduleStore
+method (FileScheduleStore) Commit
+method (FileScheduleStore) Create
+method (FileScheduleStore) List
+method (FileScheduleStore) Load
+type FileStore
+func NewFileStore
+method (FileStore) AckInbox
+method (FileStore) Commit
+method (FileStore) Create
+method (FileStore) DeleteExecution
+method (FileStore) ListExecutionIDs
+method (FileStore) ListInbox
+method (FileStore) ListVersions
+method (FileStore) Load
+method (FileStore) PruneVersions
+method (FileStore) PutInbox
+type FleetDiagnostics
+func AuditFleet
+type FleetMetricsSnapshot
+func CollectFleetMetrics
+type ForkInfo
+type ForkOptions
+type GateHandler
+type GateResult
+type HTTPWorkerAuthFunc
+type HTTPWorkerClient
+method (HTTPWorkerClient) Complete
+method (HTTPWorkerClient) Fail
+method (HTTPWorkerClient) Heartbeat
+method (HTTPWorkerClient) Poll
+method (HTTPWorkerClient) Run
+type HTTPWorkerServer
+func NewHTTPWorkerServer
+method (HTTPWorkerServer) ServeHTTP
+type HTTPWorkerServerOptions
+type HistoryEntry
+type Host
+func NewHost
+method (Host) Advance
+method (Host) Child
+method (Host) Complete
+method (Host) Engine
+method (Host) Fail
+method (Host) Heartbeat
+method (Host) InspectChildren
+method (Host) Plans
+method (Host) Poll
+method (Host) Register
+method (Host) RunCoordinator
+method (Host) RunResilientCoordinator
+method (Host) RunWorker
+method (Host) ServeResilient
+method (Host) Signal
+method (Host) Start
+method (Host) StartChild
+method (Host) StartChildren
+method (Host) WaitChild
+type HostedWorkItem
+type HumanDecision
+type HumanResolution
+type HumanSpec
+type JoinMode
+type JoinSpec
+type LocalRunOptions
+type LoopBound
+type MemoryActivityCache
+func NewMemoryActivityCache
+method (MemoryActivityCache) Abort
+method (MemoryActivityCache) Claim
+method (MemoryActivityCache) Get
+method (MemoryActivityCache) Put
+type MemoryAdmissionController
+func NewMemoryAdmissionController
+method (MemoryAdmissionController) Acquire
+method (MemoryAdmissionController) Heartbeat
+method (MemoryAdmissionController) Release
+method (MemoryAdmissionController) Snapshot
+type MemoryAdmissionOption
+func WithMemoryAdmissionClock
+type MemoryProviderHealthStore
+func NewMemoryProviderHealthStore
+method (MemoryProviderHealthStore) DeleteProviderHealth
+method (MemoryProviderHealthStore) ListProviderHealth
+method (MemoryProviderHealthStore) LoadProviderHealth
+method (MemoryProviderHealthStore) UpdateProviderHealth
+type MemoryScheduleStore
+func NewMemoryScheduleStore
+method (MemoryScheduleStore) Commit
+method (MemoryScheduleStore) Create
+method (MemoryScheduleStore) List
+method (MemoryScheduleStore) Load
+type MemoryStore
+func NewMemoryStore
+method (MemoryStore) AckInbox
+method (MemoryStore) Commit
+method (MemoryStore) Create
+method (MemoryStore) DeleteExecution
+method (MemoryStore) ListExecutionIDs
+method (MemoryStore) ListInbox
+method (MemoryStore) Load
+method (MemoryStore) PutInbox
+type Metrics
+method (Metrics) QualityGainPerCost
+method (Metrics) QualityGainPerRepair
+type MigrationPolicy
+type MigrationReport
+func ValidatePlanMigration
+type NestedInvocation
+type NestedLocalOptions
+type Node
+type NodeKind
+type NodeRuntime
+type NodeStatus
+type Outcome
+type PebbleStore
+func OpenPebbleStore
+method (PebbleStore) AckInbox
+method (PebbleStore) Close
+method (PebbleStore) Commit
+method (PebbleStore) Create
+method (PebbleStore) DeleteExecution
+method (PebbleStore) ListExecutionIDs
+method (PebbleStore) ListInbox
+method (PebbleStore) ListVersions
+method (PebbleStore) Load
+method (PebbleStore) PruneVersions
+method (PebbleStore) PutInbox
+type PebbleStoreOption
+func WithPebbleNoSync
+type Plan
+func Compile
+func CompileValidatedPlanDelta
+type PlanDeltaPolicy
+type PlanDeltaRecord
+type PlanProposal
+type PlanRef
+type PolicyAction
+type PolicyDecision
+type PolicyEngine
+func NewPolicyEngine
+method (PolicyEngine) Poll
+method (PolicyEngine) Resolve
+method (PolicyEngine) RunWorker
+type PolicyEngineOptions
+type PolicyRequest
+type Production
+func OpenProduction
+method (Production) Close
+method (Production) Serve
+type ProductionBackend
+type ProductionConfig
+func DefaultProductionConfig
+type Provider
+type ProviderHealth
+type ProviderHealthStore
+type ProviderPolicy
+type QualityGateSpec
+type QualitySnapshot
+type QualityVector
+type Registry
+func NewRegistry
+method (Registry) Activity
+method (Registry) Compensation
+method (Registry) Decision
+method (Registry) Gate
+method (Registry) Provider
+method (Registry) Resolve
+method (Registry) Subflow
+type RemoteFailure
+type RepairPlan
+type RepairPlanner
+type ReplayReport
+func VerifyReplay
+type RetentionPolicy
+type RetentionResult
+func CollectExecutions
+type RetryPolicy
+func DefaultRetryPolicy
+type RiskLevel
+method (RiskLevel) String
+type RouterConfig
+func DefaultRouterConfig
+type Runtime
+func NewRuntime
+method (Runtime) Run
+method (Runtime) Signal
+method (Runtime) Start
+method (Runtime) Step
+type RuntimeOption
+func WithApprovalThreshold
+func WithClock
+func WithFailureClassifier
+func WithLeaseTTL
+func WithRepairPlanner
+func WithScheduler
+func WithWorkerID
+type RuntimePolicy
+type RuntimePolicyFunc
+method (RuntimePolicyFunc) Authorize
+type Schedule
+type ScheduleRunner
+func NewScheduleRunner
+method (ScheduleRunner) Register
+method (ScheduleRunner) Run
+method (ScheduleRunner) Tick
+type ScheduleStore
+type Scheduler
+type SignalPolicy
+type Snapshot
+type SpeculationPolicy
+type StepResult
+type Store
+type SubflowHandler
+type TaskDiagnostic
+type TaskRuntime
+type TaskStatus
+type Timer
+type TimerClock
+type Transition
+type UtilityScheduler
+func DefaultScheduler
+method (UtilityScheduler) Select
+type ValidatedPlanDelta
+func ValidatePlanDelta
+type ValidationError
+type ValidationErrors
+method (ValidationErrors) Error
+type VersionPruner
+type VersionedStore
+type Violation
+type WaitSpec
+type WatchEvent
+type WatchOptions
+type WorkItem
+type WorkToken
+type WorkerService
+func NewWorkerService
+method (WorkerService) BeginDrain
+method (WorkerService) Drain
+method (WorkerService) Run
+method (WorkerService) Status
+type WorkerServiceStatus
+type WorkerSpec
+func ActivityHeartbeat
+func ApplyRepair
+func ApplyRepairWithClock
+func CanonicalEventID
+func CanonicalTaskID
+func ChildExecutionID
+func Data
+func DecodeDurableName
+func DefaultActivityCacheKey
+func DetectOscillation
+func EncodeDurableName
+func Fail
+func FailAfter
+func ForkExecution
+func FramedPreimage
+func IsContainedPath
+func MigrateExecution
+func NestedExecutionID
+func PrometheusHandler
+func QualityUtility
+func RateLimited
+func SetData
+
+=== Package: diagram ===
+package diagram
+func HistoryToMermaidSequence
+func ToMermaidFlowchart
+func ToPlantUML
+
+=== Package: model ===
+package model
+type ActivityBuilder
+method (ActivityBuilder) Effect
+method (ActivityBuilder) IdempotencyKey
+method (ActivityBuilder) Input
+method (ActivityBuilder) Output
+method (ActivityBuilder) Policy
+method (ActivityBuilder) Require
+type Definition
+func New
+method (Definition) Activity
+method (Definition) Claim
+method (Definition) Compile
+method (Definition) CompilePlan
+method (Definition) Computed
+method (Definition) Fact
+method (Definition) Policy
+method (Definition) Query
+method (Definition) Rule
+method (Definition) Source
+method (Definition) Version
+type EventRef
+func Event
+method (EventRef) Field
+method (EventRef) Trigger
+type Expr
+func Add
+func And
+func Bool
+func Div
+func Eq
+func Exists
+func Float
+func GT
+func GTE
+func Implies
+func Int
+func Int64
+func LT
+func LTE
+func Lit
+func Mod
+func Mul
+func Ne
+func Not
+func Or
+func OutputRef
+func Raw
+func Ref
+func String
+func Sub
+func TryLit
+method (Expr) String
+type Exprable
+type FieldKey
+func Key
+method (FieldKey) Name
+type PolicyBuilder
+method (PolicyBuilder) Backoff
+method (PolicyBuilder) Concurrency
+method (PolicyBuilder) ExponentialBackoff
+method (PolicyBuilder) Idempotency
+method (PolicyBuilder) Retry
+method (PolicyBuilder) Timeout
+type RuleBuilder
+method (RuleBuilder) On
+method (RuleBuilder) Require
+method (RuleBuilder) Run
+method (RuleBuilder) Set
+method (RuleBuilder) When
+type StateRef
+func State
+method (StateRef) Changed
+method (StateRef) Default
+method (StateRef) Field
+type Trigger
+func OnChanged
+func OnSignal
+func OnTimer
+func StateChanged
+type TypedEvent
+func EventNamed
+func EventOf
+method (TypedEvent) Bool
+method (TypedEvent) Field
+method (TypedEvent) Float
+method (TypedEvent) Int
+method (TypedEvent) String
+method (TypedEvent) Trigger
+type TypedField
+func EventField
+func Field
+func OutputBool
+func OutputInt
+func OutputString
+func StateField
+method (TypedField) Add
+method (TypedField) Div
+method (TypedField) DividedBy
+method (TypedField) DividedByField
+method (TypedField) EQ
+method (TypedField) Equal
+method (TypedField) EqualField
+method (TypedField) Expr
+method (TypedField) GT
+method (TypedField) GTE
+method (TypedField) GreaterOrEqual
+method (TypedField) GreaterOrEqualField
+method (TypedField) GreaterThan
+method (TypedField) GreaterThanField
+method (TypedField) LT
+method (TypedField) LTE
+method (TypedField) LessOrEqual
+method (TypedField) LessOrEqualField
+method (TypedField) LessThan
+method (TypedField) LessThanField
+method (TypedField) Minus
+method (TypedField) MinusField
+method (TypedField) Mod
+method (TypedField) Modulo
+method (TypedField) ModuloField
+method (TypedField) Mul
+method (TypedField) NE
+method (TypedField) NotEqual
+method (TypedField) NotEqualField
+method (TypedField) Plus
+method (TypedField) PlusField
+method (TypedField) Sub
+method (TypedField) Times
+method (TypedField) TimesField
+type TypedState
+func Bind
+func StateDefault
+method (TypedState) Bool
+method (TypedState) Default
+method (TypedState) Field
+method (TypedState) Float
+method (TypedState) Int
+method (TypedState) String
+
+=== Package: store/pebble ===
+package pebble
+var Open
+var WithNoSync
+var WithSyncEvery
+var WithJSONCodec
+var WithGobCodec
+type Option
+type Store
+
+=== Package: table ===
+package table
+type Source
+func Bytes
+func Named
+method (Source) CompilePlan
+func Load
+func Parse
+
