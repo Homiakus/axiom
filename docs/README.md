@@ -6,6 +6,8 @@
 
 - [Обзор и быстрый старт](../README.md)
 - [Какой публичный API выбирать](api-guide.md)
+- [Инвентарь публичного API и депрекаций](deprecation-inventory.md)
+- [Таксономия и классификация ошибок](error-taxonomy.md)
 - [Каталог примеров](../examples/README.md)
 - [Локальная разработка](../DEVELOPMENT.md)
 - [Правила внесения изменений](../CONTRIBUTING.md)
@@ -19,6 +21,9 @@
 - [Архитектура](../ARCHITECTURE.md)
 - [Runtime-семантика и текущие ограничения](runtime-semantics.md)
 - [Durable Flow effects: outbox, recovery и exactly-once boundary](flow-durability.md)
+- [Реестр общих персистентных примитивов](durable-primitives-inventory.md)
+- [Инвентарь сериализованных поверхностей](serialized-surfaces.md)
+- [Классификация вызовов времени и часов](clock-inventory.md)
 - [Концептуальная модель CRFG](axiom-crfg.md)
 - [Go-first architecture](go-first-architecture.md)
 
@@ -32,6 +37,9 @@
 
 ## Качество и релиз
 
+- [Регламенты аварийного реагирования и Runbooks](operational-runbooks.md)
+- [Отказоустойчивость, метрики и health-пробы](observability-and-health.md)
+- [Quality Loop и автоматизированные проверки](QUALITY_LOOP.md)
 - [Актуальный usability audit](../reports/usability-audit-2026-08-07.md)
 - [Актуальный benchmark baseline](../benchmarks/latest.md)
 - [Pre-v1 release policy](versioning.md)
@@ -43,9 +51,17 @@
 |---|---|
 | `README.md` | Public API overview и quick start |
 | `api-guide.md` | Рекомендуемый путь выбора frontend и runtime API |
+| `deprecation-inventory.md` | Инвентарь устаревших конструкторов и расписание pre-v1 депрекаций |
+| `error-taxonomy.md` | Канонический контракт классификации ошибок (`diag.Error`, `errors.Is`, `FailureClass`) |
+| `observability-and-health.md` | Ограничение кардинальности метрик (OPS-001) и разделение liveness/readiness проб (OPS-002) |
+| `operational-runbooks.md` | Процедуры устранения сбоев, восстановления данных, утечек блокировок и отката версий (OPS-003) |
 | `runtime-semantics.md` | Declarative Engine runtime contract и failure boundaries |
 | `flow-durability.md` | Канонический контракт durable Flow outbox/recovery |
+| `durable-primitives-inventory.md` | Анализ и статус общих примитивов Core vs ADGO |
+| `serialized-surfaces.md` | Реестр 19 сериализованных поверхностей состояния |
+| `clock-inventory.md` | Каноническая классификация вызовов `time.*` и `durabletime.Clock` |
 | `versioning.md` | Политика pre-v1 совместимости, release gate и workflow публикации |
+| `QUALITY_LOOP.md` | Регламент автоматического тестирования мутаций и краевых случаев |
 | `CHANGELOG.md` | Текущий публичный release history / planned changes |
 | `releases/v0.1.0.md` | Release notes первого versioned baseline |
 | `ARCHITECTURE.md` | Подтверждён текущим code path; ограничения указаны явно |
