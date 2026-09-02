@@ -70,6 +70,7 @@ func extractPackageAPI(pkgPath string) (string, error) {
 							fmt.Fprintf(&buf, "var %s\n", name.Name)
 						}
 					}
+				}
 			}
 		}
 
