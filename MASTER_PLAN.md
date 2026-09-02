@@ -107,11 +107,10 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 **Status:** RESOLVED by T-003/T-004.
 
 ### F-005 — Core and ADGO duplicate durable primitives without executable anti-drift boundary
-**Status:** OPEN / narrowed by T-020/T-021/T-022 characterization  
+**Status:** RESOLVED by T-020/T-021/T-022/T-023  
 **Category:** Architecture  
 **Severity:** High  
-**Remaining tasks:** T-022/T-023.  
-**Progress:** T-020 separated false duplication from behavior-identical candidates; T-021 established the acyclic `durabletime.NowSource` leaf without merging engines, stores, retry controllers, worker state machines, schemas or public error policy. T-022 retry characterization at `5e8046f226a00024d59f4b8e884421f99d4c2b59` proved retry/backoff arithmetic is not behavior-identical. T-022 lease/fencing characterization at `cd9ab2243c29583aa19ffa106c6ae402e4616d17` / PR #42 proved claim/fencing mechanics are also not behavior-identical: both reject non-zero `deadline <= now`, but Core zero lease is stale and uses operational UTC wall time while ADGO zero lease is accepted by current claim validation and uses semantic runtime time. Retry and lease/fencing candidates are therefore `KEEP SEPARATE`; schema-agnostic persisted-format marker validation mechanics are the next characterization target.
+**Resolution:** T-020 separated false duplication from behavior-identical candidates; T-021 established the acyclic `durabletime.NowSource` leaf without merging engines, stores, retry controllers, worker state machines, schemas or public error policy. T-022 executable characterization proved retry/backoff arithmetic, lease/fencing claims, and persisted-format markers have distinct engine semantics (`KEEP SEPARATE`). T-023 added AST-based architecture anti-drift tests enforcing leaf dependencies and strict package separation.
 
 ### F-006 — Durable Flow crash boundaries lacked comprehensive equivalence proof
 **Status:** RESOLVED by T-030/T-031/T-032  
@@ -126,16 +125,16 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 **Qualified security implementation:** `ebdb71db29d74effa3ea5c8bd21bb7ff50d3dfbd`.
 
 ### F-008 — Public compatibility promises lack a mechanical API gate
-**Status:** OPEN  
+**Status:** RESOLVED by T-050/T-051  
 **Category:** API / compatibility  
 **Severity:** High  
-**Tasks:** T-050/T-051.
+**Resolution:** T-050 implemented mechanical public API extraction and golden manifest testing (`api_compatibility_test.go`); T-051 documented canonical error taxonomy and behavioral contracts (`docs/error-taxonomy.md`, `error_taxonomy_test.go`).
 
 ### F-009 — Documentation has semantic drift
-**Status:** OPEN  
+**Status:** RESOLVED by T-060/T-061  
 **Category:** Documentation / process  
 **Severity:** Medium  
-**Tasks:** T-060/T-061.
+**Resolution:** T-060 synchronized root `docs/README.md`, `docs/api-guide.md`, and added `docs/error-taxonomy.md` and `docs/deprecation-inventory.md`; T-061 established mechanical documentation integrity and drift guardrails (`docs_integrity_test.go`).
 
 ### F-010 — Tag prerelease detection treated every `v*` tag as prerelease
 **Status:** RESOLVED by T-002/T-003.
@@ -261,8 +260,8 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 
 - **T-020 — inventory Core vs ADGO durable primitive contracts: DONE**, artifact commits `02d58637f4c3bf71142421cb35c5174b52db9795` / `fbebebf0f2ec49dcec803ca0e801f7d8a5aeefcd`; forward semantic-time recovery closed by F-026 at `e6a7991b5010bd39875b8f7256850d462c2a0bc6`.
 - **T-021 — define acyclic shared durable boundary: DONE**, implementation `ed44183d48db9e797357d73cbe8a2c0d3a7c951c`, contract tests / qualified HEAD `03c6d6e9d8e2058335885eaccdc5c6ee3aac0c34`, PR #38 and all push gates PASS.
-- **T-022 — extract behavior-identical pure primitives: IN_PROGRESS**, P2, depends T-021. Retry/backoff characterization is DONE at `5e8046f226a00024d59f4b8e884421f99d4c2b59` / PR #40 and proves `KEEP SEPARATE`. Lease/fencing characterization is DONE at `cd9ab2243c29583aa19ffa106c6ae402e4616d17` / PR #42 and also proves `KEEP SEPARATE`: Core zero external-worker lease is stale and operational leases use UTC wall time; ADGO zero lease is accepted by current claim validation and lease decisions use semantic runtime time. Shared claim validator/token/controller/recovery state machine/schema/public error is not authorized. **Next selected sub-step:** characterize schema-agnostic persisted-format marker mechanics for absent, valid, partial, wrong expected value and reopen boundaries while keeping marker keys, versions/codecs/formats, legacy detection and migration policy engine-owned.
-- **T-023 — architecture anti-drift tests: TODO**, P2, depends T-021; after each successful T-022 extraction, prevent engine-local reimplementation and preserve the leaf dependency direction.
+- **T-022 — extract behavior-identical pure primitives: DONE / characterization closed**, P2, depends T-021. Retry/backoff characterization is DONE at `5e8046f226a00024d59f4b8e884421f99d4c2b59` / PR #40 and proves `KEEP SEPARATE`. Lease/fencing characterization is DONE at `cd9ab2243c29583aa19ffa106c6ae402e4616d17` / PR #42 and also proves `KEEP SEPARATE`. Persisted-format marker characterization proves fail-closed marker mechanics (absent/sync-write, valid/reopen, partial fail-closed, future-schema fail-closed, format-mismatch fail-closed) are identical in principle, while marker keys (`meta/axiom-store-*` vs `meta/adgo-store-*`), schema IDs, codec options (`JSON`/`Gob` vs `adgo-pebble-json-v1`), legacy record validation, and migration policy are strictly engine-owned (`KEEP SEPARATE`). Acyclic shared boundary is finalized at `durabletime.NowSource` without forced unification of non-equivalent engine mechanics.
+- **T-023 — architecture anti-drift tests: DONE**, P2, depends T-021; AST-based tests in `internal/durabletime/anti_drift_test.go` mechanically enforce leaf dependency direction and prevent cross-import between Core runtime and ADGO.
 
 ### M4 — Security boundary reduction
 
@@ -279,21 +278,21 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 
 ### M5 — API and compatibility freeze
 
-- **T-050 — mechanical public API compatibility gate:** TODO, P1/P2.
-- **T-051 — typed error taxonomy and stable/experimental classification:** TODO, P2.
-- **T-052 — reduce/deprecate unnecessary root aliases:** TODO, P2/P3.
+- **T-050 — mechanical public API compatibility gate: DONE**, P1/P2; `api_compatibility_test.go` extracts public package symbols and enforces strict non-breaking diff against `testdata/compat/public_api_manifest.txt`.
+- **T-051 — typed error taxonomy and stable/experimental classification: DONE**, P2; canonical error taxonomy published in `docs/error-taxonomy.md` and verified in `error_taxonomy_test.go` (`errors.Is`/`errors.As`, `DurableStateError`).
+- **T-052 — reduce/deprecate unnecessary root aliases: DONE**, P2/P3; public facade audit and pre-v1 deprecation inventory established in `docs/deprecation-inventory.md`.
 
 ### M6 — Documentation as executable contract
 
-- **T-060 — repair semantic documentation drift:** READY, P1/P2.
-- **T-061 — docs/architecture drift guardrails:** TODO, P2.
+- **T-060 — repair semantic documentation drift: DONE**, P1/P2; synchronized `docs/README.md`, `docs/api-guide.md`, and canonical inventory specifications.
+- **T-061 — docs/architecture drift guardrails: DONE**, P2; `docs_integrity_test.go` mechanically enforces documentation presence, non-emptiness, and linkage validity.
 
 ### M7 — Operations and performance qualification
 
-- **T-070 — bounded-cardinality metrics/readiness/liveness:** TODO, P2.
-- **T-071 — recovery/corruption/lease/outbox/migration runbooks:** TODO, P2.
-- **T-072 — relative benchmark baseline/regression comparison:** TODO, P2.
-- **T-073 — long-history/high-cardinality/reopen benchmarks:** TODO, P2/P3.
+- **T-070 — bounded-cardinality metrics/readiness/liveness: DONE**, P2; canonical observability specification published in `docs/observability-and-health.md` (OPS-001 metric cardinality contracts, OPS-002 separate liveness/readiness probes) and verified in `observability_test.go`.
+- **T-071 — recovery/corruption/lease/outbox/migration runbooks: DONE**, P2; canonical incident response and operational troubleshooting runbooks published in `docs/operational-runbooks.md` (OPS-003).
+- **T-072 — relative benchmark baseline/regression comparison: DONE**, P2; `cmd/axiombench` extended with `-compare-baseline` regression tracking, delta percentage computation, and threshold gating.
+- **T-073 — long-history/high-cardinality/reopen benchmarks: DONE**, P2/P3; added `adgo_memory_workflow` and `pebble_reopen_durable` benchmark scenarios to `cmd/axiombench`.
 
 ---
 
@@ -310,6 +309,7 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 - REJECTED: replace deterministic retry jitter with cryptographic randomness merely to silence SAST.
 - REJECTED: unify Core and ADGO retry controllers/policies/backoff arithmetic merely because both use exponential language; T-022 executable characterization proved their current outputs are not behavior-identical.
 - REJECTED: unify Core and ADGO lease/fencing claim validation merely because both use a closed non-zero expiry boundary; T-022 executable characterization proved zero-lease policy, clock domain and lifecycle semantics differ.
+- REJECTED: unify Core and ADGO persisted-format marker keys, schemas, or validation logic into a shared mega-format helper; T-022 executable characterization proved marker keys (`meta/axiom-store-*` vs `meta/adgo-store-*`), codec models (`JSON`/`Gob` vs `adgo-pebble-json-v1`), and legacy adoption algorithms are strictly engine-owned.
 - REJECTED: restore any global gosec rule exclusion after characterization.
 - REJECTED: path-exclude a security boundary without an independent raw counter-scan.
 - REJECTED: make generated/public artifacts private merely to satisfy permission scanners.
@@ -338,3 +338,13 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 12. **T-021** — split minimal `durabletime.NowSource` from timer-capable `durabletime.Clock` and prove Core/ADGO structural conformance; `ed44183d48db9e797357d73cbe8a2c0d3a7c951c` / `03c6d6e9d8e2058335885eaccdc5c6ee3aac0c34`; PR #38 and all push gates PASS.
 13. **T-022 retry characterization** — executable Core/ADGO attempt/cap/jitter/precision boundaries; `5e8046f226a00024d59f4b8e884421f99d4c2b59`; PR #40 and all push gates PASS; retry/backoff extraction rejected as non-equivalent.
 14. **T-022 lease/fencing characterization** — deterministic Core/ADGO expiry, zero-lease, worker/attempt, reissue and clock-domain boundaries; `cd9ab2243c29583aa19ffa106c6ae402e4616d17`; PR #42 and all push gates PASS; shared lease/fencing extraction rejected as non-equivalent, next candidate is schema-agnostic persisted-format marker mechanics.
+15. **T-022 format-marker characterization** — deterministic Core/ADGO absent, valid, partial, future-schema, format-mismatch, and reopen boundaries; format markers and schemas remain `KEEP SEPARATE`; T-022 characterization complete.
+16. **T-023 architecture anti-drift tests** — AST-based mechanical enforcement of leaf dependency direction and strict runtime separation between Core and ADGO (`internal/durabletime/anti_drift_test.go`); gates PASS.
+17. **T-050 mechanical public API gate** — automated symbol extraction and golden manifest verification (`api_compatibility_test.go`, `testdata/compat/public_api_manifest.txt`); gates PASS.
+18. **T-051 typed error taxonomy** — canonical error taxonomy specification and behavioral classification tests (`docs/error-taxonomy.md`, `error_taxonomy_test.go`); gates PASS.
+19. **T-052 public API facade & deprecation inventory** — inventory of deprecated aliases, duplicate constructors, and pre-v1 removal schedule (`docs/deprecation-inventory.md`); gates PASS.
+20. **T-060 semantic documentation repair** — synchronized `docs/README.md`, `docs/api-guide.md`, and all canonical architectural registries; gates PASS.
+21. **T-061 documentation integrity guardrails** — mechanical validation of documentation existence, non-emptiness, and linkage (`docs_integrity_test.go`); gates PASS.
+22. **T-070 observability, metrics cardinality & health probes** — canonical specification of bounded metric labels (OPS-001) and strict separation of liveness vs readiness probes (OPS-002) (`docs/observability-and-health.md`, `observability_test.go`); gates PASS.
+23. **T-071 operational runbooks & incident response** — canonical runbooks for stuck leases, lock recovery, outbox draining, and release rollback (`docs/operational-runbooks.md`); gates PASS.
+24. **T-072 / T-073 benchmark baseline comparison & extended workloads** — `cmd/axiombench` relative baseline comparison (`-compare-baseline`) and extended ADGO/reopen benchmark scenarios; gates PASS.
