@@ -348,3 +348,134 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 22. **T-070 observability, metrics cardinality & health probes** — canonical specification of bounded metric labels (OPS-001) and strict separation of liveness vs readiness probes (OPS-002) (`docs/observability-and-health.md`, `observability_test.go`); gates PASS.
 23. **T-071 operational runbooks & incident response** — canonical runbooks for stuck leases, lock recovery, outbox draining, and release rollback (`docs/operational-runbooks.md`); gates PASS.
 24. **T-072 / T-073 benchmark baseline comparison & extended workloads** — `cmd/axiombench` relative baseline comparison (`-compare-baseline`) and extended ADGO/reopen benchmark scenarios; gates PASS.
+
+---
+
+## 6. Library maturity and integration closure
+
+The current maturity audit finds that Axiom's algorithmic breadth is ahead of its product-level integration simplicity. The next convergence phase must therefore prioritize making the implemented algorithms measurably reachable, composable and deployable through a small number of supported integration paths rather than adding unrelated new algorithms.
+
+### Audit baseline
+
+- Algorithm implementation completeness is estimated at roughly **95%** of the currently claimed feature set.
+- Public API exposure is estimated at roughly **93–95%**.
+- Integration into real execution paths is estimated at roughly **90%**.
+- Individual executable verification is estimated at **90%+**.
+- Batteries-included production composition is estimated at roughly **75–80%**.
+- Core/Flow are easier to integrate than the full ADGO production surface; ADGO complexity is dominated by legitimate durable semantics rather than missing abstractions.
+- Single-node / single-owner production deployment is substantially more mature than multi-host deployment.
+- Advanced mechanisms such as adaptive routing, admission control, caching, hedging, ensemble execution, targeted repair and schedules should remain explicit opt-in features unless a safe profile specifically enables them.
+
+### F-027 — Windows public-API compatibility gate is platform-sensitive
+**Status:** OPEN  
+**Category:** CI / API compatibility  
+**Severity:** P0 release blocker  
+**Evidence:** latest audited nightly on commit `44cea54c5ceab301fc595a477ca1ecb8f5348624` passes deep fuzzing, Ubuntu full tests/race and macOS full tests/race, while Windows fails `TestPublicAPICompatibilityGate` by reporting hundreds of removed and added symbols on the same source revision. Functional ADGO/store/crash/recovery suites continue to pass inside that job.  
+**Task:** T-080.
+
+### F-028 — Feature completeness is not mechanically traceable end-to-end
+**Status:** OPEN  
+**Category:** Architecture / product integration  
+**Severity:** High  
+**Problem:** implementation, public exposure, production wiring, persistence requirements, tests, operational documentation and examples are currently discoverable in different places. This makes it difficult to prove that every claimed algorithm is not only implemented but actually usable by consumers.  
+**Task:** T-081.
+
+### F-029 — Production composition has too many entry decisions for new consumers
+**Status:** OPEN  
+**Category:** Developer experience / API  
+**Severity:** High  
+**Problem:** `App`, `Runtime`, `Flow`, `Engine`, `Host`, `OpenProduction`, `PolicyEngine`, `ScheduleRunner`, routing, admission and storage primitives are individually valid but create a large decision surface.  
+**Task:** T-082/T-083.
+
+### F-030 — Built-in multi-host durable backend is missing
+**Status:** OPEN  
+**Category:** Persistence / distributed deployment  
+**Severity:** High  
+**Problem:** Pebble is appropriate for a single database owner and FileStore has shared-filesystem semantics, but there is no first-party networked transactional backend that demonstrates multi-host CAS, leases, inbox, schedules, provider health, retention and migrations under the same conformance model.  
+**Task:** T-084.
+
+### F-031 — Public API surface is broad relative to the desired stable facade
+**Status:** OPEN  
+**Category:** API compatibility / maintainability  
+**Severity:** Medium-High  
+**Problem:** large exported surface increases compatibility burden and makes accidental low-level contracts harder to evolve. The solution is not to hide required capability but to separate stable facade, advanced APIs and implementation-oriented extension points.  
+**Task:** T-085.
+
+### M8 — Library productization and integration completeness
+
+#### T-080 — Make the public API compatibility gate cross-platform deterministic
+**Status:** READY  
+**Priority:** P0  
+**Depends:** none; red `main` blocks unrelated implementation work.  
+**Goal:** remove OS-dependent symbol-manifest behavior without weakening compatibility enforcement.  
+**Acceptance:**
+1. Reproduce the Windows-only manifest delta deterministically.
+2. Characterize whether path separators, package-path normalization, line endings, filesystem ordering or Go tooling output causes the discrepancy.
+3. Normalize only representation differences; do not suppress real removed/modified symbols.
+4. Add a regression fixture/test proving the same public symbol set on Windows, Linux and macOS.
+5. Require green full matrix and race gates on the fixed SHA.
+
+#### T-081 — Add an executable Algorithm Integration Matrix
+**Status:** TODO  
+**Priority:** P1  
+**Depends:** T-080.  
+**Goal:** mechanically prove the path `feature -> implementation -> public API -> runtime wiring -> persistence -> tests -> docs -> example`.  
+**Deliverables:**
+1. Canonical machine-readable inventory under `docs/` or `testdata/`.
+2. Entries for compiler/graph validation, retry/backoff, leases/fencing, timers, outbox, compensation, repair, convergence/oscillation detection, adaptive routing, provider health, admission/rate limiting, cache/single-flight, hedging, ensemble, budgets, human approval, awaitables, signals, migration/fork/time-travel, continue-as-new, child workflows, schedules, retention and observability.
+3. State classification: `implemented`, `public`, `wired`, `persistent`, `verified`, `documented`, `exampled`, `opt-in/default`.
+4. CI drift test that fails when a documented production feature has no implementation/API/test linkage or when a public feature disappears from the matrix.
+5. Explicit distinction between "algorithm exists" and "algorithm is reachable through a supported production path".
+
+#### T-082 — Publish three supported integration profiles
+**Status:** TODO  
+**Priority:** P1  
+**Depends:** T-081.  
+**Goal:** reduce first-contact integration choice to three supported paths without merging engines.  
+**Profiles:**
+1. **Embedded** — Go-first Core/Flow, in-process, minimal infrastructure.
+2. **Durable Single Node** — synchronous Pebble-backed durable runtime with documented restart/recovery semantics.
+3. **Distributed Production** — shared transactional Store, coordinator/worker separation, explicit operational requirements.
+**Acceptance:** each profile has one canonical constructor/configuration path, copyable example, documented guarantees/non-guarantees and a conformance test.
+
+#### T-083 — Build one full production reference application
+**Status:** TODO  
+**Priority:** P1  
+**Depends:** T-081/T-082.  
+**Goal:** demonstrate that advanced algorithms compose correctly rather than merely passing isolated tests.  
+**Scenario must exercise:** durable start/restart, worker lease/fencing, transient retry, rate-limit handling, adaptive provider fallback, admission control, pure result cache, optional hedge or ensemble, quality gate + targeted repair, human approval, external effect + idempotency/compensation, durable timer/signal, child workflow or migration, metrics/diagnostics and retention.  
+**Acceptance:** deterministic local test mode plus a production-mode example; crash/reopen checkpoints; bounded budget assertions; no unsafe side-effect speculation; documented expected history.
+
+#### T-084 — First-party PostgreSQL durable Store for multi-host deployment
+**Status:** TODO  
+**Priority:** P1  
+**Depends:** T-080/T-081; T-083 may initially use Pebble.  
+**Goal:** provide an authoritative networked reference backend instead of requiring every user to design distributed persistence semantics independently.  
+**Required capabilities:** transactional CAS, execution catalog, inbox/event deduplication, task leasing/fencing, immutable versions, schedules, provider-health state, admission leases/rate state where appropriate, retention and schema/version markers.  
+**Verification:** reuse or extend Store conformance suites; multi-process/multi-connection contention; transaction rollback; stale-worker fencing; crash/reconnect; isolation-level characterization; migration/upgrade compatibility; fault-injection around commit boundaries.  
+**Non-goal:** claiming exactly-once external effects.
+
+#### T-085 — Reduce and tier the stable public API surface
+**Status:** TODO  
+**Priority:** P2  
+**Depends:** T-081/T-082.  
+**Goal:** make the most common integration path small while preserving advanced control.  
+**Actions:**
+1. Classify every exported symbol as `stable facade`, `advanced`, `extension SPI`, `deprecated` or `internalization candidate`.
+2. Keep compatibility promises explicit and mechanical.
+3. Prefer high-level constructors/profiles over requiring consumers to compose many independent infrastructure primitives.
+4. Deprecate before removal where compatibility policy requires it.
+5. Add documentation that maps low-level types to the high-level feature that actually requires them.
+
+#### T-086 — Integration-completeness quality gate
+**Status:** TODO  
+**Priority:** P2  
+**Depends:** T-081/T-083.  
+**Goal:** prevent future feature growth from recreating the gap between implementation and usability.  
+**Gate requirements:** every new production feature must declare its API status, default/opt-in policy, durable-state impact, failure semantics, observability, tests, documentation and reference usage before being marked DONE in this plan.
+
+### M8 execution order
+
+`T-080 -> T-081 -> {T-082, T-083 preparation} -> T-084 -> T-085 -> T-086`
+
+T-080 is the immediate blocker because the plan's operating protocol forbids unrelated implementation work while the audited `main` qualification matrix is red. T-081 follows because subsequent simplification must be driven by measured integration gaps rather than intuition. PostgreSQL work begins only after the Store capability matrix and conformance expectations are explicit.
