@@ -1,0 +1,121 @@
+domain HydroPilotCycle
+
+signal StartCycle:
+  tankId: String
+
+signal InitialMeasured
+signal DoseCalculated
+signal DoseClamped
+signal DoseApplied
+signal Mixed
+signal FinalMeasured
+signal ResponseCompared
+signal ModelAdapted
+signal Fault:
+  reason: String
+signal Reset
+
+context Cycle:
+  phase: String = "idle"
+  tankId: String?
+  faultReason: String?
+
+rule startCycle:
+  on StartCycle
+  require:
+    Cycle.phase == "idle"
+    signal.tankId exists
+  write:
+    Cycle.phase = "measure_initial"
+    Cycle.tankId = signal.tankId
+    Cycle.faultReason = null
+
+rule initialMeasured:
+  on InitialMeasured
+  require:
+    Cycle.phase == "measure_initial"
+  write:
+    Cycle.phase = "calculate_dose"
+
+rule doseCalculated:
+  on DoseCalculated
+  require:
+    Cycle.phase == "calculate_dose"
+  write:
+    Cycle.phase = "clamp_dose"
+
+rule doseClamped:
+  on DoseClamped
+  require:
+    Cycle.phase == "clamp_dose"
+  write:
+    Cycle.phase = "dose"
+
+rule doseApplied:
+  on DoseApplied
+  require:
+    Cycle.phase == "dose"
+  write:
+    Cycle.phase = "mix_wait"
+
+rule mixed:
+  on Mixed
+  require:
+    Cycle.phase == "mix_wait"
+  write:
+    Cycle.phase = "measure_after"
+
+rule finalMeasured:
+  on FinalMeasured
+  require:
+    Cycle.phase == "measure_after"
+  write:
+    Cycle.phase = "compare_response"
+
+rule responseCompared:
+  on ResponseCompared
+  require:
+    Cycle.phase == "compare_response"
+  write:
+    Cycle.phase = "adapt_model"
+
+rule modelAdapted:
+  on ModelAdapted
+  require:
+    Cycle.phase == "adapt_model"
+  write:
+    Cycle.phase = "complete"
+
+rule fault:
+  on Fault
+  require:
+    Cycle.phase != "idle"
+    Cycle.phase != "complete"
+    Cycle.phase != "safe_stop"
+  write:
+    Cycle.phase = "safe_stop"
+    Cycle.faultReason = signal.reason
+
+rule reset:
+  on Reset
+  require:
+    Cycle.phase in ["complete", "safe_stop"]
+  write:
+    Cycle.phase = "idle"
+    Cycle.tankId = null
+    Cycle.faultReason = null
+
+claim phaseIsKnown:
+  always:
+    Cycle.phase in ["idle", "measure_initial", "calculate_dose", "clamp_dose", "dose", "mix_wait", "measure_after", "compare_response", "adapt_model", "complete", "safe_stop"]
+
+claim activeCycleHasTank:
+  always:
+    Cycle.phase == "idle" or Cycle.tankId exists
+
+query CycleStatus:
+  return:
+    phase = Cycle.phase
+    tankId = Cycle.tankId
+    faultReason = Cycle.faultReason
+    runtimeStatus = runtime.status
