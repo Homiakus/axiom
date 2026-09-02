@@ -1,0 +1,55 @@
+{
+  "schema": "axiom.execution-projection/1",
+  "executionId": "tank-1-cycle-1",
+  "domain": "HydroPilotCycle",
+  "status": "Waiting",
+  "context": {
+    "Cycle": {
+      "phase": "safe_stop",
+      "tankId": "tank-1",
+      "faultReason": "sensor-invalid"
+    }
+  },
+  "history": [
+    {
+      "seq": 1,
+      "type": "ExecutionStarted"
+    },
+    {
+      "seq": 2,
+      "type": "SignalReceived",
+      "payload": {
+        "signal": "StartCycle",
+        "payload": {
+          "tankId": "tank-1"
+        }
+      }
+    },
+    {
+      "seq": 3,
+      "type": "SignalReceived",
+      "payload": {
+        "signal": "InitialMeasured",
+        "payload": {}
+      }
+    },
+    {
+      "seq": 4,
+      "type": "SignalReceived",
+      "payload": {
+        "signal": "DoseCalculated",
+        "payload": {}
+      }
+    },
+    {
+      "seq": 5,
+      "type": "SignalReceived",
+      "payload": {
+        "signal": "Fault",
+        "payload": {
+          "reason": "sensor-invalid"
+        }
+      }
+    }
+  ]
+}
