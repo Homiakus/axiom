@@ -70,7 +70,6 @@ func extractPackageAPI(pkgPath string) (string, error) {
 							fmt.Fprintf(&buf, "var %s\n", name.Name)
 						}
 					}
-				}
 			}
 		}
 
@@ -115,10 +114,15 @@ func extractPackageAPI(pkgPath string) (string, error) {
 	return buf.String(), nil
 }
 
+func normalizeAPILineEndings(api string) string {
+	api = strings.ReplaceAll(api, "\r\n", "\n")
+	return strings.ReplaceAll(api, "\r", "\n")
+}
+
 // computeAPIDiff returns removed and added symbols between expected and current API.
 func computeAPIDiff(expectedAPI, currentAPI string) (removed, added []string) {
-	expectedLines := strings.Split(expectedAPI, "\n")
-	currentLines := strings.Split(currentAPI, "\n")
+	expectedLines := strings.Split(normalizeAPILineEndings(expectedAPI), "\n")
+	currentLines := strings.Split(normalizeAPILineEndings(currentAPI), "\n")
 
 	expectedSet := make(map[string]bool)
 	for _, l := range expectedLines {
@@ -167,7 +171,7 @@ func TestPublicAPICompatibilityGate(t *testing.T) {
 		fullAPI.WriteString("\n")
 	}
 
-	currentAPI := fullAPI.String()
+	currentAPI := normalizeAPILineEndings(fullAPI.String())
 
 	if os.Getenv("UPDATE_API_MANIFEST") == "1" {
 		if err := os.WriteFile(manifestPath, []byte(currentAPI), 0644); err != nil {
@@ -190,7 +194,7 @@ func TestPublicAPICompatibilityGate(t *testing.T) {
 		t.Fatalf("failed to read API manifest: %v", err)
 	}
 
-	expectedAPI := string(manifestBytes)
+	expectedAPI := normalizeAPILineEndings(string(manifestBytes))
 
 	if currentAPI != expectedAPI {
 		removed, added := computeAPIDiff(expectedAPI, currentAPI)
@@ -217,5 +221,15 @@ func TestAPICompatibilityDiffDetector(t *testing.T) {
 	}
 	if len(added) != 1 || added[0] != "func NewEngineV2" {
 		t.Fatalf("added = %v, want ['func NewEngineV2']", added)
+	}
+}
+
+func TestAPICompatibilityDiffDetectorNormalizesLineEndings(t *testing.T) {
+	baseline := "package axiom\r\ntype Engine\r\nfunc NewEngine\r\n"
+	current := "package axiom\ntype Engine\nfunc NewEngine\n"
+
+	removed, added := computeAPIDiff(baseline, current)
+	if len(removed) != 0 || len(added) != 0 {
+		t.Fatalf("line-ending-only diff: removed=%v added=%v", removed, added)
 	}
 }
