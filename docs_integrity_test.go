@@ -21,6 +21,8 @@ func TestDocsIntegrityAndLinkages(t *testing.T) {
 		"docs/durable-primitives-inventory.md",
 		"docs/serialized-surfaces.md",
 		"docs/clock-inventory.md",
+		"docs/architecture-fmea.md",
+		"docs/architecture-risk-register.json",
 		"docs/versioning.md",
 		"docs/QUALITY_LOOP.md",
 		"docs/axiom-file-specification.md",
