@@ -96,12 +96,12 @@ func validateArchitectureRisk(t *testing.T, risk architectureRisk, masterPlan st
 	}
 
 	requireText := map[string]string{
-		"component":       risk.Component,
-		"failure_mode":    risk.FailureMode,
-		"effect":          risk.Effect,
-		"owner_role":      risk.OwnerRole,
-		"mitigation":      risk.Mitigation,
-		"review_trigger":  risk.ReviewTrigger,
+		"component":      risk.Component,
+		"failure_mode":   risk.FailureMode,
+		"effect":         risk.Effect,
+		"owner_role":     risk.OwnerRole,
+		"mitigation":     risk.Mitigation,
+		"review_trigger": risk.ReviewTrigger,
 	}
 	for field, value := range requireText {
 		if strings.TrimSpace(value) == "" {
@@ -181,10 +181,15 @@ func fmeaPriority(severity, rpn int) string {
 }
 
 func containsPlanID(masterPlan, id string) bool {
-	// MASTER_PLAN uses both heading forms (###/####) and inline references.
-	// Requiring a heading-like token prevents a risk from being satisfied only
-	// by a coincidental prose substring.
-	for _, prefix := range []string{"### " + id + " ", "#### " + id + " ", "### " + id + " —", "#### " + id + " —"} {
+	// MASTER_PLAN uses full headings for most findings/tasks and bold list
+	// entries for compact milestone tasks such as T-010. Requiring one of
+	// these canonical declaration forms prevents a risk from being satisfied
+	// only by a coincidental prose reference.
+	for _, prefix := range []string{
+		"### " + id + " ",
+		"#### " + id + " ",
+		"- **" + id + " ",
+	} {
 		if strings.Contains(masterPlan, prefix) {
 			return true
 		}
