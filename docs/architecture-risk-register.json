@@ -1,0 +1,330 @@
+{
+  "version": "1.0",
+  "updated": "2026-09-04",
+  "scoring": {
+    "severity": "1..10; 10 = catastrophic correctness/safety/durability/control-boundary impact",
+    "occurrence": "1..10; 10 = expected/frequent without additional mitigation",
+    "detectability": "1..10; 10 = difficult to detect before impact",
+    "rpn": "severity * occurrence * detectability",
+    "priority": "critical when RPN >= 300; high when RPN >= 180 or severity >= 9; medium when RPN >= 80; low otherwise"
+  },
+  "risks": [
+    {
+      "id": "R-001",
+      "status": "OPEN",
+      "component": "External effects / Flow / ADGO",
+      "failure_mode": "An external side effect is applied more than once after an ambiguous crash because a consumer or provider does not honor the idempotency/reconciliation contract.",
+      "effect": "Duplicate payment, publication, hardware command or other irreversible business action despite a correct at-least-once runtime.",
+      "causes": [
+        "Consumer handler treats task completion as exactly-once delivery.",
+        "Provider has no idempotency key or reconciliation endpoint.",
+        "Crash occurs after the provider accepts the effect but before Axiom durably commits the result."
+      ],
+      "current_controls": [
+        "Persist intent/task before external execution.",
+        "Stable durable effect/task identity.",
+        "Explicit at-least-once contract and ambiguous-side-effect classification.",
+        "Flow crash/reopen equivalence and no-resurrection tests."
+      ],
+      "severity": 10,
+      "occurrence": 4,
+      "detectability": 7,
+      "rpn": 280,
+      "level": "high",
+      "owner_role": "runtime/reliability",
+      "findings": ["F-006"],
+      "tasks": ["T-083"],
+      "mitigation": "Make the production reference application prove provider idempotency plus reconciliation across the accepted-effect/before-result-commit crash window; document the integration contract as a release-gated example.",
+      "target_occurrence": 3,
+      "target_detectability": 3,
+      "target_rpn": 90,
+      "exit_evidence": [
+        "Reference application injects the ambiguous crash window and converges without duplicate business application.",
+        "Expected history explicitly distinguishes delivery attempts from business application.",
+        "Production documentation states the non-exactly-once boundary at the effect adapter."
+      ],
+      "review_trigger": "Any new external-effect API, compensation primitive or production profile change."
+    },
+    {
+      "id": "R-002",
+      "status": "OPEN",
+      "component": "Distributed persistence / Store",
+      "failure_mode": "A multi-host custom Store violates CAS, inbox deduplication, leasing/fencing, ordering or transaction boundaries under concurrent coordinators.",
+      "effect": "Lost events, duplicate execution, stale-worker commits, split-brain scheduling or corrupted durable history.",
+      "causes": [
+        "The Store interface is implementable over systems with different isolation guarantees.",
+        "There is no first-party networked transactional backend demonstrating the complete multi-host contract.",
+        "A backend may pass happy-path tests while violating contention or crash semantics."
+      ],
+      "current_controls": [
+        "Store conformance suites and durable state-machine tests.",
+        "Explicit worker/attempt/lease fencing.",
+        "Fail-closed plan/schema identity.",
+        "Pebble/File backends characterize single-owner/shared-filesystem behavior rather than claiming generic distributed semantics."
+      ],
+      "severity": 10,
+      "occurrence": 5,
+      "detectability": 6,
+      "rpn": 300,
+      "level": "critical",
+      "owner_role": "persistence/distributed-runtime",
+      "findings": ["F-030"],
+      "tasks": ["T-084", "T-086"],
+      "mitigation": "Implement the first-party PostgreSQL Store and qualify it with multi-connection contention, rollback, stale-worker fencing, crash/reconnect, isolation and migration/upgrade fault injection; extend the integration gate to require backend capability evidence.",
+      "target_occurrence": 2,
+      "target_detectability": 3,
+      "target_rpn": 60,
+      "exit_evidence": [
+        "PostgreSQL backend passes Store conformance and adversarial multi-connection suites.",
+        "Isolation level and transaction boundaries are documented and executable.",
+        "Stale workers cannot commit after lease loss across independent processes."
+      ],
+      "review_trigger": "Any Store SPI change, new durable backend, leasing change or multi-host topology change."
+    },
+    {
+      "id": "R-003",
+      "status": "MITIGATING",
+      "component": "Core / Flow / ADGO semantic boundaries",
+      "failure_mode": "Behaviorally different orchestration surfaces drift while sharing similar names or low-level concepts, causing an integration to assume equivalence that does not exist.",
+      "effect": "Retry timing, lease expiry, persistence, replay or recovery semantics differ across supported paths and produce inconsistent behavior under failure.",
+      "causes": [
+        "Core, Flow and ADGO intentionally remain separate runtimes.",
+        "Some durable concepts are structurally similar but have different state-machine ownership or clock domains.",
+        "Documentation or future refactoring can accidentally erase intentional semantic differences."
+      ],
+      "current_controls": [
+        "Executable characterization before sharing primitives.",
+        "AST architecture anti-drift tests.",
+        "Only durabletime.NowSource is currently shared as a proven behavior-identical leaf.",
+        "Retry/backoff and lease/fencing remain engine-owned after explicit non-equivalence proof."
+      ],
+      "severity": 8,
+      "occurrence": 5,
+      "detectability": 5,
+      "rpn": 200,
+      "level": "high",
+      "owner_role": "architecture/runtime",
+      "findings": ["F-005", "F-028"],
+      "tasks": ["T-081", "T-086"],
+      "mitigation": "Make the Algorithm Integration Matrix encode runtime ownership and semantic differences, then gate new production features on an explicit surface/API/persistence/failure-semantics declaration.",
+      "target_occurrence": 3,
+      "target_detectability": 3,
+      "target_rpn": 72,
+      "exit_evidence": [
+        "Integration matrix distinguishes Core, Flow and ADGO ownership for each durable primitive.",
+        "CI fails when a production feature loses its runtime/API/test linkage.",
+        "Anti-drift tests remain green after any shared-primitive extraction."
+      ],
+      "review_trigger": "Any extraction into internal shared packages or any claim that two runtimes provide equivalent semantics."
+    },
+    {
+      "id": "R-004",
+      "status": "OPEN",
+      "component": "Production composition / public integration surface",
+      "failure_mode": "A consumer chooses a technically valid but semantically wrong combination of App/Runtime/Flow/Engine/Host/Store/Policy/Scheduler components and unintentionally bypasses durability or hard controls.",
+      "effect": "Production deployment runs with weaker durability, risk, admission, budget or recovery guarantees than the operator believes.",
+      "causes": [
+        "Large number of individually valid entry points.",
+        "Advanced capabilities are optional and composition-dependent.",
+        "The public surface does not yet funnel common deployments through a small set of supported profiles."
+      ],
+      "current_controls": [
+        "OpenProduction assembly exists for ADGO.",
+        "Architecture documentation separates embedded and production boundaries.",
+        "Hard admission checks precede scheduler utility inside ADGO."
+      ],
+      "severity": 9,
+      "occurrence": 5,
+      "detectability": 6,
+      "rpn": 270,
+      "level": "high",
+      "owner_role": "product-architecture/DX",
+      "findings": ["F-029", "F-031"],
+      "tasks": ["T-082", "T-083", "T-085", "T-086"],
+      "mitigation": "Publish Embedded, Durable Single Node and Distributed Production profiles with one canonical composition path each; prove them through conformance tests and a full production reference application; tier the stable API.",
+      "target_occurrence": 2,
+      "target_detectability": 3,
+      "target_rpn": 54,
+      "exit_evidence": [
+        "Each supported profile has one canonical constructor/configuration path and explicit guarantees/non-guarantees.",
+        "Reference application exercises advanced controls together, including crash/reopen behavior.",
+        "Stable facade is mechanically classified separately from advanced/SPI APIs."
+      ],
+      "review_trigger": "Any new top-level constructor, production capability or public orchestration entry point."
+    },
+    {
+      "id": "R-005",
+      "status": "MITIGATING",
+      "component": "Semantic time / retry / leases / schedules",
+      "failure_mode": "One logical coordinator decision observes multiple clock domains or multiple time snapshots, crossing a due/expiry boundary inside a single decision.",
+      "effect": "False deadlock, early/late retry, premature lease expiry, duplicate work or stale result acceptance near timing boundaries.",
+      "causes": [
+        "Runtime contains semantic clocks, operational wall clocks, timers and durable deadlines with deliberately different ownership.",
+        "A helper can accidentally call real time instead of the governing clock.",
+        "Readiness and terminal classification can become TOCTOU-sensitive if time is sampled more than once."
+      ],
+      "current_controls": [
+        "Explicit durabletime clock inventory and anti-drift checks.",
+        "One semantic-time snapshot per logically coupled ADGO Advance decision.",
+        "Deterministic deadline-crossing regression for F-026.",
+        "Lease/retry characterization tests preserve intentional Core/ADGO differences."
+      ],
+      "severity": 9,
+      "occurrence": 4,
+      "detectability": 6,
+      "rpn": 216,
+      "level": "high",
+      "owner_role": "runtime/time-semantics",
+      "findings": ["F-026", "F-028"],
+      "tasks": ["T-081", "T-086"],
+      "mitigation": "Represent clock-domain ownership in the integration matrix and require new time-dependent production features to declare their governing clock, persistence boundary and deterministic boundary tests before DONE.",
+      "target_occurrence": 2,
+      "target_detectability": 3,
+      "target_rpn": 54,
+      "exit_evidence": [
+        "Every time-dependent production feature is linked to an explicit clock domain in the integration matrix.",
+        "Boundary tests cover equality at due/lease expiry and clock advancement within scheduling decisions.",
+        "CI prevents direct semantic-time bypasses in shared durable primitives."
+      ],
+      "review_trigger": "Any timer, retry, lease, schedule, timeout or clock abstraction change."
+    },
+    {
+      "id": "R-006",
+      "status": "OPEN",
+      "component": "Persisted formats / plan identity / migrations",
+      "failure_mode": "A software or plan upgrade creates durable state that cannot be safely interpreted, migrated or rolled back across versions.",
+      "effect": "Fail-closed production outage, stranded executions, incorrect live repinning or irreversible history/state incompatibility.",
+      "causes": [
+        "Many serialized surfaces evolve independently.",
+        "Plan/schema identity is strict, so unsafe compatibility is rejected rather than guessed.",
+        "A backend migration can be correct in isolation but incompatible with live task/inbox/version state."
+      ],
+      "current_controls": [
+        "Explicit plan ID/version/digest pinning.",
+        "Fail-closed persisted format markers and compatibility fixtures.",
+        "Quiescent-point validation for ADGO plan migration.",
+        "Serialized-surfaces inventory and versioning policy."
+      ],
+      "severity": 9,
+      "occurrence": 3,
+      "detectability": 6,
+      "rpn": 162,
+      "level": "high",
+      "owner_role": "persistence/versioning",
+      "findings": ["F-028", "F-030"],
+      "tasks": ["T-084", "T-086"],
+      "mitigation": "Make migration/upgrade compatibility a required PostgreSQL conformance scenario and an integration-completeness declaration for every feature that changes durable state.",
+      "target_occurrence": 2,
+      "target_detectability": 3,
+      "target_rpn": 54,
+      "exit_evidence": [
+        "Cross-version fixtures cover supported durable surfaces and fail closed on unsupported future schemas.",
+        "Networked backend upgrade tests include live historical versions, inbox and task state.",
+        "Every new production feature declares durable-state and migration impact before DONE."
+      ],
+      "review_trigger": "Any serialized schema, plan migration rule, durable backend format or release compatibility change."
+    },
+    {
+      "id": "R-007",
+      "status": "OPEN",
+      "component": "Public API compatibility / maintainability",
+      "failure_mode": "A broad stable-looking exported surface freezes low-level implementation contracts or is accidentally broken while higher-level guarantees remain unchanged.",
+      "effect": "Consumer breakage, inability to evolve internals safely, duplicated integration patterns and increased release risk.",
+      "causes": [
+        "Large pre-v1 exported symbol set.",
+        "Advanced extension points and common-path APIs are not yet clearly tiered.",
+        "Consumers can depend directly on low-level infrastructure primitives."
+      ],
+      "current_controls": [
+        "Golden public API manifest gate.",
+        "Deprecation inventory and pre-v1 compatibility policy.",
+        "Typed error taxonomy and API guide."
+      ],
+      "severity": 7,
+      "occurrence": 5,
+      "detectability": 4,
+      "rpn": 140,
+      "level": "medium",
+      "owner_role": "public-api",
+      "findings": ["F-031"],
+      "tasks": ["T-085", "T-086"],
+      "mitigation": "Classify exports into stable facade, advanced, extension SPI, deprecated and internalization candidates while preserving mechanical compatibility checks.",
+      "target_occurrence": 3,
+      "target_detectability": 3,
+      "target_rpn": 63,
+      "exit_evidence": [
+        "All exported symbols have an API tier.",
+        "Common integrations can avoid low-level SPI types.",
+        "Compatibility gate remains cross-platform deterministic."
+      ],
+      "review_trigger": "Any exported symbol addition/removal or compatibility-policy change."
+    },
+    {
+      "id": "R-008",
+      "status": "VERIFYING",
+      "component": "CI / public API compatibility gate",
+      "failure_mode": "The mechanical API compatibility gate produces platform-dependent symbol manifests and blocks or misclassifies a release.",
+      "effect": "False release blocker, reduced trust in the compatibility gate or pressure to weaken a safety-critical CI check.",
+      "causes": [
+        "Platform-specific representation such as line endings, path separators, ordering or tooling output.",
+        "Golden manifest comparison is intentionally strict."
+      ],
+      "current_controls": [
+        "Public API manifest is mechanically generated and compared.",
+        "Operating protocol forbids weakening a red gate merely to regain green.",
+        "Recent main commits target Windows traversal and line-ending normalization, but the authoritative plan still requires full cross-platform qualification."
+      ],
+      "severity": 8,
+      "occurrence": 6,
+      "detectability": 3,
+      "rpn": 144,
+      "level": "medium",
+      "owner_role": "CI/API-compatibility",
+      "findings": ["F-027"],
+      "tasks": ["T-080"],
+      "mitigation": "Complete deterministic cross-platform characterization and qualify the exact fixed SHA on Windows, Linux and macOS without suppressing real API changes.",
+      "target_occurrence": 2,
+      "target_detectability": 2,
+      "target_rpn": 32,
+      "exit_evidence": [
+        "Same source revision yields the same symbol set on Windows, Linux and macOS.",
+        "A fixture proves representation normalization does not hide removed or modified symbols.",
+        "Exact fixed SHA passes the full matrix and race gates."
+      ],
+      "review_trigger": "Any API manifest extractor, Go version, line-ending or path-normalization change."
+    },
+    {
+      "id": "R-009",
+      "status": "OPEN",
+      "component": "Repository governance / qualification integrity",
+      "failure_mode": "Unprotected main permits an unqualified or non-reviewed change to bypass the repository's intended release and architecture gates.",
+      "effect": "Authoritative main can temporarily contain behavior that has not satisfied the required CI/security/quality/module gates.",
+      "causes": [
+        "Branch protection is disabled outside the repository content.",
+        "Process discipline is currently the main enforcement boundary."
+      ],
+      "current_controls": [
+        "Living MASTER_PLAN qualification protocol.",
+        "CI, security, quality-loop and module-checksum workflows.",
+        "No-force-push rule and exact-SHA qualification discipline."
+      ],
+      "severity": 9,
+      "occurrence": 3,
+      "detectability": 3,
+      "rpn": 81,
+      "level": "high",
+      "owner_role": "repository-governance",
+      "findings": ["F-002"],
+      "tasks": ["T-010"],
+      "mitigation": "Enable branch protection/rulesets requiring the repository's qualification gates and prohibit direct unqualified updates to main.",
+      "target_occurrence": 1,
+      "target_detectability": 2,
+      "target_rpn": 18,
+      "exit_evidence": [
+        "GitHub branch/ruleset configuration requires the intended checks before main changes.",
+        "Direct unqualified push path is mechanically blocked."
+      ],
+      "review_trigger": "Any branch protection, required-check or release-governance change."
+    }
+  ]
+}
