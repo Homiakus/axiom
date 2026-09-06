@@ -21,6 +21,7 @@
 - [Архитектура](../ARCHITECTURE.md)
 - [Architecture FMEA и жизненный цикл инженерных рисков](architecture-fmea.md)
 - [Машиночитаемый архитектурный risk register](architecture-risk-register.json)
+- [High-leverage architecture audit — 2026-09-06](high-leverage-architecture-audit-2026-09-06.md)
 - [Runtime-семантика и текущие ограничения](runtime-semantics.md)
 - [Durable Flow effects: outbox, recovery и exactly-once boundary](flow-durability.md)
 - [Реестр общих персистентных примитивов](durable-primitives-inventory.md)
@@ -64,6 +65,7 @@
 | `clock-inventory.md` | Каноническая классификация вызовов `time.*` и `durabletime.Clock` |
 | `architecture-fmea.md` | Каноническая методика FMEA, lifecycle `R-XXX` и правила связи рисков с `F-XXX`/`T-XXX` |
 | `architecture-risk-register.json` | Машиночитаемый FMEA-регистр для CI-проверки RPN, состояний и ссылок на `MASTER_PLAN.md` |
+| `high-leverage-architecture-audit-2026-09-06.md` | Evidence-аудит точек максимального архитектурного leverage и хрупких семантических границ; не является параллельным roadmap |
 | `versioning.md` | Политика pre-v1 совместимости, release gate и workflow публикации |
 | `QUALITY_LOOP.md` | Регламент автоматического тестирования мутаций и краевых случаев |
 | `CHANGELOG.md` | Текущий публичный release history / planned changes |
