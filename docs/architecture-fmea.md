@@ -2,7 +2,7 @@
 
 Status: **canonical engineering risk register companion to `MASTER_PLAN.md`**  
 Machine-readable source: [`architecture-risk-register.json`](architecture-risk-register.json)  
-Updated: 2026-09-04
+Updated: 2026-09-06
 
 ## 1. Role in the planning system
 
@@ -93,6 +93,18 @@ The two most important system-level conclusions are:
 
 1. **Distributed persistence is the largest current architecture risk.** Axiom has strong single-owner/local durable mechanics, but the absence of a first-party networked transactional reference backend leaves too much semantic responsibility to custom Store implementations. This is why `R-002` is the only initial critical RPN and why `T-084` should remain ahead of unrelated feature growth.
 2. **The second risk cluster is not missing algorithms but composition/semantic boundaries.** Axiom already contains many powerful mechanisms; the failure mode is that a consumer or future refactor composes them under the wrong durability/time/runtime assumptions. `T-081/T-082/T-083/T-085/T-086` are therefore risk-reduction work, not cosmetic productization.
+
+### 4.1 Deep-audit evidence update — 2026-09-06
+
+[`high-leverage-architecture-audit-2026-09-06.md`](high-leverage-architecture-audit-2026-09-06.md) adds a code-level leverage analysis over the same risk model. It does **not** introduce a second roadmap or a second FMEA register.
+
+The audit strengthens the current prioritization with three concrete choke points:
+
+1. `R-002/R-006`: treat the planned PostgreSQL Store as a semantic reference backend and pair it with backend-independent multi-process conformance/fault-injection tests.
+2. `R-003/R-004`: reduce semantic/composition ambiguity by making capability ownership/non-equivalence executable and by funnelling common deployments through a small set of supported profiles.
+3. `R-005` plus transaction correctness: make clock-domain ownership and commit/rollback disposition explicit control channels rather than conventions inferred from call sites or error taxonomy.
+
+It also identifies two architecture debts that should be reconciled into the authoritative `MASTER_PLAN.md` during the next planning update rather than being tracked here as independent tasks: Engine-global transaction serialization around `BeginTransaction..Commit/Rollback`, and the typed `model` frontend's current Go-model -> AXM text -> parser/compiler lowering path.
 
 ## 5. Risk-by-risk rationale
 
