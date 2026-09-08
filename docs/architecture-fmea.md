@@ -2,7 +2,7 @@
 
 Status: **canonical engineering risk register companion to `MASTER_PLAN.md`**  
 Machine-readable source: [`architecture-risk-register.json`](architecture-risk-register.json)  
-Updated: 2026-09-06
+Updated: 2026-09-08
 
 ## 1. Role in the planning system
 
@@ -106,6 +106,36 @@ The audit strengthens the current prioritization with three concrete choke point
 
 It also identifies two architecture debts that should be reconciled into the authoritative `MASTER_PLAN.md` during the next planning update rather than being tracked here as independent tasks: Engine-global transaction serialization around `BeginTransaction..Commit/Rollback`, and the typed `model` frontend's current Go-model -> AXM text -> parser/compiler lowering path.
 
+### 4.2 Compiled-runtime mathematical correctness evidence update — 2026-09-08
+
+[`runtime-mathematical-correctness-audit-2026-09-08.md`](runtime-mathematical-correctness-audit-2026-09-08.md) analyzes the audited `main` baseline `1c327172` as a state-transition system and tests a stronger question: whether model semantics, optimized execution and replay are actually equivalent representations of the same contract.
+
+The audit is static and intentionally does not claim that its findings apply unchanged to every ADGO path or Store backend. It nevertheless adds important evidence to the existing FMEA model:
+
+1. **`R-003` — semantic drift / false equivalence.** The risk must be interpreted broadly enough to include drift between canonical model semantics, compiled/fast evaluation and replay, not only Core/Flow/ADGO product surfaces. Concrete evidence includes incomplete semantic hashing, non-Boolean computed values missing from the audited fast-plan registration path, collapse of `false` vs missing, and incomplete mixed dependency closure.
+2. **`R-006` — persisted compatibility.** History compatibility must depend on a canonical semantic digest, not only entity names/compiler metadata. A replay-compatible model identifier must include defaults, normalized executable ASTs, writes, claims and observable policy semantics.
+3. **`R-001/R-004` — external-effect/control-boundary safety.** Claims protect the internal candidate state, but cannot rollback an external effect that already happened. Safety-critical adapters therefore require admission, idempotency, acknowledgement, read-back/reconciliation and device-side safety envelopes where appropriate.
+4. **`R-003/R-004` — lifecycle and transition semantics.** `ExecutionReachedFixpoint`, write ordering, cancellation and replay state transitions need precise contracts so deterministic implementation order is not mistaken for confluence, mathematical convergence or a fully verified history.
+
+The audit defines three immediate P0 proof obligations that should be reconciled into the authoritative planning system rather than tracked as an independent roadmap:
+
+```text
+P0-A  Canonical semantic digest
+      SHA256(CanonicalIR(model)) identifies executable semantics.
+
+P0-B  Fast/reference differential equivalence
+      values + types + missingness + diagnostics + invalidation + rule-visible state match.
+
+P0-C  Complete typed dependency graph
+      mixed computed/fact/expose dependencies are closed and every SCC has an explicit policy.
+```
+
+The corresponding release/qualification principle is:
+
+> No optimized or durable representation is production-qualified until its semantic equivalence to the canonical model is executable as a conformance test.
+
+This evidence should trigger re-review of `R-003` and `R-006` when the next `MASTER_PLAN.md` reconciliation assigns/updates `F-XXX` and `T-XXX` identifiers. Until then, this section is evidence enrichment, not a replacement for the machine-readable register.
+
 ## 5. Risk-by-risk rationale
 
 ### R-001 — external side-effect ambiguity
@@ -126,9 +156,13 @@ The Store contract contains coupled invariants: CAS, task claim identity, lease 
 
 Core, Flow and ADGO are intentionally different surfaces. Existing work already proved that retry/backoff and lease/fencing are not safely shareable just because the concepts look alike. The residual risk is future semantic drift or misleading documentation. The integration matrix must encode ownership and non-equivalence explicitly.
 
+The 2026-09-08 compiled-runtime audit extends this interpretation: even inside Core, the declarative model, canonical/compiled representation, optimized evaluator and history replay must not be treated as equivalent until differential/conformance evidence proves the equivalence over complete observable state.
+
 ### R-004 — production miscomposition
 
 The present architecture exposes many valid building blocks. This is powerful for expert users but creates a failure mode where a consumer chooses an embedded/ephemeral path while assuming production durability, or omits an optional capability that a higher-level guarantee implicitly needs. Supported profiles reduce the reachable configuration space without collapsing the runtimes into a mega-abstraction.
+
+For external effects, the same principle applies at the cybernetic boundary: internal claims, transactional writes and task durability do not by themselves guarantee that physical or remote state remains within an invariant after an already-issued command. Production profiles for safety-relevant systems should therefore make reconciliation and device-side interlocks explicit capabilities.
 
 ### R-005 — time-domain boundary errors
 
@@ -137,6 +171,8 @@ F-026 demonstrated that a single coordinator step could cross a retry deadline b
 ### R-006 — persisted-format and migration incompatibility
 
 Fail-closed versioning is the correct default, but it converts a compatibility mistake into an availability event rather than silent corruption. Upgrade qualification must therefore include migration/reopen scenarios using real durable state, especially once a multi-host backend exists.
+
+The compiled-runtime audit adds a semantic requirement: durable-history compatibility is not only a schema/codec question. The model identity stored with history must identify the executable semantics that produced that history, including defaults, normalized expressions, writes, claims and policy semantics.
 
 ### R-007 — public API breadth
 
@@ -158,6 +194,7 @@ Review the register at these checkpoints:
 - after any linked `T-XXX` reaches `VERIFYING` or `DONE`;
 - after a new high-severity `F-XXX` is opened;
 - after any durable schema, Store SPI, lease/fencing, time, external-effect, public API or production-profile change;
+- after any change to semantic digesting, dependency compilation, optimized evaluation, replay or execution lifecycle semantics;
 - before a release candidate is considered qualified.
 
 The desired trend is not “zero risk IDs”. The desired trend is that high-consequence failure modes stay explicit, have executable controls, and move from high detectability/occurrence scores toward evidence-backed residual risk without weakening the architecture invariants that made Axiom reliable in the first place.
