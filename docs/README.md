@@ -22,6 +22,7 @@
 - [Architecture FMEA и жизненный цикл инженерных рисков](architecture-fmea.md)
 - [Машиночитаемый архитектурный risk register](architecture-risk-register.json)
 - [High-leverage architecture audit — 2026-09-06](high-leverage-architecture-audit-2026-09-06.md)
+- [Mathematical and cybernetic audit of compiled runtime correctness — 2026-09-08](runtime-mathematical-correctness-audit-2026-09-08.md)
 - [Runtime-семантика и текущие ограничения](runtime-semantics.md)
 - [Durable Flow effects: outbox, recovery и exactly-once boundary](flow-durability.md)
 - [Реестр общих персистентных примитивов](durable-primitives-inventory.md)
@@ -59,6 +60,7 @@
 | `observability-and-health.md` | Ограничение кардинальности метрик (OPS-001) и разделение liveness/readiness проб (OPS-002) |
 | `operational-runbooks.md` | Процедуры устранения сбоев, восстановления данных, утечек блокировок и отката версий (OPS-003) |
 | `runtime-semantics.md` | Declarative Engine runtime contract и failure boundaries |
+| `runtime-mathematical-correctness-audit-2026-09-08.md` | Evidence-аудит эквивалентности model/compiled runtime/replay: semantic digest, fast/reference differential testing, dependency closure, writes, fixpoint semantics и replay verification |
 | `flow-durability.md` | Канонический контракт durable Flow outbox/recovery |
 | `durable-primitives-inventory.md` | Анализ и статус общих примитивов Core vs ADGO |
 | `serialized-surfaces.md` | Реестр 19 сериализованных поверхностей состояния |
