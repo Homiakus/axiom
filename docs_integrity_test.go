@@ -12,6 +12,8 @@ func TestDocsIntegrityAndLinkages(t *testing.T) {
 	requiredDocs := []string{
 		"docs/README.md",
 		"docs/api-guide.md",
+		"docs/api-tiering.md",
+		"docs/api-tiering.json",
 		"docs/integration-profiles.md",
 		"docs/production-reference-application.md",
 		"docs/deprecation-inventory.md",
@@ -28,6 +30,7 @@ func TestDocsIntegrityAndLinkages(t *testing.T) {
 		"docs/algorithm-integration-matrix.json",
 		"docs/versioning.md",
 		"docs/QUALITY_LOOP.md",
+		"docs/quality-gate.md",
 		"docs/axiom-file-specification.md",
 		"docs/axiomgen.md",
 		"docs/go-first-architecture.md",

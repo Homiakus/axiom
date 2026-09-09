@@ -27,6 +27,16 @@
       ],
       "example_refs": [
         "examples/axiom-files/main.go"
+      ],
+      "api_status": "stable_facade",
+      "durable_state_impact": "Canonical IR digest and module hash are persisted across executions; invalid declarations fail compilation immediately before runtime allocation.",
+      "failure_semantics": "fail_closed",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/axiom-files/main.go",
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -55,6 +65,16 @@
       ],
       "example_refs": [
         "examples/order/main.go"
+      ],
+      "api_status": "advanced",
+      "durable_state_impact": "Attempt counter, not_before deadline, and backoff interval are persisted in ActivityTask; resumes correctly after process crash.",
+      "failure_semantics": "retry_with_backoff",
+      "observability_refs": [
+        "docs/observability-and-health.md",
+        "observability_test.go"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -83,6 +103,16 @@
       ],
       "example_refs": [
         "examples/go-first/main.go"
+      ],
+      "api_status": "advanced",
+      "durable_state_impact": "LockedBy worker ID and LockedUntil lease expiration are persisted with row-level locks; stale workers are fenced on commit.",
+      "failure_semantics": "fail_closed",
+      "observability_refs": [
+        "docs/observability-and-health.md",
+        "docs/operational-runbooks.md"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -110,6 +140,15 @@
       ],
       "example_refs": [
         "examples/model/main.go"
+      ],
+      "api_status": "stable_facade",
+      "durable_state_impact": "Timer deadlines are persisted in task not_before fields; timers advance deterministically on durable clock ticks.",
+      "failure_semantics": "deterministic_advance",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/coffee-machine/main.go"
       ]
     },
     {
@@ -137,6 +176,16 @@
       ],
       "example_refs": [
         "examples/coffee-machine/main.go"
+      ],
+      "api_status": "stable_facade",
+      "durable_state_impact": "Outbox intents are committed atomically in the same transaction as state transitions, ensuring zero lost side-effects.",
+      "failure_semantics": "at_least_once_delivery",
+      "observability_refs": [
+        "docs/observability-and-health.md",
+        "docs/flow-durability.md"
+      ],
+      "reference_usage_refs": [
+        "examples/coffee-machine/main.go"
       ]
     },
     {
@@ -161,6 +210,15 @@
       ],
       "example_refs": [
         "examples/order/main.go"
+      ],
+      "api_status": "advanced",
+      "durable_state_impact": "Compensation stack entries are persisted in execution history; backward execution unwinds completed activities on cancellation or failure.",
+      "failure_semantics": "unwind_compensation_stack",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -187,6 +245,15 @@
       ],
       "example_refs": [
         "examples/order/main.go"
+      ],
+      "api_status": "advanced",
+      "durable_state_impact": "Missing prerequisite states trigger diagnostic repair tasks recorded in execution tasks.",
+      "failure_semantics": "synthesize_prerequisites",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -214,6 +281,15 @@
       ],
       "example_refs": [
         "examples/axiom-files/main.go"
+      ],
+      "api_status": "advanced",
+      "durable_state_impact": "Fixpoint cycle and oscillation detection terminates runaway rule loops without persisting corrupted state.",
+      "failure_semantics": "fail_closed",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/order/main.go"
       ]
     },
     {
@@ -239,6 +315,15 @@
       ],
       "example_refs": [
         "examples/model/main.go"
+      ],
+      "api_status": "advanced",
+      "durable_state_impact": "Provider latency EWMA and failure counts are recorded in shared provider health store.",
+      "failure_semantics": "fallback_to_healthy_provider",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -263,6 +348,16 @@
       ],
       "example_refs": [
         "examples/model/main.go"
+      ],
+      "api_status": "extension_spi",
+      "durable_state_impact": "Provider availability status, error rates, and quality vectors are persisted in axiom_provider_health.",
+      "failure_semantics": "circuit_break",
+      "observability_refs": [
+        "docs/observability-and-health.md",
+        "observability_test.go"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -288,6 +383,15 @@
       ],
       "example_refs": [
         "examples/order/main.go"
+      ],
+      "api_status": "extension_spi",
+      "durable_state_impact": "Concurrency token leases and rate refill timestamps are persisted across coordinator nodes.",
+      "failure_semantics": "rate_limit_throttle",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -312,6 +416,15 @@
       ],
       "example_refs": [
         "examples/model/main.go"
+      ],
+      "api_status": "extension_spi",
+      "durable_state_impact": "Deterministic activity results are memoized by input hash to eliminate redundant external calls.",
+      "failure_semantics": "bypass_cache_on_error",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -336,6 +449,15 @@
       ],
       "example_refs": [
         "examples/model/main.go"
+      ],
+      "api_status": "advanced",
+      "durable_state_impact": "Idempotent hedge requests run in parallel against backup providers; first verified response cancels siblings.",
+      "failure_semantics": "first_successful_response",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -360,6 +482,15 @@
       ],
       "example_refs": [
         "examples/model/main.go"
+      ],
+      "api_status": "advanced",
+      "durable_state_impact": "Multi-model ensemble votes and consensus matrices evaluate output consistency before commitment.",
+      "failure_semantics": "quorum_consensus",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -384,6 +515,15 @@
       ],
       "example_refs": [
         "examples/order/main.go"
+      ],
+      "api_status": "advanced",
+      "durable_state_impact": "Token, monetary, and wall-clock resource consumption counters are decremented and persisted per execution.",
+      "failure_semantics": "fail_closed",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -408,6 +548,15 @@
       ],
       "example_refs": [
         "examples/order/main.go"
+      ],
+      "api_status": "stable_facade",
+      "durable_state_impact": "Approval gates park execution in StatusWaiting until authorized external signal arrives.",
+      "failure_semantics": "await_approval_or_timeout",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -432,6 +581,15 @@
       ],
       "example_refs": [
         "examples/order/main.go"
+      ],
+      "api_status": "stable_facade",
+      "durable_state_impact": "Async promises and external dependency futures are recorded in state until fulfilled.",
+      "failure_semantics": "block_until_resolved",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -458,6 +616,15 @@
       ],
       "example_refs": [
         "examples/go-first/main.go"
+      ],
+      "api_status": "stable_facade",
+      "durable_state_impact": "Incoming events are deduplicated via axiom_inbox and ordered chronologically before state mutation.",
+      "failure_semantics": "idempotent_event_ingest",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -483,6 +650,15 @@
       ],
       "example_refs": [
         "examples/order/main.go"
+      ],
+      "api_status": "advanced",
+      "durable_state_impact": "Historical version ledger allows branching executions from any committed snapshot without mutating origin.",
+      "failure_semantics": "fail_closed",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/order/main.go"
       ]
     },
     {
@@ -506,6 +682,15 @@
         "docs/api-guide.md"
       ],
       "example_refs": [
+        "examples/order/main.go"
+      ],
+      "api_status": "stable_facade",
+      "durable_state_impact": "Execution tail-calls into a new generation, pruning old history while atomically carrying active context forward.",
+      "failure_semantics": "atomic_generation_rollover",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
         "examples/order/main.go"
       ]
     },
@@ -531,6 +716,15 @@
       ],
       "example_refs": [
         "examples/order/main.go"
+      ],
+      "api_status": "stable_facade",
+      "durable_state_impact": "Child execution state is partitioned with independent versioning and lifecycle tracking linked to parent.",
+      "failure_semantics": "parent_child_isolation",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -556,6 +750,15 @@
       ],
       "example_refs": [
         "examples/order/main.go"
+      ],
+      "api_status": "stable_facade",
+      "durable_state_impact": "Cron and interval schedules are persisted in axiom_schedules with distributed next_fire calculation.",
+      "failure_semantics": "retry_missed_or_skip",
+      "observability_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -580,6 +783,16 @@
       ],
       "example_refs": [
         "examples/order/main.go"
+      ],
+      "api_status": "advanced",
+      "durable_state_impact": "Terminal execution records older than retention threshold are purged to reclaim disk capacity.",
+      "failure_semantics": "graceful_tombstone",
+      "observability_refs": [
+        "docs/observability-and-health.md",
+        "docs/operational-runbooks.md"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     },
     {
@@ -605,6 +818,16 @@
       ],
       "example_refs": [
         "examples/go-first/main.go"
+      ],
+      "api_status": "stable_facade",
+      "durable_state_impact": "Low-overhead cardinality-bounded Prometheus metrics and tracing spans emitted during transitions.",
+      "failure_semantics": "best_effort_telemetry",
+      "observability_refs": [
+        "docs/observability-and-health.md",
+        "observability_test.go"
+      ],
+      "reference_usage_refs": [
+        "examples/production-refapp/app.go"
       ]
     }
   ]

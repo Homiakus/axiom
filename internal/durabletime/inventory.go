@@ -355,6 +355,62 @@ var Registry = []ClockUsageEntry{
 		Rationale:              "Informational UpdatedAt timestamp on persisted ADGO execution records",
 	},
 
+	// --- adgo/postgres_store.go ---
+	{
+		Package:                "adgo",
+		File:                   "postgres_store.go",
+		Function:               "PostgresStore.Commit",
+		CallType:               "time.Now",
+		Category:               CategoryPersistedEventTimestamp,
+		RequiresClockInjection: false,
+		Rationale:              "Informational CreatedAt and UpdatedAt timestamps on persisted PostgreSQL execution records",
+	},
+	{
+		Package:                "adgo",
+		File:                   "postgres_store.go",
+		Function:               "PostgresStore.MutateExecution",
+		CallType:               "time.Now",
+		Category:               CategoryPersistedEventTimestamp,
+		RequiresClockInjection: false,
+		Rationale:              "Informational UpdatedAt timestamp on mutated PostgreSQL execution records",
+	},
+	{
+		Package:                "adgo",
+		File:                   "postgres_store.go",
+		Function:               "PostgresStore.AppendEvent",
+		CallType:               "time.Now",
+		Category:               CategoryPersistedEventTimestamp,
+		RequiresClockInjection: false,
+		Rationale:              "Informational Event timestamp for arrived events",
+	},
+	{
+		Package:                "adgo",
+		File:                   "postgres_store.go",
+		Function:               "PostgresProviderHealthStore.update",
+		CallType:               "time.Now",
+		Category:               CategoryPersistedEventTimestamp,
+		RequiresClockInjection: false,
+		Rationale:              "Informational UpdatedAt timestamp on provider health records",
+	},
+	{
+		Package:                "adgo",
+		File:                   "postgres_store.go",
+		Function:               "PostgresScheduleStore.SaveSchedule",
+		CallType:               "time.Now",
+		Category:               CategoryPersistedEventTimestamp,
+		RequiresClockInjection: false,
+		Rationale:              "Informational UpdatedAt timestamp on persisted schedules",
+	},
+	{
+		Package:                "adgo",
+		File:                   "postgres_store.go",
+		Function:               "PostgresScheduleStore.MutateSchedule",
+		CallType:               "time.Now",
+		Category:               CategoryPersistedEventTimestamp,
+		RequiresClockInjection: false,
+		Rationale:              "Informational UpdatedAt timestamp on mutated schedules",
+	},
+
 	// --- adgo/policy.go ---
 	{
 		Package:                "adgo",

@@ -21,7 +21,9 @@ var PublicPackages = []string{
 	"adgo",
 	"diagram",
 	"model",
+	"profile",
 	"store/pebble",
+	"store/postgres",
 	"table",
 }
 

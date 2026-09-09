@@ -388,17 +388,17 @@ The current maturity audit finds that Axiom's algorithmic breadth is ahead of it
 **Task:** T-082/T-083.
 
 ### F-030 — Built-in multi-host durable backend is missing
-**Status:** OPEN  
+**Status:** RESOLVED  
 **Category:** Persistence / distributed deployment  
 **Severity:** High  
-**Problem:** Pebble is appropriate for a single database owner and FileStore has shared-filesystem semantics, but there is no first-party networked transactional backend that demonstrates multi-host CAS, leases, inbox, schedules, provider health, retention and migrations under the same conformance model.  
+**Problem:** Pebble is appropriate for a single database owner and FileStore has shared-filesystem semantics, but there is no first-party networked transactional backend that demonstrates multi-host CAS, leases, inbox, schedules, provider health, retention and migrations under the same conformance model. Resolved via first-party PostgreSQL durable store (`store/postgres`, `internal/store/postgres`, `adgo.PostgresStore`) with multi-host CAS, leases, fencing, inbox deduplication, schedules, provider health, retention, and advisory-locked migrations in T-084.  
 **Task:** T-084.
 
 ### F-031 — Public API surface is broad relative to the desired stable facade
-**Status:** OPEN  
+**Status:** RESOLVED  
 **Category:** API compatibility / maintainability  
 **Severity:** Medium-High  
-**Problem:** large exported surface increases compatibility burden and makes accidental low-level contracts harder to evolve. The solution is not to hide required capability but to separate stable facade, advanced APIs and implementation-oriented extension points.  
+**Problem:** large exported surface increases compatibility burden and makes accidental low-level contracts harder to evolve. The solution is not to hide required capability but to separate stable facade, advanced APIs and implementation-oriented extension points. Resolved via canonical 5-tier classification (`stable_facade`, `extension_spi`, `advanced`, `internalization_candidate`, `deprecated`) across all 849 public symbols in `docs/api-tiering.json`, architectural guidance in `docs/api-tiering.md`, low-level to high-level feature mapping, and CI anti-drift test `api_tiering_test.go` in T-085.  
 **Task:** T-085.
 
 ### F-032 — Compiled runtime mathematical correctness and replay integrity gaps
@@ -459,16 +459,30 @@ The current maturity audit finds that Axiom's algorithmic breadth is ahead of it
 4. Published architectural and operational documentation in `docs/production-reference-application.md` linked in `docs/README.md` and validated by `docs_integrity_test.go`.
 
 ### T-084 — First-party PostgreSQL durable Store for multi-host deployment
-**Status:** READY  
+**Status:** DONE  
 **Priority:** P1  
 **Depends:** T-080/T-081; T-083 may initially use Pebble.  
 **Goal:** provide an authoritative networked reference backend instead of requiring every user to design distributed persistence semantics independently.  
 **Required capabilities:** transactional CAS, execution catalog, inbox/event deduplication, task leasing/fencing, immutable versions, schedules, provider-health state, admission leases/rate state where appropriate, retention and schema/version markers.  
 **Verification:** reuse or extend Store conformance suites; multi-process/multi-connection contention; transaction rollback; stale-worker fencing; crash/reconnect; isolation-level characterization; migration/upgrade compatibility; fault-injection around commit boundaries.  
-**Non-goal:** claiming exactly-once external effects.
+**Non-goal:** claiming exactly-once external effects.  
+**Delivered:**
+1. Implemented first-party networked PostgreSQL durable store for Core runtime (`internal/store/postgres` and public package `store/postgres`) with optimistic concurrency CAS (`SELECT ... FOR UPDATE`), row-level leasing, `FOR UPDATE SKIP LOCKED` task polling, and automatic forward schema migrations using advisory transaction locks (`pg_advisory_xact_lock`).
+2. Implemented first-party PostgreSQL durable store for ADGO workflow engine (`adgo/postgres_store.go`) providing `adgo.Store`, `PostgresProviderHealthStore`, `PostgresScheduleStore`, and idempotent inbox deduplication (`axiom_inbox`).
+3. Added schema migrations tracking table (`axiom_schema_migrations`) and verified transactional forward-only migrations.
+4. Validated persistence conformance using both Core `RunStoreContract` (`TestPostgresStoreContract`) and ADGO `RunADGOStoreConformanceSuite` (`TestPostgresStore_ADGOConformanceSuite`).
+5. Implemented comprehensive verification tests covering:
+   - multi-worker CAS contention (`TestPostgresStore_ConcurrentCAS`, `TestPostgresStore_ConcurrentCommits`)
+   - multi-host task leasing and stale-worker fencing (`TestPostgresStore_WorkerFencing_SkipLocked`)
+   - transaction rollback on failure/conflict (`TestPostgresStore_TransactionRollback`, `Commit_CallbackErrorRollsBack`)
+   - migration idempotency and upgrade compatibility (`TestPostgresStore_MigrationIdempotency`)
+   - fault injection and context cancellation around commit boundaries (`TestPostgresStore_FaultInjectionAroundCommit`, `ContextCancellation_OperationsHonorPreCancelledContext`)
+   - execution catalog listing, version history, and retention pruning (`TestPostgresStore_CatalogAndPruning`, `TestPostgresStore_Versions`).
+6. Exported public APIs under `store/postgres` and `adgo` with verified backward-compatibility manifest (`testdata/compat/public_api_manifest.txt`).
+7. Published architectural, schema, and operational documentation in `docs/postgres-durable-store.md`, linked in `docs/README.md`, and registered clock usages in `internal/durabletime/inventory.go` and `docs/clock-inventory.md`.
 
 ### T-085 — Reduce and tier the stable public API surface
-**Status:** TODO  
+**Status:** DONE  
 **Priority:** P2  
 **Depends:** T-081/T-082.  
 **Goal:** make the most common integration path small while preserving advanced control.  
@@ -477,14 +491,32 @@ The current maturity audit finds that Axiom's algorithmic breadth is ahead of it
 2. Keep compatibility promises explicit and mechanical.
 3. Prefer high-level constructors/profiles over requiring consumers to compose many independent infrastructure primitives.
 4. Deprecate before removal where compatibility policy requires it.
-5. Add documentation that maps low-level types to the high-level feature that actually requires them.
+5. Add documentation that maps low-level types to the high-level feature that actually requires them.  
+**Delivered:**
+1. Formulated canonical 5-tier classification across all 849 exported symbols in `docs/api-tiering.json` (`stable_facade`: 593, `extension_spi`: 134, `advanced`: 101, `internalization_candidate`: 18, `deprecated`: 3).
+2. Mechanically enforced 100% classification coverage, valid tiers, feature mapping, and deprecation replacements via CI test `api_tiering_test.go` (`TestAPITieringIntegrity`).
+3. Added `package profile` to `PublicPackages` in `api_compatibility_test.go` and synchronized with `testdata/compat/public_api_manifest.txt`.
+4. Published architectural and operational guidance in `docs/api-tiering.md`, documenting recommended entry profiles (`profile.Embedded`, `profile.DurableSingleNode`, `profile.DistributedProduction`), mapping every low-level type and advanced symbol to its high-level feature in `docs/algorithm-integration-matrix.json`, and documenting SPI contracts and deprecation schedules.
+5. Synchronized deprecation schedule in `docs/deprecation-inventory.md` with exact compiler annotations (`Register`, `LoadModule`, `NewEngine`).
+6. Linked documentation in `docs/README.md` and validated by `TestDocsIntegrityAndLinkages`.
 
 ### T-086 — Integration-completeness quality gate
-**Status:** TODO  
+**Status:** DONE  
 **Priority:** P2  
 **Depends:** T-081/T-083.  
 **Goal:** prevent future feature growth from recreating the gap between implementation and usability.  
-**Gate requirements:** every new production feature must declare its API status, default/opt-in policy, durable-state impact, failure semantics, observability, tests, documentation and reference usage before being marked DONE in this plan.
+**Gate requirements:** every new production feature must declare its API status, default/opt-in policy, durable-state impact, failure semantics, observability, tests, documentation and reference usage before being marked DONE in this plan.  
+**Delivered:**
+1. Formulated the 8 mandatory integration completeness declarations (`api_status`, `mode` [default vs opt-in], `durable_state_impact`, `failure_semantics`, `observability_refs`, `test_refs`, `doc_refs`, `reference_usage_refs`) across all 24 canonical features in `docs/algorithm-integration-matrix.json`.
+2. Expanded CI test `algorithm_integration_matrix_test.go` (`TestAlgorithmIntegrationMatrixIntegrity`) into an executable quality gate that mechanically validates:
+   - Valid API tier (`stable_facade`, `advanced`, `extension_spi`) matching `docs/api-tiering.json`.
+   - Valid activation policy (`default` or `opt-in`).
+   - Non-empty durable state impact specification.
+   - Non-empty failure semantics specification.
+   - Existence and validity of all referenced files for observability, reference usage, tests, documentation, implementation, and public APIs.
+3. Authored canonical process specification `docs/quality-gate.md` defining the Definition of Done checklist, mandatory dimensions, and CI test integration.
+4. Linked quality gate documentation across `docs/README.md` and validated cross-references via `TestDocsIntegrityAndLinkages`.
+
 
 ### T-087 — Compiled runtime mathematical correctness closure
 **Status:** DONE  

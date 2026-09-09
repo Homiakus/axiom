@@ -54,3 +54,10 @@
 | `internal/store/pebble/transaction.go` | `Transaction.Commit` | `time.Now` | `persisted_event_timestamp` | Нет | Запись `UpdatedAt` на задаче |
 | `internal/store/pebble/transaction.go` | `Transaction.AcquireLease` | `time.Now` | `lease_fencing` | Нет | Запись `LockedUntil` |
 | `flow_outbox.go` | `Outbox.Enqueue` | `time.Now` | `persisted_event_timestamp` | Нет | `CreatedAt` outbox-записи |
+| `adgo/postgres_store.go` | `PostgresStore.Commit` | `time.Now` | `persisted_event_timestamp` | Нет | Информационные CreatedAt и UpdatedAt на записях |
+| `adgo/postgres_store.go` | `PostgresStore.MutateExecution` | `time.Now` | `persisted_event_timestamp` | Нет | Информационный UpdatedAt при мутациях |
+| `adgo/postgres_store.go` | `PostgresStore.AppendEvent` | `time.Now` | `persisted_event_timestamp` | Нет | Информационный timestamp принятых событий |
+| `adgo/postgres_store.go` | `PostgresProviderHealthStore.update` | `time.Now` | `persisted_event_timestamp` | Нет | Информационный UpdatedAt в записях здоровья провайдеров |
+| `adgo/postgres_store.go` | `PostgresScheduleStore.SaveSchedule` | `time.Now` | `persisted_event_timestamp` | Нет | Информационный UpdatedAt на расписаниях |
+| `adgo/postgres_store.go` | `PostgresScheduleStore.MutateSchedule` | `time.Now` | `persisted_event_timestamp` | Нет | Информационный UpdatedAt при мутациях расписаний |
+

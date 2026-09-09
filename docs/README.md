@@ -5,10 +5,12 @@
 ## Начало работы
 
 - [Обзор и быстрый старт](../README.md)
-- [Какой публичный API выбирать](api-guide.md)
-- [Поддерживаемые профили интеграции (Embedded, Durable Single Node, Distributed Production)](integration-profiles.md)
-- [Полное эталонное production-приложение (DeployGuard / Incident Remediation)](production-reference-application.md)
-- [Инвентарь публичного API и депрекаций](deprecation-inventory.md)
+- [Руководство по выбору frontend API](api-guide.md)
+- [Классификация и уровни публичного API (5 tiers)](api-tiering.md)
+- [Машиночитаемый реестр уровней API](api-tiering.json)
+- [Интеграционные профили (Embedded, Durable Single Node, Distributed Production)](integration-profiles.md)
+- [Полное эталонное production-приложение](production-reference-application.md)
+- [Инвентарь депрекаций публичного API](deprecation-inventory.md)
 - [Таксономия и классификация ошибок](error-taxonomy.md)
 - [Каталог примеров](../examples/README.md)
 - [Локальная разработка](../DEVELOPMENT.md)
@@ -26,6 +28,7 @@
 - [High-leverage architecture audit — 2026-09-06](high-leverage-architecture-audit-2026-09-06.md)
 - [Mathematical and cybernetic audit of compiled runtime correctness — 2026-09-08](runtime-mathematical-correctness-audit-2026-09-08.md)
 - [Runtime-семантика и текущие ограничения](runtime-semantics.md)
+- [PostgreSQL durable store: архитектура, таблицы, CAS и multi-host fencing](postgres-durable-store.md)
 - [Durable Flow effects: outbox, recovery и exactly-once boundary](flow-durability.md)
 - [Реестр общих персистентных примитивов](durable-primitives-inventory.md)
 - [Инвентарь сериализованных поверхностей](serialized-surfaces.md)
@@ -43,6 +46,7 @@
 
 ## Качество и релиз
 
+- [Quality gate интеграционной полноты](quality-gate.md)
 - [Регламенты аварийного реагирования и Runbooks](operational-runbooks.md)
 - [Отказоустойчивость, метрики и health-пробы](observability-and-health.md)
 - [Quality Loop и автоматизированные проверки](QUALITY_LOOP.md)
@@ -57,6 +61,8 @@
 |---|---|
 | `README.md` | Public API overview и quick start |
 | `api-guide.md` | Рекомендуемый путь выбора frontend и runtime API |
+| `api-tiering.md` | Руководство по 5 уровням публичного API: stable facade, extension SPI, advanced, internalization, deprecated |
+| `api-tiering.json` | Машиночитаемая классификация всех 849 публичных символов API с маппингом на фичи |
 | `integration-profiles.md` | Три канонических профиля интеграции (Embedded, Durable Single Node, Distributed Production) |
 | `production-reference-application.md` | Полное эталонное production-приложение, объединяющее все 14 runtime-алгоритмов |
 | `deprecation-inventory.md` | Инвентарь устаревших конструкторов и расписание pre-v1 депрекаций |
@@ -64,6 +70,7 @@
 | `observability-and-health.md` | Ограничение кардинальности метрик (OPS-001) и разделение liveness/readiness проб (OPS-002) |
 | `operational-runbooks.md` | Процедуры устранения сбоев, восстановления данных, утечек блокировок и отката версий (OPS-003) |
 | `runtime-semantics.md` | Declarative Engine runtime contract и failure boundaries |
+| `postgres-durable-store.md` | Первоклассное PostgreSQL хранилище: multi-host CAS, task leasing, fencing, inbox и миграции |
 | `runtime-mathematical-correctness-audit-2026-09-08.md` | Evidence-аудит эквивалентности model/compiled runtime/replay: semantic digest, fast/reference differential testing, dependency closure, writes, fixpoint semantics и replay verification |
 | `flow-durability.md` | Канонический контракт durable Flow outbox/recovery |
 | `durable-primitives-inventory.md` | Анализ и статус общих примитивов Core vs ADGO |
@@ -73,6 +80,7 @@
 | `architecture-risk-register.json` | Машиночитаемый FMEA-регистр для CI-проверки RPN, состояний и ссылок на `MASTER_PLAN.md` |
 | `algorithm-integration-matrix.json` | Машиночитаемая матрица интеграции алгоритмов: фича -> реализация -> API -> рантайм -> тесты -> примеры |
 | `high-leverage-architecture-audit-2026-09-06.md` | Evidence-аудит точек максимального архитектурного leverage и хрупких семантических границ; не является параллельным roadmap |
+| `quality-gate.md` | Quality gate интеграционной полноты (T-086): 8 обязательных измерений для каждой фичи |
 | `versioning.md` | Политика pre-v1 совместимости, release gate и workflow публикации |
 | `QUALITY_LOOP.md` | Регламент автоматического тестирования мутаций и краевых случаев |
 | `CHANGELOG.md` | Текущий публичный release history / planned changes |

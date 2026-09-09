@@ -18,8 +18,9 @@ This document records the complete inventory of deprecated symbols, duplicate co
 | Deprecated Symbol | Status | Preferred Canonical Replacement | Removal Target | Rationale & Migration Guidance |
 |---|---|---|---|---|
 | `axiom.Register(name, fn)` | **Deprecated** | `axiom.Act(name, fn)` or `axiom.ActTyped(name, fn)` | `v0.2.0` | Replaced by `Act`/`ActTyped` which clearly distinguish dynamic map payloads from statically-checked Go structs. |
-| `axiom.CompileModule(source)` | **Deprecated** | `axiom.Compile(source)` | `v0.2.0` | Simplified top-level compile helper returning `(*Module, error)`. |
-| `axiom.NewEngineWithStore(module, store, opts...)` | **Deprecated** | `axiom.New(module, WithStore(store), WithActivities(opts...))` | `v0.2.0` | Functional options pattern (`WithStore`, `WithActivities`) replaces specialized positional parameter constructors. |
+| `axiom.LoadModule(source)` | **Deprecated** | `axiom.Compile(source)` | `v0.2.0` | Simplified top-level compile helper returning `(*Module, error)`. |
+| `axiom.NewEngine(module, store, activities)` | **Deprecated** | `axiom.New(module, WithStore(store), WithActivities(activities))` | `v0.2.0` | Functional options pattern (`WithStore`, `WithActivities`) replaces specialized positional parameter constructors. |
+
 
 ---
 

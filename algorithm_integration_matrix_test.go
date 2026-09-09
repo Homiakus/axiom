@@ -23,6 +23,11 @@ type algorithmFeature struct {
 	Mode               string   `json:"mode"`
 	Persistent         bool     `json:"persistent"`
 	Reachability       string   `json:"reachability"`
+	APIStatus          string   `json:"api_status"`
+	DurableStateImpact string   `json:"durable_state_impact"`
+	FailureSemantics   string   `json:"failure_semantics"`
+	ObservabilityRefs  []string `json:"observability_refs"`
+	ReferenceUsageRefs []string `json:"reference_usage_refs"`
 	ImplementationRefs []string `json:"implementation_refs"`
 	PublicAPIRefs      []string `json:"public_api_refs"`
 	TestRefs           []string `json:"test_refs"`
@@ -106,6 +111,23 @@ func TestAlgorithmIntegrationMatrixIntegrity(t *testing.T) {
 			t.Errorf("feature %s has unknown mode %q (must be opt-in or default)", feat.FeatureID, feat.Mode)
 		}
 
+		// Quality gate requirements (T-086)
+		switch feat.APIStatus {
+		case "stable_facade", "advanced", "extension_spi":
+			// valid
+		default:
+			t.Errorf("feature %s has unknown api_status %q (must be stable_facade, advanced, or extension_spi)", feat.FeatureID, feat.APIStatus)
+		}
+
+		if strings.TrimSpace(feat.DurableStateImpact) == "" {
+			t.Errorf("feature %s has empty durable_state_impact", feat.FeatureID)
+		}
+		if strings.TrimSpace(feat.FailureSemantics) == "" {
+			t.Errorf("feature %s has empty failure_semantics", feat.FeatureID)
+		}
+
+		assertExistingFiles(t, feat.FeatureID, "observability_refs", feat.ObservabilityRefs)
+		assertExistingFiles(t, feat.FeatureID, "reference_usage_refs", feat.ReferenceUsageRefs)
 		assertExistingFiles(t, feat.FeatureID, "implementation_refs", feat.ImplementationRefs)
 		assertExistingFiles(t, feat.FeatureID, "public_api_refs", feat.PublicAPIRefs)
 		assertExistingFiles(t, feat.FeatureID, "test_refs", feat.TestRefs)

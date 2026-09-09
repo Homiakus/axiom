@@ -507,6 +507,34 @@ method (PolicyEngine) Resolve
 method (PolicyEngine) RunWorker
 type PolicyEngineOptions
 type PolicyRequest
+type PostgresProviderHealthStore
+func NewPostgresProviderHealthStore
+method (PostgresProviderHealthStore) DeleteProviderHealth
+method (PostgresProviderHealthStore) ListProviderHealth
+method (PostgresProviderHealthStore) LoadProviderHealth
+method (PostgresProviderHealthStore) UpdateProviderHealth
+type PostgresScheduleStore
+func NewPostgresScheduleStore
+method (PostgresScheduleStore) Commit
+method (PostgresScheduleStore) Create
+method (PostgresScheduleStore) List
+method (PostgresScheduleStore) Load
+type PostgresStore
+func OpenPostgresStore
+func OpenPostgresStoreFromDB
+method (PostgresStore) AckInbox
+method (PostgresStore) Close
+method (PostgresStore) Commit
+method (PostgresStore) Create
+method (PostgresStore) DB
+method (PostgresStore) DeleteExecution
+method (PostgresStore) ListExecutionIDs
+method (PostgresStore) ListInbox
+method (PostgresStore) ListVersions
+method (PostgresStore) Load
+method (PostgresStore) PutInbox
+type PostgresStoreOption
+func WithPostgresAutoMigrate
 type Production
 func OpenProduction
 method (Production) Close
@@ -775,6 +803,44 @@ method (TypedState) Float
 method (TypedState) Int
 method (TypedState) String
 
+=== Package: profile ===
+package profile
+type DistributedProduction
+func OpenDistributedProduction
+method (DistributedProduction) Close
+method (DistributedProduction) Guarantees
+method (DistributedProduction) NodeID
+method (DistributedProduction) Production
+method (DistributedProduction) RunCoordinator
+method (DistributedProduction) RunWorker
+method (DistributedProduction) Serve
+type DistributedProductionConfig
+func DefaultDistributedProductionConfig
+type DurableSingleNode
+func OpenDurableSingleNode
+method (DurableSingleNode) Close
+method (DurableSingleNode) CompileAndNew
+method (DurableSingleNode) Dir
+method (DurableSingleNode) EngineStore
+method (DurableSingleNode) FlowStore
+method (DurableSingleNode) Guarantees
+method (DurableSingleNode) NewEngine
+method (DurableSingleNode) OpenAdgoProduction
+type DurableSingleNodeConfig
+type Embedded
+func NewEmbedded
+func OpenEmbedded
+method (Embedded) Close
+method (Embedded) CompileAndNew
+method (Embedded) FlowStore
+method (Embedded) Guarantees
+method (Embedded) NewEngine
+type EmbeddedConfig
+type Guarantees
+type ProfileName
+func OpenDurableFlow
+func OpenEmbeddedFlow
+
 === Package: store/pebble ===
 package pebble
 var Open
@@ -782,6 +848,17 @@ var WithNoSync
 var WithSyncEvery
 var WithJSONCodec
 var WithGobCodec
+type Option
+type Store
+
+=== Package: store/postgres ===
+package postgres
+var Open
+var OpenFromDB
+var WithLeaseTTL
+var WithLeaseOwner
+var WithAutoMigrate
+var Migrate
 type Option
 type Store
 
