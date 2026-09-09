@@ -90,21 +90,23 @@ func (e *Engine) signal(ctx context.Context, executionID string, signalName stri
 	if err != nil {
 		return err
 	}
+	if err := execution.TransitionTo(StatusRunning); err != nil {
+		return err
+	}
 	e.prepareExecution(execution)
-	execution.Status = StatusRunning
 	if err := e.store.AppendHistory(ctx, executionID, "SignalReceived", map[string]any{"signal": signalName, "payload": payload}); err != nil {
 		return err
 	}
 	queue := e.ruleQueueForSignal(signalName)
 	err = e.processRules(ctx, execution, queue, evalEnv{execution: execution, signal: payload, changed: map[string]struct{}{}})
 	if err != nil {
-		execution.Status = StatusFailed
+		_ = execution.TransitionTo(StatusFailed)
 		// Best-effort save: execution is already in a failed state;
 		// returning the original error takes priority.
 		_ = e.store.SaveExecution(ctx, execution)
 		return err
 	}
-	execution.Status = StatusWaiting
+	_ = execution.TransitionTo(StatusWaiting)
 	return e.store.SaveExecution(ctx, execution)
 }
 
@@ -119,8 +121,10 @@ func (e *Engine) patch(ctx context.Context, executionID string, patch map[string
 	if err != nil {
 		return err
 	}
+	if err := execution.TransitionTo(StatusRunning); err != nil {
+		return err
+	}
 	e.prepareExecution(execution)
-	execution.Status = StatusRunning
 	changed, err := e.applyPatch(execution, patch)
 	if err != nil {
 		return err
@@ -130,7 +134,7 @@ func (e *Engine) patch(ctx context.Context, executionID string, patch map[string
 	}
 	changedAtoms, err := e.recomputeFast(execution, changedSet(changed))
 	if err != nil {
-		execution.Status = StatusFailed
+		_ = execution.TransitionTo(StatusFailed)
 		// Best-effort save: execution is already in a failed state;
 		// returning the original error takes priority.
 		_ = e.store.SaveExecution(ctx, execution)
@@ -139,13 +143,13 @@ func (e *Engine) patch(ctx context.Context, executionID string, patch map[string
 	queue := e.rulesForChangedFast(changed, changedAtoms)
 	err = e.processRules(ctx, execution, queue, evalEnv{execution: execution, changed: changedSet(changed)})
 	if err != nil {
-		execution.Status = StatusFailed
+		_ = execution.TransitionTo(StatusFailed)
 		// Best-effort save: execution is already in a failed state;
 		// returning the original error takes priority.
 		_ = e.store.SaveExecution(ctx, execution)
 		return err
 	}
-	execution.Status = StatusWaiting
+	_ = execution.TransitionTo(StatusWaiting)
 	return e.store.SaveExecution(ctx, execution)
 }
 
@@ -176,6 +180,15 @@ func (e *Engine) completeActivity(ctx context.Context, executionID string, task 
 	if err != nil {
 		return err
 	}
+	if execution.Status.IsTerminal() {
+		return diag.Error{
+			Code:    "AX407",
+			Kind:    "runtime",
+			Message: fmt.Sprintf("cannot complete activity on terminal execution %s (status: %s)", executionID, execution.Status),
+			Hint:    "Terminal executions (Completed, Failed, Canceled) cannot process activity completions.",
+		}
+	}
+	_ = execution.TransitionTo(StatusRunning)
 	e.prepareExecution(execution)
 	if runErr != nil {
 		activityErr := diag.Error{
@@ -195,7 +208,7 @@ func (e *Engine) completeActivity(ctx context.Context, executionID string, task 
 		if err := e.store.AppendHistory(ctx, executionID, "ActivityFailed", map[string]any{"activity": task.ActivityName, "rule": task.RuleName, "error": activityErr.Error()}); err != nil {
 			return err
 		}
-		execution.Status = StatusFailed
+		_ = execution.TransitionTo(StatusFailed)
 		if err := e.store.SaveExecution(ctx, execution); err != nil {
 			return err
 		}
@@ -211,7 +224,7 @@ func (e *Engine) completeActivity(ctx context.Context, executionID string, task 
 		if historyErr := e.store.AppendHistory(ctx, executionID, "ActivityFailed", map[string]any{"activity": task.ActivityName, "rule": task.RuleName, "error": err.Error()}); historyErr != nil {
 			return historyErr
 		}
-		execution.Status = StatusFailed
+		_ = execution.TransitionTo(StatusFailed)
 		// Best-effort save: execution is already in a failed state;
 		// returning the original error takes priority.
 		_ = e.store.SaveExecution(ctx, execution)
@@ -229,7 +242,7 @@ func (e *Engine) completeActivity(ctx context.Context, executionID string, task 
 	rule := e.module.Rules[task.RuleName]
 	changed, err := e.applyWrites(ctx, execution, rule, evalEnv{execution: execution, output: result, changed: map[string]struct{}{}})
 	if err != nil {
-		execution.Status = StatusFailed
+		_ = execution.TransitionTo(StatusFailed)
 		// Best-effort save: execution is already in a failed state;
 		// returning the original error takes priority.
 		_ = e.store.SaveExecution(ctx, execution)
@@ -237,7 +250,7 @@ func (e *Engine) completeActivity(ctx context.Context, executionID string, task 
 	}
 	changedAtoms, err := e.recomputeFast(execution, changedSet(changed))
 	if err != nil {
-		execution.Status = StatusFailed
+		_ = execution.TransitionTo(StatusFailed)
 		// Best-effort save: execution is already in a failed state;
 		// returning the original error takes priority.
 		_ = e.store.SaveExecution(ctx, execution)
@@ -245,13 +258,13 @@ func (e *Engine) completeActivity(ctx context.Context, executionID string, task 
 	}
 	queue := e.rulesForChangedFast(changed, changedAtoms)
 	if err := e.processRules(ctx, execution, queue, evalEnv{execution: execution, changed: changedSet(changed)}); err != nil {
-		execution.Status = StatusFailed
+		_ = execution.TransitionTo(StatusFailed)
 		// Best-effort save: execution is already in a failed state;
 		// returning the original error takes priority.
 		_ = e.store.SaveExecution(ctx, execution)
 		return err
 	}
-	execution.Status = StatusWaiting
+	_ = execution.TransitionTo(StatusWaiting)
 	return e.store.SaveExecution(ctx, execution)
 }
 
@@ -568,23 +581,29 @@ func (e *Engine) applyWrites(ctx context.Context, execution *Execution, rule lan
 	if err := e.checkClaimsFast(execution, nil); err != nil {
 		return nil, err
 	}
-	rollback := contextRollback{}
-	changed := make([]string, 0, len(rule.Writes))
-	writes := make(map[string]any, len(rule.Writes))
+	type pendingWrite struct {
+		name  string
+		value any
+	}
+	pending := make([]pendingWrite, 0, len(rule.Writes))
 	for _, write := range rule.Writes {
 		value, err := evalExpr(write.Expr, env)
 		if err != nil {
-			rollback.restore(e, execution)
 			return nil, fmt.Errorf("rule %s write %s: %w", rule.Name, write.Name, err)
 		}
 		if err := e.checkContextValue(write.Name, value); err != nil {
-			rollback.restore(e, execution)
 			return nil, fmt.Errorf("rule %s write %s: %w", rule.Name, write.Name, err)
 		}
-		rollback.capture(execution, write.Name)
-		if e.setContextValue(execution, write.Name, value) {
-			changed = append(changed, write.Name)
-			writes[write.Name] = value
+		pending = append(pending, pendingWrite{name: write.Name, value: value})
+	}
+	rollback := contextRollback{}
+	changed := make([]string, 0, len(pending))
+	writes := make(map[string]any, len(pending))
+	for _, pw := range pending {
+		rollback.capture(execution, pw.name)
+		if e.setContextValue(execution, pw.name, pw.value) {
+			changed = append(changed, pw.name)
+			writes[pw.name] = pw.value
 		}
 	}
 	sort.Strings(changed)

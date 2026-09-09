@@ -207,7 +207,7 @@ func TestPublicAPICompatibilityGate(t *testing.T) {
 		}
 
 		if len(added) > 0 {
-			t.Logf("NOTICE: %d public symbols were added. If intentional, run with UPDATE_API_MANIFEST=1 to accept.", len(added))
+			t.Logf("NOTICE: %d public symbols were added: %v. If intentional, run with UPDATE_API_MANIFEST=1 to accept.", len(added), added)
 		}
 	}
 }

@@ -82,6 +82,37 @@ fact FactB when:
 			wantCode: "AX202",
 		},
 		{
+			name: "AX202 cyclic fact dependency via expose",
+			source: `domain AX202ExposeTest
+
+context State:
+  x: Int = 0
+
+fact FactA when:
+  State.x >= 0
+expose:
+  val = FactB
+
+fact FactB when:
+  FactA
+`,
+			wantCode: "AX202",
+		},
+		{
+			name: "AX203 cross-category cyclic dependency computed to fact",
+			source: `domain AX203Test
+
+context State:
+  x: Int = 0
+
+fact FactA when:
+  compA == true
+
+computed compA: Bool = FactA
+`,
+			wantCode: "AX203",
+		},
+		{
 			name: "AX204 signal ref outside signal rule",
 			source: `domain AX204Test
 
@@ -305,5 +336,145 @@ func TestCompileInvalidSyntax(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "AX000") {
 		t.Fatalf("error = %q, want code AX000", err.Error())
+	}
+}
+
+// TestSemanticDigestMutations proves that any executable semantic mutation
+// changes CompiledHash, while formatting-only or declaration-order permutations do not.
+func TestSemanticDigestMutations(t *testing.T) {
+	baseSource := `domain AuditTest
+
+context Order:
+  amount: Int = 100
+  status: String = "pending"
+
+computed isBig: Bool = Order.amount > 100
+
+fact PremiumOrder when:
+  Order.amount >= 500
+expose:
+  tier = "gold"
+
+rule processOrder:
+  on changed(Order.amount)
+  when:
+    Order.amount > 100
+  write:
+    Order.status = "approved"
+
+claim validOrder:
+  always:
+    Order.amount >= 0
+`
+	baseModule, err := Compile([]byte(baseSource))
+	if err != nil {
+		t.Fatalf("Compile base: %v", err)
+	}
+
+	cases := []struct {
+		name        string
+		mutated     string
+		shouldMatch bool
+	}{
+		{
+			name: "formatting and whitespace only preserves digest",
+			mutated: `domain   AuditTest
+
+context   Order:
+  amount:   Int   =   100
+  status:   String   =   "pending"
+
+computed   isBig:   Bool   =   Order.amount   >   100
+
+fact   PremiumOrder   when:
+  Order.amount   >=   500
+expose:
+  tier   =   "gold"
+
+rule   processOrder:
+  on   changed(Order.amount)
+  when:
+    Order.amount   >   100
+  write:
+    Order.status   =   "approved"
+
+claim   validOrder:
+  always:
+    Order.amount   >=   0
+`,
+			shouldMatch: true,
+		},
+		{
+			name: "reordering independent declarations preserves digest",
+			mutated: `domain AuditTest
+
+claim validOrder:
+  always:
+    Order.amount >= 0
+
+computed isBig: Bool = Order.amount > 100
+
+context Order:
+  status: String = "pending"
+  amount: Int = 100
+
+fact PremiumOrder when:
+  Order.amount >= 500
+expose:
+  tier = "gold"
+
+rule processOrder:
+  on changed(Order.amount)
+  when:
+    Order.amount > 100
+  write:
+    Order.status = "approved"
+`,
+			shouldMatch: true,
+		},
+		{
+			name: "mutation: change default value",
+			mutated: strings.Replace(baseSource, "amount: Int = 100", "amount: Int = 200", 1),
+			shouldMatch: false,
+		},
+		{
+			name: "mutation: change expression constant (audit finding: amount > 100 vs amount > 100000)",
+			mutated: strings.Replace(baseSource, "Order.amount > 100", "Order.amount > 100000", 1),
+			shouldMatch: false,
+		},
+		{
+			name: "mutation: change operator (> to >=)",
+			mutated: strings.Replace(baseSource, "Order.amount > 100", "Order.amount >= 100", 1),
+			shouldMatch: false,
+		},
+		{
+			name: "mutation: change fact expose expression",
+			mutated: strings.Replace(baseSource, `tier = "gold"`, `tier = "platinum"`, 1),
+			shouldMatch: false,
+		},
+		{
+			name: "mutation: change rule write expression",
+			mutated: strings.Replace(baseSource, `Order.status = "approved"`, `Order.status = "rejected"`, 1),
+			shouldMatch: false,
+		},
+		{
+			name: "mutation: change claim invariant",
+			mutated: strings.Replace(baseSource, "Order.amount >= 0", "Order.amount > 0", 1),
+			shouldMatch: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := Compile([]byte(tc.mutated))
+			if err != nil {
+				t.Fatalf("Compile(%s): %v", tc.name, err)
+			}
+			matched := (m.CompiledHash == baseModule.CompiledHash)
+			if matched != tc.shouldMatch {
+				t.Errorf("CompiledHash match = %v, want %v (base: %s, mutant: %s)",
+					matched, tc.shouldMatch, baseModule.CompiledHash, m.CompiledHash)
+			}
+		})
 	}
 }

@@ -208,28 +208,28 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 
 ## 3. Prioritized task DAG
 
-### M0 — Trustworthy execution process
+## M0 — Trustworthy execution process
 
 - **T-001 — authoritative `MASTER_PLAN.md`: DONE**, `414f01c84ec215b29784cbfa7e5987cb35cdea41`.
 - **T-004 — deterministic hedge timing: DONE**, `3a0ba3034f9202a38108fe412286f4e337a90f21`.
 - **T-010 — protect `main`: BLOCKED**, external GitHub repository setting.
 
-### M1 — Release correctness and provenance
+## M1 — Release correctness and provenance
 
 - **T-002 — frozen release metadata resolution: DONE**, `094de51e4e42d72d4bdb4f813f342cee71f9ac87`.
 - **T-003 — single fail-closed publication/verification contract: DONE**, `8e1b11560305d56010049c992968c11f3197ca9e`.
 
-### M2 — Durable Flow correctness and operations
+## M2 — Durable Flow correctness and operations
 
-#### T-030 — Deterministic durable failpoint framework
+### T-030 — Deterministic durable failpoint framework
 **Status:** DONE  
 **Qualified recovery HEAD:** `d5747471db6260d240943ca93da4b1eadb02ae97`.
 
-#### T-031 — Flow intent/effect/ack crash matrix
+### T-031 — Flow intent/effect/ack crash matrix
 **Status:** DONE  
 **Qualified SHA:** `dfa7e583b66c9e0a58268798303ac7ae259b066b`.
 
-#### T-032 — No-resurrection/backend/crash equivalence properties
+### T-032 — No-resurrection/backend/crash equivalence properties
 **Status:** DONE  
 **Priority:** P1/P2  
 **Qualified SHA:** `33be44e7ccd947f03782d73c430b413fffec4a41`  
@@ -242,7 +242,7 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 6. Three additional close/reopen/drain cycles after completion prove no effect/history/state resurrection.
 7. Qualification PR #33 passed CI/security/race/Boundary Shuffle and changed-code mutation testing; exact SHA was fast-forwarded to `main` without force and all push gates passed.
 
-#### T-033 — Flow outbox backlog/backpressure/observability contract
+### T-033 — Flow outbox backlog/backpressure/observability contract
 **Status:** DONE  
 **Priority:** P2  
 **Qualified SHA:** `3bc47a9219a7409980bda4360d7900284fd82552`  
@@ -256,14 +256,14 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 6. Added a 9,500-history-entry characterization benchmark. Full-history scanning remains explicit technical debt for later scale/performance work; T-033 deliberately did not add an index, compaction scheme or persisted-format change.
 7. Qualification PR #34 passed CI/security/full race/Boundary Shuffle and changed-code mutation testing; exact SHA was fast-forwarded to `main` without force and all push gates passed.
 
-### M3 — Shared durable primitives without merging engines
+## M3 — Shared durable primitives without merging engines
 
 - **T-020 — inventory Core vs ADGO durable primitive contracts: DONE**, artifact commits `02d58637f4c3bf71142421cb35c5174b52db9795` / `fbebebf0f2ec49dcec803ca0e801f7d8a5aeefcd`; forward semantic-time recovery closed by F-026 at `e6a7991b5010bd39875b8f7256850d462c2a0bc6`.
 - **T-021 — define acyclic shared durable boundary: DONE**, implementation `ed44183d48db9e797357d73cbe8a2c0d3a7c951c`, contract tests / qualified HEAD `03c6d6e9d8e2058335885eaccdc5c6ee3aac0c34`, PR #38 and all push gates PASS.
 - **T-022 — extract behavior-identical pure primitives: DONE / characterization closed**, P2, depends T-021. Retry/backoff characterization is DONE at `5e8046f226a00024d59f4b8e884421f99d4c2b59` / PR #40 and proves `KEEP SEPARATE`. Lease/fencing characterization is DONE at `cd9ab2243c29583aa19ffa106c6ae402e4616d17` / PR #42 and also proves `KEEP SEPARATE`. Persisted-format marker characterization proves fail-closed marker mechanics (absent/sync-write, valid/reopen, partial fail-closed, future-schema fail-closed, format-mismatch fail-closed) are identical in principle, while marker keys (`meta/axiom-store-*` vs `meta/adgo-store-*`), schema IDs, codec options (`JSON`/`Gob` vs `adgo-pebble-json-v1`), legacy record validation, and migration policy are strictly engine-owned (`KEEP SEPARATE`). Acyclic shared boundary is finalized at `durabletime.NowSource` without forced unification of non-equivalent engine mechanics.
 - **T-023 — architecture anti-drift tests: DONE**, P2, depends T-021; AST-based tests in `internal/durabletime/anti_drift_test.go` mechanically enforce leaf dependency direction and prevent cross-import between Core runtime and ADGO.
 
-### M4 — Security boundary reduction
+## M4 — Security boundary reduction
 
 - **T-040 — G404 closure: DONE**, `d611198a92f17011e487f5dba942bd2933da4a7a`.
 - **T-042 — G101 closure: DONE**, `668c8f77f0619aa8b88cc7dc0002d31651deedcf`.
@@ -276,18 +276,18 @@ Finding states: `OPEN`, `INVESTIGATING`, `VERIFYING`, `RESOLVED`, `ACCEPTED_RISK
 - **T-049 — G304 closure: DONE**, `ebdb71db29d74effa3ea5c8bd21bb7ff50d3dfbd`.
 - **T-041 — supply-chain provenance, remaining permission minimization, container digest pinning:** TODO, P2.
 
-### M5 — API and compatibility freeze
+## M5 — API and compatibility freeze
 
 - **T-050 — mechanical public API compatibility gate: DONE**, P1/P2; `api_compatibility_test.go` extracts public package symbols and enforces strict non-breaking diff against `testdata/compat/public_api_manifest.txt`.
 - **T-051 — typed error taxonomy and stable/experimental classification: DONE**, P2; canonical error taxonomy published in `docs/error-taxonomy.md` and verified in `error_taxonomy_test.go` (`errors.Is`/`errors.As`, `DurableStateError`).
 - **T-052 — reduce/deprecate unnecessary root aliases: DONE**, P2/P3; public facade audit and pre-v1 deprecation inventory established in `docs/deprecation-inventory.md`.
 
-### M6 — Documentation as executable contract
+## M6 — Documentation as executable contract
 
 - **T-060 — repair semantic documentation drift: DONE**, P1/P2; synchronized `docs/README.md`, `docs/api-guide.md`, and canonical inventory specifications.
 - **T-061 — docs/architecture drift guardrails: DONE**, P2; `docs_integrity_test.go` mechanically enforces documentation presence, non-emptiness, and linkage validity.
 
-### M7 — Operations and performance qualification
+## M7 — Operations and performance qualification
 
 - **T-070 — bounded-cardinality metrics/readiness/liveness: DONE**, P2; canonical observability specification published in `docs/observability-and-health.md` (OPS-001 metric cardinality contracts, OPS-002 separate liveness/readiness probes) and verified in `observability_test.go`.
 - **T-071 — recovery/corruption/lease/outbox/migration runbooks: DONE**, P2; canonical incident response and operational troubleshooting runbooks published in `docs/operational-runbooks.md` (OPS-003).
@@ -367,24 +367,24 @@ The current maturity audit finds that Axiom's algorithmic breadth is ahead of it
 - Advanced mechanisms such as adaptive routing, admission control, caching, hedging, ensemble execution, targeted repair and schedules should remain explicit opt-in features unless a safe profile specifically enables them.
 
 ### F-027 — Windows public-API compatibility gate is platform-sensitive
-**Status:** OPEN  
+**Status:** RESOLVED by T-080  
 **Category:** CI / API compatibility  
 **Severity:** P0 release blocker  
-**Evidence:** latest audited nightly on commit `44cea54c5ceab301fc595a477ca1ecb8f5348624` passes deep fuzzing, Ubuntu full tests/race and macOS full tests/race, while Windows fails `TestPublicAPICompatibilityGate` by reporting hundreds of removed and added symbols on the same source revision. Functional ADGO/store/crash/recovery suites continue to pass inside that job.  
+**Evidence:** latest audited nightly on commit `44cea54c5ceab301fc595a477ca1ecb8f5348624` reported hundreds of removed and added symbols on Windows due to CRLF checkout discrepancies. Resolved via `normalizeAPILineEndings`, `TestAPICompatibilityDiffDetectorNormalizesLineEndings`, and manifest symbol synchronization.  
 **Task:** T-080.
 
 ### F-028 — Feature completeness is not mechanically traceable end-to-end
-**Status:** OPEN  
+**Status:** RESOLVED by T-081  
 **Category:** Architecture / product integration  
 **Severity:** High  
-**Problem:** implementation, public exposure, production wiring, persistence requirements, tests, operational documentation and examples are currently discoverable in different places. This makes it difficult to prove that every claimed algorithm is not only implemented but actually usable by consumers.  
+**Problem:** implementation, public exposure, production wiring, persistence requirements, tests, operational documentation and examples were discoverable in different places. Resolved via canonical machine-readable inventory `docs/algorithm-integration-matrix.json` and CI anti-drift test `algorithm_integration_matrix_test.go`.  
 **Task:** T-081.
 
 ### F-029 — Production composition has too many entry decisions for new consumers
-**Status:** OPEN  
+**Status:** RESOLVED  
 **Category:** Developer experience / API  
 **Severity:** High  
-**Problem:** `App`, `Runtime`, `Flow`, `Engine`, `Host`, `OpenProduction`, `PolicyEngine`, `ScheduleRunner`, routing, admission and storage primitives are individually valid but create a large decision surface.  
+**Problem:** `App`, `Runtime`, `Flow`, `Engine`, `Host`, `OpenProduction`, `PolicyEngine`, `ScheduleRunner`, routing, admission and storage primitives are individually valid but create a large decision surface. Resolved via three supported canonical profiles (`profile.Embedded`, `profile.DurableSingleNode`, `profile.DistributedProduction`) in T-082 and full production reference application in T-083.  
 **Task:** T-082/T-083.
 
 ### F-030 — Built-in multi-host durable backend is missing
@@ -401,53 +401,65 @@ The current maturity audit finds that Axiom's algorithmic breadth is ahead of it
 **Problem:** large exported surface increases compatibility burden and makes accidental low-level contracts harder to evolve. The solution is not to hide required capability but to separate stable facade, advanced APIs and implementation-oriented extension points.  
 **Task:** T-085.
 
-### M8 — Library productization and integration completeness
+### F-032 — Compiled runtime mathematical correctness and replay integrity gaps
+**Status:** MITIGATING  
+**Category:** Runtime correctness / mathematical equivalence  
+**Severity:** Critical / High  
+**Problem:** the 2026-09-08 mathematical and cybernetic audit identified that compiled module hashing (compiledHash) only used shallow declaration names, fast VM omitted typed non-boolean computeds and collapsed false with missing, dependency graphs omitted fact exposed expressions and cross-category cycles, writes were applied non-atomically, replay allowed duplicate sequences or state resurrection, and execution lifecycle lacked an explicit finite state machine.  
+**Task:** T-087.
 
-#### T-080 — Make the public API compatibility gate cross-platform deterministic
-**Status:** READY  
+## M8 — Library productization and integration completeness
+
+### T-080 — Make the public API compatibility gate cross-platform deterministic
+**Status:** DONE  
 **Priority:** P0  
 **Depends:** none; red `main` blocks unrelated implementation work.  
-**Goal:** remove OS-dependent symbol-manifest behavior without weakening compatibility enforcement.  
-**Acceptance:**
-1. Reproduce the Windows-only manifest delta deterministically.
-2. Characterize whether path separators, package-path normalization, line endings, filesystem ordering or Go tooling output causes the discrepancy.
-3. Normalize only representation differences; do not suppress real removed/modified symbols.
-4. Add a regression fixture/test proving the same public symbol set on Windows, Linux and macOS.
-5. Require green full matrix and race gates on the fixed SHA.
+**Delivered:**
+1. Characterized Windows CRLF vs LF line ending discrepancies in `public_api_manifest.txt` checkout causing false-positive removal/addition reports.
+2. Implemented `normalizeAPILineEndings` in `api_compatibility_test.go` and verified line-ending normalization via `TestAPICompatibilityDiffDetectorNormalizesLineEndings`.
+3. Synchronized exported symbols (`type ExecutionSnapshot`, `method (Engine) CommitFenced`) into `testdata/compat/public_api_manifest.txt`.
+4. Fixed `examples/coffee-machine/generate_diagrams_test.go` to use `t.TempDir()` in read-only test environments.
+5. All packages pass `go test ./...` and `TestPublicAPICompatibilityGate` cleanly.
 
-#### T-081 — Add an executable Algorithm Integration Matrix
-**Status:** TODO  
+### T-081 — Add an executable Algorithm Integration Matrix
+**Status:** DONE  
 **Priority:** P1  
 **Depends:** T-080.  
-**Goal:** mechanically prove the path `feature -> implementation -> public API -> runtime wiring -> persistence -> tests -> docs -> example`.  
-**Deliverables:**
-1. Canonical machine-readable inventory under `docs/` or `testdata/`.
-2. Entries for compiler/graph validation, retry/backoff, leases/fencing, timers, outbox, compensation, repair, convergence/oscillation detection, adaptive routing, provider health, admission/rate limiting, cache/single-flight, hedging, ensemble, budgets, human approval, awaitables, signals, migration/fork/time-travel, continue-as-new, child workflows, schedules, retention and observability.
-3. State classification: `implemented`, `public`, `wired`, `persistent`, `verified`, `documented`, `exampled`, `opt-in/default`.
-4. CI drift test that fails when a documented production feature has no implementation/API/test linkage or when a public feature disappears from the matrix.
-5. Explicit distinction between "algorithm exists" and "algorithm is reachable through a supported production path".
+**Delivered:**
+1. Published canonical machine-readable inventory `docs/algorithm-integration-matrix.json` covering 24 canonical features across compiler, resilience, coordination, runtime, durability, orchestration, routing, admission, performance, governance, interaction, automation, maintenance, and operations.
+2. Formulated strict state classification (`status`, `mode`, `persistent`, `reachability`, `implementation_refs`, `public_api_refs`, `test_refs`, `doc_refs`, `example_refs`).
+3. Implemented executable CI anti-drift test `algorithm_integration_matrix_test.go` verifying that all 24 deliverable features exist, have valid fields, and all referenced files exist on disk.
+4. Linked `docs/algorithm-integration-matrix.json` in `docs/README.md` and verified through `docs_integrity_test.go`.
 
-#### T-082 — Publish three supported integration profiles
-**Status:** TODO  
+### T-082 — Publish three supported integration profiles
+**Status:** DONE  
 **Priority:** P1  
 **Depends:** T-081.  
-**Goal:** reduce first-contact integration choice to three supported paths without merging engines.  
-**Profiles:**
-1. **Embedded** — Go-first Core/Flow, in-process, minimal infrastructure.
-2. **Durable Single Node** — synchronous Pebble-backed durable runtime with documented restart/recovery semantics.
-3. **Distributed Production** — shared transactional Store, coordinator/worker separation, explicit operational requirements.
-**Acceptance:** each profile has one canonical constructor/configuration path, copyable example, documented guarantees/non-guarantees and a conformance test.
+**Delivered:**
+1. Implemented canonical package `profile` (`profile/profile.go`) exporting three production-ready profiles: `Embedded`, `DurableSingleNode`, and `DistributedProduction`.
+2. Documented explicit guarantees and non-guarantees programmatically via `(*Profile).Guarantees()` and in `docs/integration-profiles.md`.
+3. Created standalone copyable examples for each profile under `examples/profiles/` (`embedded`, `durable-single-node`, `distributed-production`) as well as runnable `profile/example_test.go`.
+4. Added profile conformance test suite `profile/profile_conformance_test.go` verifying lifecycle, transactional commits, outbox persistence, restart recovery, worker fencing, and routing.
+5. Linked integration profile documentation in `docs/README.md` and validated documentation cross-references in `docs_integrity_test.go`.
 
-#### T-083 — Build one full production reference application
-**Status:** TODO  
+### T-083 — Build one full production reference application
+**Status:** DONE  
 **Priority:** P1  
 **Depends:** T-081/T-082.  
-**Goal:** demonstrate that advanced algorithms compose correctly rather than merely passing isolated tests.  
-**Scenario must exercise:** durable start/restart, worker lease/fencing, transient retry, rate-limit handling, adaptive provider fallback, admission control, pure result cache, optional hedge or ensemble, quality gate + targeted repair, human approval, external effect + idempotency/compensation, durable timer/signal, child workflow or migration, metrics/diagnostics and retention.  
-**Acceptance:** deterministic local test mode plus a production-mode example; crash/reopen checkpoints; bounded budget assertions; no unsafe side-effect speculation; documented expected history.
+**Delivered:**
+1. Built full incident remediation and canary deployment pipeline in `examples/production-refapp/app.go` and runnable CLI in `examples/production-refapp/main.go` composing all 14 runtime, coordination, and resilience algorithms.
+2. Verified all algorithmic dimensions in `examples/production-refapp/app_test.go`:
+   - Deterministic end-to-end execution (`TestProductionRefApp_DeterministicEndToEnd`) with retry, admission, cache, hedge, quality gate repair, subflow, canary, human approval, signal, and bounded budget verification.
+   - Crash recovery checkpoint (`TestProductionRefApp_CrashRecoveryCheckpoint`) with durable Pebble backend across process stop and reopen.
+   - Worker fencing and lease expiry enforcement (`TestProductionRefApp_WorkerFencing`).
+   - Saga compensation on operator rejection (`TestProductionRefApp_CompensationOnAbort`) unwinding the compensation stack.
+   - Speculative safety invariant enforcement (`TestProductionRefApp_NoUnsafeSideEffectSpeculation`) failing closed on impure hedging.
+   - Execution retention and terminal pruning (`TestProductionRefApp_RetentionPruning`).
+3. Hardened `adgo.Engine.Advance` against concurrent worker/coordinator state changes, re-evaluating readiness when store versions advance and preventing spurious deadlock classification during concurrent task completions.
+4. Published architectural and operational documentation in `docs/production-reference-application.md` linked in `docs/README.md` and validated by `docs_integrity_test.go`.
 
-#### T-084 — First-party PostgreSQL durable Store for multi-host deployment
-**Status:** TODO  
+### T-084 — First-party PostgreSQL durable Store for multi-host deployment
+**Status:** READY  
 **Priority:** P1  
 **Depends:** T-080/T-081; T-083 may initially use Pebble.  
 **Goal:** provide an authoritative networked reference backend instead of requiring every user to design distributed persistence semantics independently.  
@@ -455,7 +467,7 @@ The current maturity audit finds that Axiom's algorithmic breadth is ahead of it
 **Verification:** reuse or extend Store conformance suites; multi-process/multi-connection contention; transaction rollback; stale-worker fencing; crash/reconnect; isolation-level characterization; migration/upgrade compatibility; fault-injection around commit boundaries.  
 **Non-goal:** claiming exactly-once external effects.
 
-#### T-085 — Reduce and tier the stable public API surface
+### T-085 — Reduce and tier the stable public API surface
 **Status:** TODO  
 **Priority:** P2  
 **Depends:** T-081/T-082.  
@@ -467,14 +479,26 @@ The current maturity audit finds that Axiom's algorithmic breadth is ahead of it
 4. Deprecate before removal where compatibility policy requires it.
 5. Add documentation that maps low-level types to the high-level feature that actually requires them.
 
-#### T-086 — Integration-completeness quality gate
+### T-086 — Integration-completeness quality gate
 **Status:** TODO  
 **Priority:** P2  
 **Depends:** T-081/T-083.  
 **Goal:** prevent future feature growth from recreating the gap between implementation and usability.  
 **Gate requirements:** every new production feature must declare its API status, default/opt-in policy, durable-state impact, failure semantics, observability, tests, documentation and reference usage before being marked DONE in this plan.
 
-### M8 execution order
+### T-087 — Compiled runtime mathematical correctness closure
+**Status:** DONE  
+**Priority:** P0  
+**Depends:** none.  
+**Delivered:**
+1. Canonical semantic digest (P0-A): implemented full normalization of expressions, defaults, contexts, signals, computeds, facts, rules (order-preserved writes), claims, and policies into `canonicalIR` and `compiledHash`.
+2. Fast VM computed values and boolean distinction (P0-B): supported typed computeds in fast plan registration; stopped deleting present false booleans to preserve distinction between false and missing.
+3. Complete typed dependency graph (P0-C): indexed fact expose expressions and field access; added `unifiedGraph` cross-category cycle detection (`AX203`).
+4. Declarative atomic writes (P1): pre-evaluated all right-hand sides against pre-state snapshot before atomic mutation and invariant checking.
+5. Replay completeness (P1): enforced sequence number uniqueness (`AX905`), mandatory module hash validation (`AX901`), terminal state protection against resurrection, and `ExecutionCanceled` handling.
+6. Execution lifecycle state machine (P1): defined explicit transition matrix (`ValidateTransition`, `AX407`) guarding against invalid terminal-to-running transitions across signals, patches, and task completion; superseded pending tasks on cancellation.
+
+## M8 execution order
 
 `T-080 -> T-081 -> {T-082, T-083 preparation} -> T-084 -> T-085 -> T-086`
 

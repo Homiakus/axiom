@@ -214,8 +214,8 @@ Transactional store определяет атомарность persisted execut
 - `ActivityCompleted`;
 - `ActivityFailed` — terminal failure;
 - `WriteApplied`;
-- `ExecutionReachedFixpoint`;
-- `ExecutionCanceled`.
+- `ExecutionReachedFixpoint` — локальное затухание (local rule-queue quiescence) внутренней очереди правил; не означает глобальный математический fixpoint при наличии незавершённых external activities или ожидания внешних сигналов;
+- `ExecutionCanceled` — переход execution в терминальный статус `Canceled` с инвалидацией/supercede ожидающих задач.
 
 Для `first` history `ActivitySuperseded` указывает сохранённую earlier task. Для `latest` entry указывает `replacedBy` newer task ID.
 

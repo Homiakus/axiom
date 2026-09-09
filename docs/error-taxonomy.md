@@ -42,6 +42,7 @@ Axiom separates errors into four explicit categories according to their operatio
 | **Durability Capability** | `ErrNoSyncRejected`, `ErrBufferedPebbleRejected` | Production Mode | **Stable** | **Fail Fast** | Production mode rejects un-synced or non-durable store configurations. |
 | **Budget & Resource Limit** | `adgo.ErrBudgetExceeded`, `adgo.ErrDeadlock` | Coordinator | **Stable** (`errors.Is`) | **Terminal State** | Execution exceeded configured cost/token budget or reached unresolvable dependency cycle. |
 | **Admission Control** | `adgo.ErrAdmissionDenied` | ADGO Admission | **Stable** (`errors.Is(err, ErrAdmissionDenied)`) | **Reject Request** | Concurrency or rate-limit ceiling reached; caller should back off and retry. |
+| **Lifecycle Transition** | `diag.Error{Code: "AX407"}` | Core Runtime | **Stable** (`Code == "AX407"`) | **Reject Mutation** | Illegal state transition (e.g. mutating or completing tasks on a terminal execution). |
 
 ---
 

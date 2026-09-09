@@ -6,6 +6,8 @@
 
 - [Обзор и быстрый старт](../README.md)
 - [Какой публичный API выбирать](api-guide.md)
+- [Поддерживаемые профили интеграции (Embedded, Durable Single Node, Distributed Production)](integration-profiles.md)
+- [Полное эталонное production-приложение (DeployGuard / Incident Remediation)](production-reference-application.md)
 - [Инвентарь публичного API и депрекаций](deprecation-inventory.md)
 - [Таксономия и классификация ошибок](error-taxonomy.md)
 - [Каталог примеров](../examples/README.md)
@@ -55,6 +57,8 @@
 |---|---|
 | `README.md` | Public API overview и quick start |
 | `api-guide.md` | Рекомендуемый путь выбора frontend и runtime API |
+| `integration-profiles.md` | Три канонических профиля интеграции (Embedded, Durable Single Node, Distributed Production) |
+| `production-reference-application.md` | Полное эталонное production-приложение, объединяющее все 14 runtime-алгоритмов |
 | `deprecation-inventory.md` | Инвентарь устаревших конструкторов и расписание pre-v1 депрекаций |
 | `error-taxonomy.md` | Канонический контракт классификации ошибок (`diag.Error`, `errors.Is`, `FailureClass`) |
 | `observability-and-health.md` | Ограничение кардинальности метрик (OPS-001) и разделение liveness/readiness проб (OPS-002) |
@@ -67,6 +71,7 @@
 | `clock-inventory.md` | Каноническая классификация вызовов `time.*` и `durabletime.Clock` |
 | `architecture-fmea.md` | Каноническая методика FMEA, lifecycle `R-XXX` и правила связи рисков с `F-XXX`/`T-XXX` |
 | `architecture-risk-register.json` | Машиночитаемый FMEA-регистр для CI-проверки RPN, состояний и ссылок на `MASTER_PLAN.md` |
+| `algorithm-integration-matrix.json` | Машиночитаемая матрица интеграции алгоритмов: фича -> реализация -> API -> рантайм -> тесты -> примеры |
 | `high-leverage-architecture-audit-2026-09-06.md` | Evidence-аудит точек максимального архитектурного leverage и хрупких семантических границ; не является параллельным roadmap |
 | `versioning.md` | Политика pre-v1 совместимости, release gate и workflow публикации |
 | `QUALITY_LOOP.md` | Регламент автоматического тестирования мутаций и краевых случаев |

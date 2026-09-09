@@ -196,7 +196,10 @@ func TestGenerateCoffeeMachineDiagrams(t *testing.T) {
 
 	mermaidSequence := diagram.HistoryToMermaidSequence(history)
 
-	targetDir := "."
+	targetDir := t.TempDir()
+	if os.Getenv("UPDATE_DIAGRAMS") == "1" {
+		targetDir = "."
+	}
 	if err := os.WriteFile(filepath.Join(targetDir, "diagram_flowchart.mmd"), []byte(mermaidFlowchart), 0644); err != nil {
 		t.Fatalf("failed to write diagram_flowchart.mmd: %v", err)
 	}

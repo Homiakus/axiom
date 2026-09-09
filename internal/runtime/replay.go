@@ -16,12 +16,25 @@ func ReplayFromHistory(module *compiler.Module, history []HistoryEntry) (*Execut
 	}
 	entries := append([]HistoryEntry{}, history...)
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Seq < entries[j].Seq })
+	for i := 1; i < len(entries); i++ {
+		if entries[i].Seq == entries[i-1].Seq {
+			return nil, diag.Error{Code: "AX905", Kind: "replay", Message: fmt.Sprintf("duplicate event sequence number %d", entries[i].Seq)}
+		}
+	}
 	engine := NewEngine(module, replayStore{}, nil)
 	var execution *Execution
 	ctx := context.Background()
 	for _, entry := range entries {
+		if execution != nil && (execution.Status == StatusCompleted || execution.Status == StatusFailed || execution.Status == StatusCanceled) {
+			if entry.Type != "ExecutionCompleted" && entry.Type != "ExecutionFailed" && entry.Type != "ExecutionCanceled" {
+				return nil, diag.Error{Code: "AX905", Kind: "replay", Message: fmt.Sprintf("event %s appeared after terminal status %s", entry.Type, execution.Status)}
+			}
+		}
 		switch entry.Type {
 		case "ExecutionStarted":
+			if execution != nil {
+				return nil, diag.Error{Code: "AX905", Kind: "replay", Message: "duplicate ExecutionStarted in history"}
+			}
 			execution = &Execution{
 				ID:              stringPayload(entry.Payload, "executionID"),
 				Domain:          stringPayload(entry.Payload, "domain"),
@@ -39,9 +52,9 @@ func ReplayFromHistory(module *compiler.Module, history []HistoryEntry) (*Execut
 				execution.Domain = module.Domain
 			}
 			if execution.ModuleHash == "" {
-				execution.ModuleHash = module.CompiledHash
+				return nil, diag.Error{Code: "AX901", Kind: "replay", Message: "missing module hash in ExecutionStarted event", Hint: "Replay requires moduleHash in ExecutionStarted to ensure compatibility."}
 			}
-			if execution.ModuleHash != "" && module.CompiledHash != "" && execution.ModuleHash != module.CompiledHash {
+			if module.CompiledHash != "" && execution.ModuleHash != module.CompiledHash {
 				return nil, diag.Error{Code: "AX901", Kind: "replay", Message: "module hash mismatch during replay", Hint: "Replay with the same compiled module version that produced the history."}
 			}
 			if execution.CompilerVersion == "" {
@@ -129,6 +142,10 @@ func ReplayFromHistory(module *compiler.Module, history []HistoryEntry) (*Execut
 		case "ExecutionFailed":
 			if execution != nil {
 				execution.Status = StatusFailed
+			}
+		case "ExecutionCanceled":
+			if execution != nil {
+				execution.Status = StatusCanceled
 			}
 		}
 		_ = ctx

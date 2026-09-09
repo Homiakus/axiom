@@ -202,6 +202,198 @@ context User:
 	}
 }
 
+func TestReplayDuplicateSeqAndTerminal(t *testing.T) {
+	module, err := Compile([]byte(`
+domain ReplaySeq
+
+context User:
+  id: String?
+`))
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	// Duplicate sequence
+	_, err = ReplayFromHistory(module, []HistoryEntry{
+		{Seq: 1, Type: "ExecutionStarted", Payload: map[string]any{"executionID": "seq-1", "domain": "ReplaySeq", "moduleHash": module.CompiledHash}},
+		{Seq: 1, Type: "ContextPatched", Payload: map[string]any{"values": map[string]any{"User.id": "u1"}}},
+	})
+	if err == nil {
+		t.Fatalf("expected duplicate sequence error")
+	}
+	var diag *Error
+	if !errors.As(err, &diag) || diag.Code != "AX905" {
+		t.Fatalf("expected AX905 duplicate sequence error, got %#v", err)
+	}
+
+	// Duplicate ExecutionStarted
+	_, err = ReplayFromHistory(module, []HistoryEntry{
+		{Seq: 1, Type: "ExecutionStarted", Payload: map[string]any{"executionID": "seq-1", "domain": "ReplaySeq", "moduleHash": module.CompiledHash}},
+		{Seq: 2, Type: "ExecutionStarted", Payload: map[string]any{"executionID": "seq-1", "domain": "ReplaySeq", "moduleHash": module.CompiledHash}},
+	})
+	if err == nil {
+		t.Fatalf("expected duplicate ExecutionStarted error")
+	}
+	if !errors.As(err, &diag) || diag.Code != "AX905" {
+		t.Fatalf("expected AX905 duplicate ExecutionStarted error, got %#v", err)
+	}
+
+	// Event after terminal status
+	_, err = ReplayFromHistory(module, []HistoryEntry{
+		{Seq: 1, Type: "ExecutionStarted", Payload: map[string]any{"executionID": "seq-1", "domain": "ReplaySeq", "moduleHash": module.CompiledHash}},
+		{Seq: 2, Type: "ExecutionCompleted", Payload: map[string]any{}},
+		{Seq: 3, Type: "ContextPatched", Payload: map[string]any{"values": map[string]any{"User.id": "u2"}}},
+	})
+	if err == nil {
+		t.Fatalf("expected event after terminal error")
+	}
+	if !errors.As(err, &diag) || diag.Code != "AX905" {
+		t.Fatalf("expected AX905 after terminal error, got %#v", err)
+	}
+}
+
+func TestReplayHandlesExecutionCanceled(t *testing.T) {
+	module, err := Compile([]byte(`
+domain ReplayCancel
+
+context User:
+  id: String?
+`))
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	exec, err := ReplayFromHistory(module, []HistoryEntry{
+		{Seq: 1, Type: "ExecutionStarted", Payload: map[string]any{"executionID": "cancel-1", "domain": "ReplayCancel", "moduleHash": module.CompiledHash}},
+		{Seq: 2, Type: "ExecutionCanceled", Payload: map[string]any{}},
+	})
+	if err != nil {
+		t.Fatalf("ReplayFromHistory() unexpected error: %v", err)
+	}
+	if exec.Status != StatusCanceled {
+		t.Fatalf("expected status StatusCanceled, got %q", exec.Status)
+	}
+}
+
+func TestTerminalExecutionRejectsSignalAndPatch(t *testing.T) {
+	module, err := Compile([]byte(`
+domain LifecycleTest
+
+signal Ping
+
+context State:
+  counter: Int = 0
+
+rule onPing:
+  on Ping
+  write:
+    State.counter = State.counter + 1
+`))
+	if err != nil {
+		t.Fatalf("Compile error: %v", err)
+	}
+
+	ctx := context.Background()
+	store := NewMemoryStore()
+	engine, err := New(module, WithStore(store))
+	if err != nil {
+		t.Fatalf("New error: %v", err)
+	}
+
+	if err := engine.Start(ctx, "term-1", nil); err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+
+	run := engine.Execution("term-1")
+	if err := run.Cancel(ctx); err != nil {
+		t.Fatalf("Cancel error: %v", err)
+	}
+
+	// Try to signal canceled execution
+	err = engine.Signal(ctx, "term-1", "Ping", nil)
+	if err == nil {
+		t.Fatalf("expected error signaling canceled execution")
+	}
+	var diagErr *Error
+	if !errors.As(err, &diagErr) || diagErr.Code != "AX407" {
+		t.Fatalf("expected AX407 error, got %#v", err)
+	}
+
+	// Try to patch canceled execution
+	err = engine.Patch(ctx, "term-1", Patch{"State.counter": 10})
+	if err == nil {
+		t.Fatalf("expected error patching canceled execution")
+	}
+	if !errors.As(err, &diagErr) || diagErr.Code != "AX407" {
+		t.Fatalf("expected AX407 error on patch, got %#v", err)
+	}
+}
+
+func TestCancelSupersedesPendingTasks(t *testing.T) {
+	module, err := Compile([]byte(`
+domain CancelTaskTest
+
+signal RunTask
+
+context State:
+  done: Bool = false
+
+activity LongActivity:
+  input:
+  output:
+    res: Bool
+
+rule triggerTask:
+  on RunTask
+  run: LongActivity
+  write:
+    State.done = output.res
+`))
+	if err != nil {
+		t.Fatalf("Compile error: %v", err)
+	}
+
+	ctx := context.Background()
+	store := NewMemoryStore()
+	engine, err := New(module, WithStore(store), WithActivity("LongActivity", func(ctx context.Context, input Input) (Output, error) {
+		return Output{"res": true}, nil
+	}))
+	if err != nil {
+		t.Fatalf("New error: %v", err)
+	}
+
+	if err := engine.Start(ctx, "cancel-task-1", nil); err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+	if err := engine.Signal(ctx, "cancel-task-1", "RunTask", nil); err != nil {
+		t.Fatalf("Signal error: %v", err)
+	}
+
+	tasks, err := store.ListTasks(ctx, "cancel-task-1")
+	if err != nil {
+		t.Fatalf("ListTasks error: %v", err)
+	}
+	if len(tasks) == 0 {
+		t.Fatalf("expected pending task")
+	}
+	if tasks[0].Status != TaskPending {
+		t.Fatalf("expected TaskPending, got %s", tasks[0].Status)
+	}
+
+	run := engine.Execution("cancel-task-1")
+	if err := run.Cancel(ctx); err != nil {
+		t.Fatalf("Cancel error: %v", err)
+	}
+
+	tasksAfter, err := store.ListTasks(ctx, "cancel-task-1")
+	if err != nil {
+		t.Fatalf("ListTasks error: %v", err)
+	}
+	if len(tasksAfter) == 0 || tasksAfter[0].Status != TaskSuperseded {
+		t.Fatalf("expected task to be superseded, got %#v", tasksAfter[0])
+	}
+}
+
 func TestProductionModeRejectsNonTransactionalStore(t *testing.T) {
 	module, err := Compile([]byte(`
 domain Production

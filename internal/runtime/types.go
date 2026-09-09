@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -27,6 +28,40 @@ const (
 	StatusFailed    Status = "Failed"
 	StatusCanceled  Status = "Canceled"
 )
+
+func (s Status) IsTerminal() bool {
+	return s == StatusCompleted || s == StatusFailed || s == StatusCanceled
+}
+
+func (s Status) CanTransitionTo(next Status) bool {
+	if s == next {
+		return true
+	}
+	switch s {
+	case StatusStarted:
+		return next == StatusRunning || next == StatusWaiting || next == StatusFailed || next == StatusCanceled
+	case StatusRunning:
+		return next == StatusWaiting || next == StatusFailed || next == StatusCanceled || next == StatusCompleted
+	case StatusWaiting:
+		return next == StatusRunning || next == StatusFailed || next == StatusCanceled || next == StatusCompleted
+	case StatusCompleted, StatusFailed, StatusCanceled:
+		return false
+	default:
+		return false
+	}
+}
+
+func ValidateTransition(from, to Status) error {
+	if from.CanTransitionTo(to) {
+		return nil
+	}
+	return diag.Error{
+		Code:    "AX407",
+		Kind:    "runtime",
+		Message: fmt.Sprintf("illegal execution lifecycle transition from %s to %s", from, to),
+		Hint:    "Terminal executions (Completed, Failed, Canceled) cannot be mutated or resumed.",
+	}
+}
 
 type TaskStatus string
 
@@ -88,6 +123,17 @@ type Execution struct {
 	Version         int
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+}
+
+func (e *Execution) TransitionTo(next Status) error {
+	if e == nil {
+		return nil
+	}
+	if err := ValidateTransition(e.Status, next); err != nil {
+		return err
+	}
+	e.Status = next
+	return nil
 }
 
 type HistoryEntry struct {

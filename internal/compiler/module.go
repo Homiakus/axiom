@@ -357,11 +357,21 @@ func (c *compiler) validatePolicies() {
 }
 
 func (c *compiler) validateCycles() {
-	c.detectCycle("computed", c.computedGraph(), "AX201")
-	c.detectCycle("fact", c.factGraph(), "AX202")
+	if len(c.module.Computeds) == 0 && len(c.module.Facts) == 0 {
+		return
+	}
+	if len(c.module.Computeds) > 0 && c.detectCycle("computed", c.computedGraph(), "AX201") {
+		return
+	}
+	if len(c.module.Facts) > 0 && c.detectCycle("fact", c.factGraph(), "AX202") {
+		return
+	}
+	if len(c.module.Computeds) > 0 && len(c.module.Facts) > 0 {
+		c.detectCycle("cross-category", c.unifiedGraph(), "AX203")
+	}
 }
 
-func (c *compiler) detectCycle(kind string, graph map[string][]string, code string) {
+func (c *compiler) detectCycle(kind string, graph map[string][]string, code string) bool {
 	const (
 		unseen = 0
 		active = 1
@@ -393,9 +403,10 @@ func (c *compiler) detectCycle(kind string, graph map[string][]string, code stri
 	for _, name := range names {
 		if visit(name) {
 			c.add(code, fmt.Sprintf("cyclic %s dependency: %s", kind, name))
-			return
+			return true
 		}
 	}
+	return false
 }
 
 func (c *compiler) computedGraph() map[string][]string {
@@ -416,11 +427,79 @@ func (c *compiler) computedGraph() map[string][]string {
 func (c *compiler) factGraph() map[string][]string {
 	graph := map[string][]string{}
 	for _, decl := range c.module.Facts {
+		addRef := func(ref string) {
+			if _, ok := c.module.Facts[ref]; ok {
+				graph[decl.Name] = append(graph[decl.Name], ref)
+				return
+			}
+			parts := strings.Split(ref, ".")
+			if len(parts) >= 2 {
+				if _, ok := c.module.Facts[parts[0]]; ok && parts[0] != decl.Name {
+					graph[decl.Name] = append(graph[decl.Name], parts[0])
+				}
+			}
+		}
 		for _, expr := range decl.When {
 			for _, ref := range lang.ExprRefs(expr) {
-				if _, ok := c.module.Facts[ref]; ok {
-					graph[decl.Name] = append(graph[decl.Name], ref)
+				addRef(ref)
+			}
+		}
+		for _, expose := range decl.Expose {
+			for _, ref := range lang.ExprRefs(expose.Expr) {
+				addRef(ref)
+			}
+		}
+		if _, ok := graph[decl.Name]; !ok {
+			graph[decl.Name] = nil
+		}
+	}
+	return graph
+}
+
+func (c *compiler) unifiedGraph() map[string][]string {
+	graph := map[string][]string{}
+	for _, decl := range c.module.Computeds {
+		for _, ref := range lang.ExprRefs(decl.Expr) {
+			if _, ok := c.module.Computeds[ref]; ok {
+				graph[decl.Name] = append(graph[decl.Name], ref)
+			} else if _, ok := c.module.Facts[ref]; ok {
+				graph[decl.Name] = append(graph[decl.Name], ref)
+			} else {
+				parts := strings.Split(ref, ".")
+				if len(parts) >= 2 {
+					if _, ok := c.module.Facts[parts[0]]; ok {
+						graph[decl.Name] = append(graph[decl.Name], parts[0])
+					}
 				}
+			}
+		}
+		if _, ok := graph[decl.Name]; !ok {
+			graph[decl.Name] = nil
+		}
+	}
+	for _, decl := range c.module.Facts {
+		addRef := func(ref string) {
+			if _, ok := c.module.Facts[ref]; ok {
+				graph[decl.Name] = append(graph[decl.Name], ref)
+			} else if _, ok := c.module.Computeds[ref]; ok {
+				graph[decl.Name] = append(graph[decl.Name], ref)
+			} else {
+				parts := strings.Split(ref, ".")
+				if len(parts) >= 2 {
+					if _, ok := c.module.Facts[parts[0]]; ok && parts[0] != decl.Name {
+						graph[decl.Name] = append(graph[decl.Name], parts[0])
+					}
+				}
+			}
+		}
+		for _, expr := range decl.When {
+			for _, ref := range lang.ExprRefs(expr) {
+				addRef(ref)
+			}
+		}
+		for _, expose := range decl.Expose {
+			for _, ref := range lang.ExprRefs(expose.Expr) {
+				addRef(ref)
 			}
 		}
 		if _, ok := graph[decl.Name]; !ok {
@@ -622,24 +701,332 @@ func hashBytes(value []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+const SemanticDigestVersion = "v1"
+
+func canonicalExpr(expr *lang.Expr) any {
+	if expr == nil {
+		return nil
+	}
+	m := map[string]any{
+		"kind": string(expr.Kind),
+	}
+	if expr.Op != "" {
+		m["op"] = expr.Op
+	}
+	if expr.Name != "" {
+		m["name"] = expr.Name
+	}
+	if expr.Value != nil {
+		switch v := expr.Value.(type) {
+		case int:
+			m["value"] = int64(v)
+		case int64:
+			m["value"] = v
+		case float64:
+			m["value"] = v
+		case string:
+			m["value"] = v
+		case bool:
+			m["value"] = v
+		case lang.DurationLiteral:
+			m["value"] = string(v)
+		default:
+			m["value"] = fmt.Sprint(v)
+		}
+	}
+	if expr.Left != nil {
+		m["left"] = canonicalExpr(expr.Left)
+	}
+	if expr.Right != nil {
+		m["right"] = canonicalExpr(expr.Right)
+	}
+	if len(expr.Args) > 0 {
+		args := make([]any, len(expr.Args))
+		for i, a := range expr.Args {
+			args[i] = canonicalExpr(a)
+		}
+		m["args"] = args
+	}
+	return m
+}
+
+func canonicalIR(module *Module) any {
+	if module == nil {
+		return nil
+	}
+	var contexts []any
+	if len(module.Contexts) > 0 {
+		contextNames := sortedKeys(module.Contexts)
+		contexts = make([]any, 0, len(contextNames))
+		for _, name := range contextNames {
+			ctx := module.Contexts[name]
+			fields := append([]lang.FieldDecl{}, ctx.Fields...)
+			sort.Slice(fields, func(i, j int) bool { return fields[i].Name < fields[j].Name })
+			cFields := make([]any, 0, len(fields))
+			for _, f := range fields {
+				cFields = append(cFields, map[string]any{
+					"name":        f.Name,
+					"type":        f.Type,
+					"has_default": f.HasDefault,
+					"default":     canonicalExpr(f.Default),
+				})
+			}
+			contexts = append(contexts, map[string]any{
+				"name":   ctx.Name,
+				"fields": cFields,
+			})
+		}
+	}
+
+	var signals []any
+	if len(module.Signals) > 0 {
+		signalNames := sortedKeys(module.Signals)
+		signals = make([]any, 0, len(signalNames))
+		for _, name := range signalNames {
+			sig := module.Signals[name]
+			fields := append([]lang.FieldDecl{}, sig.Fields...)
+			sort.Slice(fields, func(i, j int) bool { return fields[i].Name < fields[j].Name })
+			sFields := make([]any, 0, len(fields))
+			for _, f := range fields {
+				sFields = append(sFields, map[string]any{
+					"name": f.Name,
+					"type": f.Type,
+				})
+			}
+			signals = append(signals, map[string]any{
+				"name":   sig.Name,
+				"fields": sFields,
+			})
+		}
+	}
+
+	var computeds []any
+	if len(module.Computeds) > 0 {
+		computedNames := sortedKeys(module.Computeds)
+		computeds = make([]any, 0, len(computedNames))
+		for _, name := range computedNames {
+			comp := module.Computeds[name]
+			computeds = append(computeds, map[string]any{
+				"name": comp.Name,
+				"type": comp.Type,
+				"expr": canonicalExpr(comp.Expr),
+			})
+		}
+	}
+
+	var facts []any
+	if len(module.Facts) > 0 {
+		factNames := sortedKeys(module.Facts)
+		facts = make([]any, 0, len(factNames))
+		for _, name := range factNames {
+			fact := module.Facts[name]
+			when := make([]any, 0, len(fact.When))
+			for _, w := range fact.When {
+				when = append(when, canonicalExpr(w))
+			}
+			var cExpose []any
+			if len(fact.Expose) > 0 {
+				expose := append([]lang.Binding{}, fact.Expose...)
+				sort.Slice(expose, func(i, j int) bool { return expose[i].Name < expose[j].Name })
+				cExpose = make([]any, 0, len(expose))
+				for _, exp := range expose {
+					cExpose = append(cExpose, map[string]any{
+						"name": exp.Name,
+						"expr": canonicalExpr(exp.Expr),
+					})
+				}
+			}
+			facts = append(facts, map[string]any{
+				"name":   fact.Name,
+				"when":   when,
+				"expose": cExpose,
+			})
+		}
+	}
+
+	var rules []any
+	if len(module.Rules) > 0 {
+		ruleNames := sortedKeys(module.Rules)
+		rules = make([]any, 0, len(ruleNames))
+		for _, name := range ruleNames {
+			rule := module.Rules[name]
+			triggers := append([]lang.Trigger{}, rule.Triggers...)
+			sort.Slice(triggers, func(i, j int) bool {
+				if triggers[i].Kind != triggers[j].Kind {
+					return triggers[i].Kind < triggers[j].Kind
+				}
+				if triggers[i].Name != triggers[j].Name {
+					return triggers[i].Name < triggers[j].Name
+				}
+				return triggers[i].Target < triggers[j].Target
+			})
+			cTriggers := make([]any, 0, len(triggers))
+			for _, t := range triggers {
+				cTriggers = append(cTriggers, map[string]any{
+					"kind":   string(t.Kind),
+					"name":   t.Name,
+					"target": t.Target,
+				})
+			}
+			when := make([]any, 0, len(rule.When))
+			for _, w := range rule.When {
+				when = append(when, canonicalExpr(w))
+			}
+			require := make([]any, 0, len(rule.Require))
+			for _, req := range rule.Require {
+				require = append(require, canonicalExpr(req))
+			}
+			writes := make([]any, 0, len(rule.Writes))
+			for _, wr := range rule.Writes {
+				writes = append(writes, map[string]any{
+					"name": wr.Name,
+					"expr": canonicalExpr(wr.Expr),
+				})
+			}
+			rules = append(rules, map[string]any{
+				"name":     rule.Name,
+				"triggers": cTriggers,
+				"when":     when,
+				"require":  require,
+				"run":      rule.Run,
+				"writes":   writes,
+			})
+		}
+	}
+
+	var claims []any
+	if len(module.Claims) > 0 {
+		claimNames := sortedKeys(module.Claims)
+		claims = make([]any, 0, len(claimNames))
+		for _, name := range claimNames {
+			claim := module.Claims[name]
+			always := make([]any, 0, len(claim.Always))
+			for _, a := range claim.Always {
+				always = append(always, canonicalExpr(a))
+			}
+			claims = append(claims, map[string]any{
+				"name":   claim.Name,
+				"always": always,
+			})
+		}
+	}
+
+	var queries []any
+	if len(module.Queries) > 0 {
+		queryNames := sortedKeys(module.Queries)
+		queries = make([]any, 0, len(queryNames))
+		for _, name := range queryNames {
+			q := module.Queries[name]
+			ret := append([]lang.Binding{}, q.Return...)
+			sort.Slice(ret, func(i, j int) bool { return ret[i].Name < ret[j].Name })
+			cRet := make([]any, 0, len(ret))
+			for _, b := range ret {
+				cRet = append(cRet, map[string]any{
+					"name": b.Name,
+					"expr": canonicalExpr(b.Expr),
+				})
+			}
+			queries = append(queries, map[string]any{
+				"name":   q.Name,
+				"return": cRet,
+			})
+		}
+	}
+
+	var activities []any
+	if len(module.Activities) > 0 {
+		activityNames := sortedKeys(module.Activities)
+		activities = make([]any, 0, len(activityNames))
+		for _, name := range activityNames {
+			act := module.Activities[name]
+			require := make([]any, 0, len(act.Require))
+			for _, r := range act.Require {
+				require = append(require, canonicalExpr(r))
+			}
+			input := append([]lang.Binding{}, act.Input...)
+			sort.Slice(input, func(i, j int) bool { return input[i].Name < input[j].Name })
+			cInput := make([]any, 0, len(input))
+			for _, b := range input {
+				cInput = append(cInput, map[string]any{
+					"name": b.Name,
+					"expr": canonicalExpr(b.Expr),
+				})
+			}
+			output := append([]lang.FieldDecl{}, act.Output...)
+			sort.Slice(output, func(i, j int) bool { return output[i].Name < output[j].Name })
+			cOutput := make([]any, 0, len(output))
+			for _, f := range output {
+				cOutput = append(cOutput, map[string]any{
+					"name": f.Name,
+					"type": f.Type,
+				})
+			}
+			activities = append(activities, map[string]any{
+				"name":            act.Name,
+				"policy":          act.Policy,
+				"effect":          act.Effect,
+				"idempotency_key": canonicalExpr(act.IdempotencyKey),
+				"require":         require,
+				"input":           cInput,
+				"output":          cOutput,
+			})
+		}
+	}
+
+	var policies []any
+	if len(module.Policies) > 0 {
+		policyNames := sortedKeys(module.Policies)
+		policies = make([]any, 0, len(policyNames))
+		for _, name := range policyNames {
+			pol := module.Policies[name]
+			eKeys := sortedKeys(pol.Entries)
+			cEntries := make([]any, 0, len(eKeys))
+			for _, k := range eKeys {
+				cEntries = append(cEntries, map[string]any{
+					"key":  k,
+					"expr": canonicalExpr(pol.Entries[k]),
+				})
+			}
+			cKeys := sortedKeys(pol.Catches)
+			cCatches := make([]any, 0, len(cKeys))
+			for _, k := range cKeys {
+				cCatches = append(cCatches, map[string]any{
+					"source": k,
+					"target": pol.Catches[k],
+				})
+			}
+			policies = append(policies, map[string]any{
+				"name":    pol.Name,
+				"entries": cEntries,
+				"catches": cCatches,
+			})
+		}
+	}
+
+	return map[string]any{
+		"semantic_digest_version": SemanticDigestVersion,
+		"dsl":                     module.DSLVersion,
+		"compiler":                module.CompilerVersion,
+		"plan":                    module.PlanVersion,
+		"domain":                  module.Domain,
+		"contexts":                contexts,
+		"signals":                 signals,
+		"computeds":               computeds,
+		"facts":                   facts,
+		"rules":                   rules,
+		"claims":                  claims,
+		"queries":                 queries,
+		"activities":              activities,
+		"policies":                policies,
+	}
+}
+
 func compiledHash(module *Module) string {
 	if module == nil {
 		return ""
 	}
-	data, err := json.Marshal(map[string]any{
-		"dsl":        module.DSLVersion,
-		"compiler":   module.CompilerVersion,
-		"plan":       module.PlanVersion,
-		"domain":     module.Domain,
-		"fields":     append([]string{}, module.IDs.Fields...),
-		"signals":    append([]string{}, module.IDs.Signals...),
-		"rules":      append([]string{}, module.IDs.Rules...),
-		"activities": append([]string{}, module.IDs.Activities...),
-		"computeds":  sortedKeys(module.Computeds),
-		"facts":      sortedKeys(module.Facts),
-		"claims":     sortedKeys(module.Claims),
-		"queries":    sortedKeys(module.Queries),
-	})
+	ir := canonicalIR(module)
+	data, err := json.Marshal(ir)
 	if err != nil {
 		return ""
 	}
@@ -647,6 +1034,9 @@ func compiledHash(module *Module) string {
 }
 
 func sortedKeys[T any](values map[string]T) []string {
+	if len(values) == 0 {
+		return nil
+	}
 	out := make([]string, 0, len(values))
 	for key := range values {
 		out = append(out, key)

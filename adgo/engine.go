@@ -240,9 +240,18 @@ func (e *Engine) Advance(ctx context.Context, executionID string) (AdvanceResult
 	if err != nil {
 		return AdvanceResult{}, err
 	}
-	cur, err = e.store.Load(ctx, executionID)
+	loaded, err := e.store.Load(ctx, executionID)
 	if err != nil {
 		return AdvanceResult{}, err
+	}
+	if loaded.Version != cur.Version {
+		cur = loaded
+		candidates, waiting, err = e.readyCandidatesAt(ctx, cur, decisionNow)
+		if err != nil {
+			return AdvanceResult{}, err
+		}
+	} else {
+		cur = loaded
 	}
 	candidates = e.filterAgainstActive(cur, candidates)
 	selected := e.scheduler.Select(e.plan, cur, candidates)
@@ -297,6 +306,15 @@ func (e *Engine) Advance(ctx context.Context, executionID string) (AdvanceResult
 	}
 
 	cur, err = e.mutate(ctx, executionID, func(x *Execution) error {
+		if terminal(x.Status) || executionPaused(x) || len(x.ActiveTasks) > 0 || goalsSatisfied(e.plan, x) || len(waitingNodes(x)) > 0 || hasPendingTimeAt(x, decisionNow) {
+			return nil
+		}
+		for _, node := range e.plan.Nodes {
+			rt := x.Nodes[node.ID]
+			if isReady(e.plan, x, node, rt, decisionNow) {
+				return nil
+			}
+		}
 		x.Status = StatusDeadlocked
 		x.Failure = deadlockReason(e.plan, x)
 		appendHistory(x, "deadlock", "", x.Failure, nil)
@@ -305,7 +323,10 @@ func (e *Engine) Advance(ctx context.Context, executionID string) (AdvanceResult
 	if err != nil {
 		return AdvanceResult{}, err
 	}
-	return advanceResult(cur, true, nil, nil), ErrDeadlock
+	if cur.Status == StatusDeadlocked {
+		return advanceResult(cur, true, nil, nil), ErrDeadlock
+	}
+	return advanceResult(cur, progressed, nil, waiting), nil
 }
 
 type AdvanceResult struct {

@@ -234,10 +234,25 @@ func (r *Run) Cancel(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		execution.Status = StatusCanceled
+		if execution.Status == StatusCanceled {
+			return nil
+		}
+		if err := execution.TransitionTo(StatusCanceled); err != nil {
+			return err
+		}
 		execution.UpdatedAt = time.Now().UTC()
 		if err := working.store.AppendHistory(ctx, r.id, "ExecutionCanceled", nil); err != nil {
 			return err
+		}
+		tasks, err := working.store.ListTasks(ctx, r.id)
+		if err == nil {
+			for _, task := range tasks {
+				if task.Status == TaskPending || task.Status == TaskRunning {
+					task.Status = TaskSuperseded
+					task.UpdatedAt = time.Now().UTC()
+					_ = working.store.UpdateTask(ctx, task)
+				}
+			}
 		}
 		return working.store.SaveExecution(ctx, execution)
 	})

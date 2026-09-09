@@ -64,6 +64,7 @@ type Errors
 type EventNamer
 type Execution
 func ReplayFromHistory
+type ExecutionSnapshot
 type ExecutionState
 type Explanation
 type ExternalActivityClaim
@@ -273,6 +274,7 @@ method (Engine) Advance
 method (Engine) Await
 method (Engine) Awaitable
 method (Engine) Cancel
+method (Engine) CommitFenced
 method (Engine) Complete
 method (Engine) ContinueAsNew
 method (Engine) Diagnostics

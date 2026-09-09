@@ -209,20 +209,20 @@ func compileFastPlan(module *compiler.Module, strict bool) *fastPlan {
 	p.signalRules = make([]bitset, len(p.signals))
 	p.compiler = exprCompiler{fieldIDs: p.fieldIDs, atomIDs: p.atomsByName}
 	for _, computed := range module.AST.Computeds {
-		if computed.Type == "Bool" {
-			p.addNamedAtom(computed.Name, fastAtom{kind: fastAtomComputed, name: computed.Name, expr: computed.Expr})
-		}
+		p.addNamedAtom(computed.Name, fastAtom{kind: fastAtomComputed, name: computed.Name, expr: computed.Expr})
 	}
 	for _, fact := range module.AST.Facts {
 		p.addNamedAtom(fact.Name, fastAtom{kind: fastAtomFact, name: fact.Name, exprs: fact.When, expose: fact.Expose})
 	}
 	for _, computed := range module.AST.Computeds {
-		if computed.Type == "Bool" {
-			p.indexAtomDeps(p.atomsByName[computed.Name], []*lang.Expr{computed.Expr})
-		}
+		p.indexAtomDeps(p.atomsByName[computed.Name], []*lang.Expr{computed.Expr})
 	}
 	for _, fact := range module.AST.Facts {
-		p.indexAtomDeps(p.atomsByName[fact.Name], fact.When)
+		factExprs := append([]*lang.Expr{}, fact.When...)
+		for _, exp := range fact.Expose {
+			factExprs = append(factExprs, exp.Expr)
+		}
+		p.indexAtomDeps(p.atomsByName[fact.Name], factExprs)
 	}
 	for _, rule := range module.AST.Rules {
 		ruleID := len(p.rules)
@@ -725,13 +725,6 @@ func (p *fastPlan) evalAtom(id int, execution *Execution, state bitset) (bool, e
 func (p *fastPlan) syncExecutionFromAtoms(execution *Execution, state bitset) {
 	for _, atom := range p.atoms {
 		switch atom.kind {
-		case fastAtomComputed:
-			if !state.has(atom.id) {
-				delete(execution.Computed, atom.name)
-				if execution.RuntimeState.AtomValues != nil {
-					delete(execution.RuntimeState.AtomValues, uint32(atom.id))
-				}
-			}
 		case fastAtomFact:
 			if !state.has(atom.id) {
 				delete(execution.Facts, atom.name)

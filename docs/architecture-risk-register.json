@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "updated": "2026-09-04",
+  "updated": "2026-09-09",
   "scoring": {
     "severity": "1..10; 10 = catastrophic correctness/safety/durability/control-boundary impact",
     "occurrence": "1..10; 10 = expected/frequent without additional mitigation",
@@ -96,7 +96,8 @@
         "Executable characterization before sharing primitives.",
         "AST architecture anti-drift tests.",
         "Only durabletime.NowSource is currently shared as a proven behavior-identical leaf.",
-        "Retry/backoff and lease/fencing remain engine-owned after explicit non-equivalence proof."
+        "Retry/backoff and lease/fencing remain engine-owned after explicit non-equivalence proof.",
+        "Canonical semantic digest (P0-A), fast-plan full computed evaluation (P0-B), mixed dependency cycle detection (P0-C), atomic writes and explicit lifecycle transition validation (P1)."
       ],
       "severity": 8,
       "occurrence": 5,
@@ -104,8 +105,8 @@
       "rpn": 200,
       "level": "high",
       "owner_role": "architecture/runtime",
-      "findings": ["F-005", "F-028"],
-      "tasks": ["T-081", "T-086"],
+      "findings": ["F-005", "F-028", "F-032"],
+      "tasks": ["T-081", "T-086", "T-087"],
       "mitigation": "Make the Algorithm Integration Matrix encode runtime ownership and semantic differences, then gate new production features on an explicit surface/API/persistence/failure-semantics declaration.",
       "target_occurrence": 3,
       "target_detectability": 3,
@@ -190,7 +191,7 @@
     },
     {
       "id": "R-006",
-      "status": "OPEN",
+      "status": "MITIGATING",
       "component": "Persisted formats / plan identity / migrations",
       "failure_mode": "A software or plan upgrade creates durable state that cannot be safely interpreted, migrated or rolled back across versions.",
       "effect": "Fail-closed production outage, stranded executions, incorrect live repinning or irreversible history/state incompatibility.",
@@ -203,7 +204,8 @@
         "Explicit plan ID/version/digest pinning.",
         "Fail-closed persisted format markers and compatibility fixtures.",
         "Quiescent-point validation for ADGO plan migration.",
-        "Serialized-surfaces inventory and versioning policy."
+        "Serialized-surfaces inventory and versioning policy.",
+        "Canonical semantic digest (SHA256 of CanonicalIR) and replay sequence/terminal state verification (P0-A, P1)."
       ],
       "severity": 9,
       "occurrence": 3,
@@ -211,8 +213,8 @@
       "rpn": 162,
       "level": "high",
       "owner_role": "persistence/versioning",
-      "findings": ["F-028", "F-030"],
-      "tasks": ["T-084", "T-086"],
+      "findings": ["F-028", "F-030", "F-032"],
+      "tasks": ["T-084", "T-086", "T-087"],
       "mitigation": "Make migration/upgrade compatibility a required PostgreSQL conformance scenario and an integration-completeness declaration for every feature that changes durable state.",
       "target_occurrence": 2,
       "target_detectability": 3,

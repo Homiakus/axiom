@@ -1,0 +1,611 @@
+{
+  "version": "1.0.0",
+  "updated": "2026-09-09",
+  "description": "Authoritative machine-readable inventory proving the path: feature -> implementation -> public API -> runtime wiring -> persistence -> tests -> docs -> example.",
+  "features": [
+    {
+      "feature_id": "compiler_graph_validation",
+      "title": "Compiler IR Normalization & Graph Validation",
+      "category": "compiler",
+      "status": "verified",
+      "mode": "default",
+      "persistent": true,
+      "reachability": "core",
+      "implementation_refs": [
+        "internal/compiler/module.go",
+        "internal/lang/parser.go"
+      ],
+      "public_api_refs": [
+        "axiom.go"
+      ],
+      "test_refs": [
+        "internal/compiler/compiler_comprehensive_test.go",
+        "library_test.go"
+      ],
+      "doc_refs": [
+        "docs/runtime-semantics.md"
+      ],
+      "example_refs": [
+        "examples/axiom-files/main.go"
+      ]
+    },
+    {
+      "feature_id": "retry_backoff",
+      "title": "Deterministic Retry and Backoff Policies",
+      "category": "resilience",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": true,
+      "reachability": "core_and_adgo",
+      "implementation_refs": [
+        "internal/runtime/engine.go",
+        "adgo/policy.go"
+      ],
+      "public_api_refs": [
+        "axiom.go",
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "durable_retry_test.go",
+        "adgo/retry_backoff_characterization_test.go"
+      ],
+      "doc_refs": [
+        "docs/durable-primitives-inventory.md",
+        "docs/error-taxonomy.md"
+      ],
+      "example_refs": [
+        "examples/order/main.go"
+      ]
+    },
+    {
+      "feature_id": "leases_fencing",
+      "title": "Worker Task Leases and Optimistic Commit Fencing",
+      "category": "coordination",
+      "status": "verified",
+      "mode": "default",
+      "persistent": true,
+      "reachability": "core_and_adgo",
+      "implementation_refs": [
+        "external_activity_ownership.go",
+        "adgo/fenced_commit.go"
+      ],
+      "public_api_refs": [
+        "axiom.go",
+        "adgo/fenced_commit.go"
+      ],
+      "test_refs": [
+        "external_worker_test.go",
+        "adgo/lease_fencing_characterization_test.go",
+        "stress_chaos_test.go"
+      ],
+      "doc_refs": [
+        "docs/durable-primitives-inventory.md"
+      ],
+      "example_refs": [
+        "examples/go-first/main.go"
+      ]
+    },
+    {
+      "feature_id": "timers",
+      "title": "Deterministic Semantic Timers and Time Source",
+      "category": "runtime",
+      "status": "verified",
+      "mode": "default",
+      "persistent": true,
+      "reachability": "leaf_primitive",
+      "implementation_refs": [
+        "internal/durabletime/clock.go",
+        "adgo/clock.go"
+      ],
+      "public_api_refs": [
+        "axiom.go",
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "internal/runtime/clock_contract_test.go",
+        "adgo/clock_contract_test.go"
+      ],
+      "doc_refs": [
+        "docs/durable-primitives-inventory.md"
+      ],
+      "example_refs": [
+        "examples/model/main.go"
+      ]
+    },
+    {
+      "feature_id": "outbox",
+      "title": "Synchronous Flow Outbox and Exactly-Once Effect Delivery",
+      "category": "durability",
+      "status": "verified",
+      "mode": "default",
+      "persistent": true,
+      "reachability": "flow",
+      "implementation_refs": [
+        "flow_outbox.go",
+        "flow_pebble_store.go"
+      ],
+      "public_api_refs": [
+        "flow.go"
+      ],
+      "test_refs": [
+        "flow_outbox_recovery_matrix_test.go",
+        "flow_outbox_failpoint_test.go",
+        "stress_chaos_test.go"
+      ],
+      "doc_refs": [
+        "docs/flow-durability.md"
+      ],
+      "example_refs": [
+        "examples/coffee-machine/main.go"
+      ]
+    },
+    {
+      "feature_id": "compensation",
+      "title": "Saga Compensation Recovery and Undo Handlers",
+      "category": "orchestration",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": true,
+      "reachability": "adgo",
+      "implementation_refs": [
+        "adgo/compensation_recovery.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "adgo/engine_test.go"
+      ],
+      "doc_refs": [
+        "docs/api-guide.md"
+      ],
+      "example_refs": [
+        "examples/order/main.go"
+      ]
+    },
+    {
+      "feature_id": "repair",
+      "title": "Dependency Repair Planning and Broken Graph Healing",
+      "category": "orchestration",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": true,
+      "reachability": "adgo",
+      "implementation_refs": [
+        "adgo/repair.go",
+        "adgo/engine_repair_planner.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "adgo/repair_anchor_test.go",
+        "adgo/engine_repair_planner_test.go"
+      ],
+      "doc_refs": [
+        "docs/api-guide.md"
+      ],
+      "example_refs": [
+        "examples/order/main.go"
+      ]
+    },
+    {
+      "feature_id": "convergence_oscillation",
+      "title": "Convergence Guarantees and Oscillation Detection",
+      "category": "runtime",
+      "status": "verified",
+      "mode": "default",
+      "persistent": false,
+      "reachability": "core_and_adgo",
+      "implementation_refs": [
+        "internal/runtime/engine.go",
+        "adgo/control.go"
+      ],
+      "public_api_refs": [
+        "axiom.go",
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "library_test.go",
+        "adgo/engine_test.go"
+      ],
+      "doc_refs": [
+        "docs/runtime-semantics.md"
+      ],
+      "example_refs": [
+        "examples/axiom-files/main.go"
+      ]
+    },
+    {
+      "feature_id": "adaptive_routing",
+      "title": "Adaptive Model/Provider Ranking and Routing",
+      "category": "routing",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": true,
+      "reachability": "adgo",
+      "implementation_refs": [
+        "adgo/router.go",
+        "adgo/router_store.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "adgo/router_ranking_test.go"
+      ],
+      "doc_refs": [
+        "docs/api-guide.md"
+      ],
+      "example_refs": [
+        "examples/model/main.go"
+      ]
+    },
+    {
+      "feature_id": "provider_health",
+      "title": "Provider Health Probing and Circuit Breaking",
+      "category": "resilience",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": true,
+      "reachability": "adgo",
+      "implementation_refs": [
+        "adgo/service.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "adgo/engine_test.go"
+      ],
+      "doc_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "example_refs": [
+        "examples/model/main.go"
+      ]
+    },
+    {
+      "feature_id": "admission_rate_limiting",
+      "title": "Admission Control, Token Bucket and Concurrency Limiting",
+      "category": "admission",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": true,
+      "reachability": "adgo",
+      "implementation_refs": [
+        "adgo/admission.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "adgo/admission_clock_test.go",
+        "adgo/admission_lock_test.go"
+      ],
+      "doc_refs": [
+        "docs/api-guide.md"
+      ],
+      "example_refs": [
+        "examples/order/main.go"
+      ]
+    },
+    {
+      "feature_id": "cache_single_flight",
+      "title": "Idempotent Activity Caching and Single-Flight Execution",
+      "category": "performance",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": true,
+      "reachability": "adgo",
+      "implementation_refs": [
+        "adgo/cache.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "adgo/engine_test.go"
+      ],
+      "doc_refs": [
+        "docs/api-guide.md"
+      ],
+      "example_refs": [
+        "examples/model/main.go"
+      ]
+    },
+    {
+      "feature_id": "hedging",
+      "title": "Speculative Activity Hedging with Deterministic Timers",
+      "category": "performance",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": false,
+      "reachability": "adgo",
+      "implementation_refs": [
+        "adgo/speculation.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "adgo/speculation_g104_test.go"
+      ],
+      "doc_refs": [
+        "docs/api-guide.md"
+      ],
+      "example_refs": [
+        "examples/model/main.go"
+      ]
+    },
+    {
+      "feature_id": "ensemble",
+      "title": "Multi-Provider Ensemble Voting and Best-Result Aggregation",
+      "category": "orchestration",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": false,
+      "reachability": "adgo",
+      "implementation_refs": [
+        "adgo/speculation.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "adgo/speculation_g104_test.go"
+      ],
+      "doc_refs": [
+        "docs/api-guide.md"
+      ],
+      "example_refs": [
+        "examples/model/main.go"
+      ]
+    },
+    {
+      "feature_id": "budgets",
+      "title": "Execution and Financial Token Budget Guardrails",
+      "category": "governance",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": true,
+      "reachability": "adgo",
+      "implementation_refs": [
+        "adgo/policy.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "adgo/budget_property_test.go"
+      ],
+      "doc_refs": [
+        "docs/api-guide.md"
+      ],
+      "example_refs": [
+        "examples/order/main.go"
+      ]
+    },
+    {
+      "feature_id": "human_approval",
+      "title": "Human-in-the-Loop Interrupt, Review and Decision Resolution",
+      "category": "interaction",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": true,
+      "reachability": "adgo",
+      "implementation_refs": [
+        "adgo/awaitable.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "adgo/human_interrupt_regression_test.go"
+      ],
+      "doc_refs": [
+        "docs/api-guide.md"
+      ],
+      "example_refs": [
+        "examples/order/main.go"
+      ]
+    },
+    {
+      "feature_id": "awaitables",
+      "title": "External Awaitables, Signals and Asynchronous Wakeup",
+      "category": "coordination",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": true,
+      "reachability": "adgo",
+      "implementation_refs": [
+        "adgo/awaitable.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "adgo/engine_test.go"
+      ],
+      "doc_refs": [
+        "docs/api-guide.md"
+      ],
+      "example_refs": [
+        "examples/order/main.go"
+      ]
+    },
+    {
+      "feature_id": "signals",
+      "title": "Synchronous and Asynchronous External Signal Dispatch",
+      "category": "runtime",
+      "status": "verified",
+      "mode": "default",
+      "persistent": true,
+      "reachability": "core",
+      "implementation_refs": [
+        "axiom.go",
+        "internal/runtime/engine.go"
+      ],
+      "public_api_refs": [
+        "axiom.go"
+      ],
+      "test_refs": [
+        "stress_test.go",
+        "library_test.go"
+      ],
+      "doc_refs": [
+        "docs/runtime-semantics.md"
+      ],
+      "example_refs": [
+        "examples/go-first/main.go"
+      ]
+    },
+    {
+      "feature_id": "migration_fork_time_travel",
+      "title": "Execution State Migration, Forking and Time-Travel Replay",
+      "category": "durability",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": true,
+      "reachability": "adgo",
+      "implementation_refs": [
+        "adgo/time_travel.go",
+        "adgo/migration.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "adgo/replay_test.go"
+      ],
+      "doc_refs": [
+        "docs/api-guide.md"
+      ],
+      "example_refs": [
+        "examples/order/main.go"
+      ]
+    },
+    {
+      "feature_id": "continue_as_new",
+      "title": "Infinite Execution via Continue-As-New Tail Call",
+      "category": "orchestration",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": true,
+      "reachability": "adgo",
+      "implementation_refs": [
+        "adgo/engine.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "adgo/engine_test.go"
+      ],
+      "doc_refs": [
+        "docs/api-guide.md"
+      ],
+      "example_refs": [
+        "examples/order/main.go"
+      ]
+    },
+    {
+      "feature_id": "child_workflows",
+      "title": "Child Workflow Invocations and Boundary Isolation",
+      "category": "orchestration",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": true,
+      "reachability": "adgo",
+      "implementation_refs": [
+        "adgo/child_workflow.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "adgo/nested_test.go"
+      ],
+      "doc_refs": [
+        "docs/api-guide.md"
+      ],
+      "example_refs": [
+        "examples/order/main.go"
+      ]
+    },
+    {
+      "feature_id": "schedules",
+      "title": "Stateful Cron and Interval Workflow Scheduling",
+      "category": "automation",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": true,
+      "reachability": "adgo",
+      "implementation_refs": [
+        "adgo/schedule.go",
+        "adgo/scheduler.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "adgo/schedule_stateful_test.go"
+      ],
+      "doc_refs": [
+        "docs/api-guide.md"
+      ],
+      "example_refs": [
+        "examples/order/main.go"
+      ]
+    },
+    {
+      "feature_id": "retention",
+      "title": "Durable History Retention and Lifecycle Purging",
+      "category": "maintenance",
+      "status": "verified",
+      "mode": "opt-in",
+      "persistent": true,
+      "reachability": "adgo",
+      "implementation_refs": [
+        "adgo/retention.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "adgo/engine_test.go"
+      ],
+      "doc_refs": [
+        "docs/operational-runbooks.md"
+      ],
+      "example_refs": [
+        "examples/order/main.go"
+      ]
+    },
+    {
+      "feature_id": "observability",
+      "title": "Bounded Cardinality Metrics and Dual Liveness/Readiness Probes",
+      "category": "operations",
+      "status": "verified",
+      "mode": "default",
+      "persistent": false,
+      "reachability": "core_and_adgo",
+      "implementation_refs": [
+        "adgo/metrics.go",
+        "adgo/diagnostics.go"
+      ],
+      "public_api_refs": [
+        "adgo/types.go"
+      ],
+      "test_refs": [
+        "observability_test.go"
+      ],
+      "doc_refs": [
+        "docs/observability-and-health.md"
+      ],
+      "example_refs": [
+        "examples/go-first/main.go"
+      ]
+    }
+  ]
+}
